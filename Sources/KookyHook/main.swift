@@ -6,19 +6,22 @@ import Foundation
 // socket. Exit code is always 0 — agents shouldn't fail because our app
 // happens to be closed.
 //
-// Usage: kooky-hook <event>     where <event> ∈ running | attention | idle
+// Usage: kooky-hook <agent> <event>
+//   <agent> ∈ claude | codex (or any AgentTemplate.id)
+//   <event> ∈ running | attention | idle
 // Reads:  $KOOKY_SURFACE_ID       UUID of the originating session
 // Reads:  any stdin               drained but ignored (Claude pipes JSON in)
 
-guard CommandLine.arguments.count >= 2 else { exit(0) }
-let event = CommandLine.arguments[1]
+guard CommandLine.arguments.count >= 3 else { exit(0) }
+let agent = CommandLine.arguments[1]
+let event = CommandLine.arguments[2]
 let surface = ProcessInfo.processInfo.environment["KOOKY_SURFACE_ID"] ?? ""
 guard !surface.isEmpty else { exit(0) }
 
 let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
 let socketPath = support.appendingPathComponent("kooky/socket").path
 
-let payload = #"{"event":"\#(event)","surface":"\#(surface)"}\#n"#
+let payload = #"{"agent":"\#(agent)","event":"\#(event)","surface":"\#(surface)"}\#n"#
 
 let fd = socket(AF_UNIX, SOCK_STREAM, 0)
 guard fd >= 0 else { exit(0) }

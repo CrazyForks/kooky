@@ -5,9 +5,10 @@ import SwiftUI
 public final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow?
     let store = WorkspaceStore()
-    private lazy var hookServer = HookServer { [weak store] event, sessionId in
-        store?.applyHookEvent(event, sessionId: sessionId)
+    private lazy var hookServer = HookServer { [weak store] agent, event, sessionId in
+        store?.applyHookEvent(agent: agent, event: event, sessionId: sessionId)
     }
+
 
     public override init() { super.init() }
 

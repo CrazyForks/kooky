@@ -14,7 +14,11 @@ enum SessionActivityState: Equatable {
 final class Session: Identifiable {
     let id: UUID
     let engine: any TerminalEngine
-    let agent: AgentTemplate
+    /// Initial template the tab was opened with. Promoted at runtime when an
+    /// agent's hooks fire from a plain `terminal` session — e.g. user types
+    /// `claude` inside a Terminal tab → upgraded to `.claudeCode` so the
+    /// sidebar / tab icon and agent state-tracking start working.
+    var agent: AgentTemplate
     /// Per-tab cwd. Initialized from the workspace's cwd at spawn, then kept in
     /// sync via OSC 7 (`engine.onPwdChange`). Drives the tab title so users see
     /// where they are, not which agent template the tab was launched from.

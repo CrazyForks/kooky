@@ -4,13 +4,22 @@ import Foundation
 @Observable
 final class Workspace: Identifiable {
     let id: UUID
-    var title: String
     /// Project root. New tabs spawn here; the active tab's OSC 7 reports keep
     /// this in sync — `cd` in any tab updates the workspace, the next new tab
     /// inherits the latest cwd.
     var workingDirectory: URL
     var tabs: [Session] = []
     var activeTabId: UUID?
+
+    /// Sidebar label — derived from `workingDirectory` so it tracks `cd`s
+    /// instead of freezing at create time. `~` shows as "Home"; everything
+    /// else uses the path's last component (falls back to the full path
+    /// when that's empty, e.g. `/`).
+    var title: String {
+        if workingDirectory.path == NSHomeDirectory() { return "Home" }
+        let last = workingDirectory.lastPathComponent
+        return last.isEmpty ? workingDirectory.path : last
+    }
 
     var activeTab: Session? {
         tabs.first { $0.id == activeTabId }
@@ -36,9 +45,8 @@ final class Workspace: Identifiable {
         return .idle
     }
 
-    init(id: UUID = UUID(), title: String, workingDirectory: URL) {
+    init(id: UUID = UUID(), workingDirectory: URL) {
         self.id = id
-        self.title = title
         self.workingDirectory = workingDirectory
     }
 }

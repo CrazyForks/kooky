@@ -2,6 +2,20 @@
 
 Notable changes per release. Tagged commits use `vX.Y` shortform.
 
+## v0.4 — 2026-05-08
+
+- **Codex integration.** Bundled `codex` wrapper injects `-c notify=[<KookyHook>,"codex","attention"]` and brackets the run with `running` / `ended` hooks so the sidebar shows the codex icon while it's active and reverts when the user `/exit`s. (Codex doesn't expose Claude-style SessionStart / SessionEnd hooks; the wrapper bracket fills the gap.)
+- **Auto-promote agent on hook.** Plain Terminal tabs that report a `claude` or `codex` hook get upgraded to the matching template, sidebar leading icon + `Workspace.distinctAgents` follow. `.ended` reverts only when the reporting agent matches the current session agent — running Codex inside a Claude tab no longer wipes the Claude icon.
+- **Hook protocol typed at the boundary.** `HookEvent` enum + `AgentTemplate.from(hookSlug:)` parse raw JSON into typed values inside `HookServer`; `WorkspaceStore.applyHookEvent` switches exhaustively. Unknown agents/events drop at the door.
+- **IME.** `GhosttySurfaceView` conforms to `NSTextInputClient` so 中文 / 日文 / 韩文 / 越南文 etc. compose properly through any macOS input method. `firstRect` returns a sentinel rect outside the window so the inline marked-text overlay doesn't ghost on top of TUIs that don't redraw aggressively.
+- **Kitty keyboard release-event workaround.** `keyUp` no longer forwards to libghostty. Codex (ratatui/crossterm) pushes kitty keyboard protocol with `report-event-types` and then mishandles release events as second presses ([codex#18564](https://github.com/openai/codex/issues/18564)) — not forwarding releases avoids the double on every keystroke.
+- **Sidebar UX.**
+  - `Workspace.title` is now computed from `workingDirectory` so the row label tracks `cd` instead of freezing at create time. `~` shows as "Home", everything else uses `lastPathComponent`.
+  - Closing the active tab now syncs `workspace.workingDirectory` to the newly-promoted tab's cwd (was leaving the old tab's path in the sidebar label).
+  - Activity dot at the trailing edge: blue `running`, amber `attention`, hidden `idle`. Aggregated across tabs (`attention` > `running` > `idle`).
+- **Env injection.** `KookyShellIntegration.kookyEnvironment(for:)` now produces a single dict (`KOOKY_SURFACE_ID` / `KOOKY_HOOKS_PATH` / `KOOKY_BIN_DIR` / `KOOKY_HOOK_BIN` / `PATH` / `TERM`); `WorkspaceStore.startSession` merges it in one line. zsh + bash wrapper rcs re-prepend `KOOKY_BIN_DIR` to `PATH` after sourcing the user's rc so the wrappers always resolve first.
+- **Cleanup.** `applyHookEvent` only persists when the agent template actually changed (activityState is runtime-only, was triggering disk writes per prompt); `markedTextBuffer` collapsed to a `Bool isComposing`; bash wrapper preamble (path lookup loop) extracted to one shared snippet.
+
 ## v0.3 — 2026-05-08
 
 - **Agent activity state in the sidebar.** Each workspace row shows a small status dot in the close-button slot — blue while an agent is processing, amber when it's waiting on user input, hidden when idle. Aggregated across the workspace's tabs (`attention` > `running` > `idle`).

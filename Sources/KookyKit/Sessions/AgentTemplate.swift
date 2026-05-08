@@ -104,4 +104,11 @@ extension AgentTemplate {
     )
 
     static let all: [AgentTemplate] = [.terminal, .claudeCode, .codex, .gemini, .opencode, .amp]
+
+    /// Looks up a template from the short slug an agent's hook system reports
+    /// (`claude` / `codex` / `gemini` / `opencode` / `amp`). The slug is what
+    /// the user types to launch the CLI — we keyed `initialCommand` to it.
+    static func from(hookSlug: String) -> AgentTemplate? {
+        all.first { $0.initialCommand == hookSlug }
+    }
 }

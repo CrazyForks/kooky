@@ -42,52 +42,114 @@ enum KookyShellIntegration {
     /// Writes the `claude` wrapper script and the hooks JSON to disk. Idempotent
     /// — call on every app launch so the hook command tracks the latest
     /// `KookyHook` location.
+    /// Per-session env vars our wrappers + hook helper read. Caller supplies
+    /// the surface UUID; everything else is process-wide. PATH prepends
+    /// `kookyBinDirectory` so wrapper shims resolve before the real binaries.
+    static func kookyEnvironment(for sessionId: UUID) -> [String: String] {
+        let parentPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/local/bin:/usr/bin:/bin"
+        return [
+            "KOOKY_SURFACE_ID": sessionId.uuidString,
+            "KOOKY_HOOKS_PATH": claudeHooksPath,
+            "KOOKY_BIN_DIR": kookyBinDirectory,
+            "KOOKY_HOOK_BIN": kookyHookBinaryPath,
+            "PATH": "\(kookyBinDirectory):\(parentPath)",
+            // libghostty defaults TERM to "xterm-ghostty"; not every system
+            // ships its terminfo. Pinning to xterm-256color gives all TUIs a
+            // well-known capability profile.
+            "TERM": "xterm-256color",
+        ]
+    }
+
     static func installAgentHooks() {
-        let claudeWrapper = """
-        #!/usr/bin/env bash
-        # kooky claude wrapper. Inside a kooky session ($KOOKY_SURFACE_ID set),
-        # injects --settings so Claude Code's hooks report state back to the
-        # app via the bundled KookyHook helper. Outside, transparent passthrough.
+        writeWrapper(name: "claude", script: claudeWrapperScript)
+        writeWrapper(name: "codex", script: codexWrapperScript)
 
-        self_dir="$(cd "$(dirname "$0")" && pwd)"
-        real=""
-        IFS=:
-        for dir in $PATH; do
-            [[ "$dir" == "$self_dir" ]] && continue
-            if [[ -x "$dir/claude" ]]; then
-                real="$dir/claude"
-                break
-            fi
-        done
-        unset IFS
-
-        if [[ -z "$real" ]]; then
-            echo "kooky: real 'claude' binary not found in PATH" >&2
-            exit 127
-        fi
-
-        if [[ -n "$KOOKY_SURFACE_ID" && -n "$KOOKY_HOOKS_PATH" ]]; then
-            exec "$real" --settings "$KOOKY_HOOKS_PATH" "$@"
-        fi
-        exec "$real" "$@"
-        """
-        let claudeWrapperPath = (kookyBinDirectory as NSString).appendingPathComponent("claude")
-        try? claudeWrapper.write(toFile: claudeWrapperPath, atomically: true, encoding: .utf8)
-        chmod(claudeWrapperPath, 0o755)
-
+        // Claude Code hooks JSON — fully event-aware (running / attention / idle).
+        // Each command also reports the agent name so the app can upgrade a
+        // session's icon when the user runs `claude` inside a plain terminal.
         let hookCmd = kookyHookBinaryPath
+        // No SessionStart hook on purpose: the agent template is either set
+        // upfront (+ menu spawn) or promoted on the first real event below.
+        // SessionEnd uses a distinct `ended` so the app can also revert the
+        // session back to .terminal — agent's gone, the icon should reflect.
         let hooks: [String: Any] = [
             "hooks": [
-                "UserPromptSubmit": [["hooks": [["type": "command", "command": "\(hookCmd) running"]]]],
-                "Stop":             [["hooks": [["type": "command", "command": "\(hookCmd) attention"]]]],
-                "Notification":     [["hooks": [["type": "command", "command": "\(hookCmd) attention"]]]],
-                "SessionEnd":       [["hooks": [["type": "command", "command": "\(hookCmd) idle"]]]],
+                "UserPromptSubmit": [["hooks": [["type": "command", "command": "\(hookCmd) claude running"]]]],
+                "Stop":             [["hooks": [["type": "command", "command": "\(hookCmd) claude attention"]]]],
+                "Notification":     [["hooks": [["type": "command", "command": "\(hookCmd) claude attention"]]]],
+                "SessionEnd":       [["hooks": [["type": "command", "command": "\(hookCmd) claude ended"]]]],
             ]
         ]
         if let data = try? JSONSerialization.data(withJSONObject: hooks, options: [.prettyPrinted, .sortedKeys]) {
             try? data.write(to: URL(fileURLWithPath: claudeHooksPath), options: .atomic)
         }
     }
+
+    private static func writeWrapper(name: String, script: String) {
+        let path = (kookyBinDirectory as NSString).appendingPathComponent(name)
+        try? script.write(toFile: path, atomically: true, encoding: .utf8)
+        chmod(path, 0o755)
+    }
+
+    /// Common bash header for every wrapper: locate the real binary on
+    /// `$PATH` skipping our own dir, abort if missing.
+    private static func wrapperPreamble(binary: String) -> String {
+        """
+        #!/usr/bin/env bash
+        self_dir="$(cd "$(dirname "$0")" && pwd)"
+        real=""
+        IFS=:
+        for dir in $PATH; do
+            [[ "$dir" == "$self_dir" ]] && continue
+            if [[ -x "$dir/\(binary)" ]]; then
+                real="$dir/\(binary)"
+                break
+            fi
+        done
+        unset IFS
+
+        if [[ -z "$real" ]]; then
+            echo "kooky: real '\(binary)' binary not found in PATH" >&2
+            exit 127
+        fi
+        """
+    }
+
+    /// Inside a kooky session ($KOOKY_SURFACE_ID set), injects --settings so
+    /// Claude Code's hooks report state back to the app via the bundled
+    /// KookyHook helper. Outside, transparent passthrough.
+    private static let claudeWrapperScript = """
+    \(wrapperPreamble(binary: "claude"))
+
+    if [[ -n "$KOOKY_SURFACE_ID" && -n "$KOOKY_HOOKS_PATH" ]]; then
+        exec "$real" --settings "$KOOKY_HOOKS_PATH" "$@"
+    fi
+    exec "$real" "$@"
+    """
+
+    /// Codex doesn't expose a Claude-style hooks settings file we can override
+    /// per-invocation, but it does have `notify = ["cmd", "arg", ...]` in
+    /// config.toml — fired after each agent turn with a JSON payload appended
+    /// as the final argv. We override `notify` inline via `-c` so user's
+    /// ~/.codex/config.toml is left untouched. The single signal we get is
+    /// "turn complete" which we map to `attention`.
+    private static let codexWrapperScript = """
+    \(wrapperPreamble(binary: "codex"))
+
+    if [[ -n "$KOOKY_SURFACE_ID" && -n "$KOOKY_HOOK_BIN" ]]; then
+        # Codex doesn't expose SessionStart / SessionEnd lifecycle hooks
+        # we can override per-invocation. Bracket the run from the wrapper:
+        # send `running` before codex starts (immediate icon promotion),
+        # then `ended` after exit (revert to terminal). Mid-run state
+        # transitions still come from Codex's `notify` config below.
+        "$KOOKY_HOOK_BIN" codex running 2>/dev/null
+        "$real" -c "notify=[\\"$KOOKY_HOOK_BIN\\",\\"codex\\",\\"attention\\"]" "$@"
+        status=$?
+        "$KOOKY_HOOK_BIN" codex ended 2>/dev/null
+        exit $status
+    fi
+    exec "$real" "$@"
+    """
 
     enum DetectedUserShell { case zsh, bash, other }
 

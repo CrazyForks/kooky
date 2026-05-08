@@ -170,6 +170,12 @@ final class GhosttySurfaceView: NSView {
             updateDrawTimer()
         }
     }
+    /// IME composition flag. We never render the marked text ourselves —
+    /// `firstRect(forCharacterRange:actualRange:)` returns a sentinel rect to
+    /// keep the system's marked-text overlay off the surface — but
+    /// `hasMarkedText()` is load-bearing: keyDown checks it to gate Enter /
+    /// arrow / Esc routing while a candidate window is open.
+    private var isComposing = false
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -393,21 +399,27 @@ final class GhosttySurfaceView: NSView {
         }
 
         // Special / navigation keys with full modifier handling (CSI mod
-        // digit 2…8 = 1 + Shift + 2·Alt + 4·Ctrl).
-        if let bytes = Self.escapeSequence(for: event) {
+        // digit 2…8 = 1 + Shift + 2·Alt + 4·Ctrl). Skipped while IME is
+        // composing so Enter / Esc / arrows can dismiss / accept the
+        // candidate window without leaking through to the PTY.
+        if !hasMarkedText(), let bytes = Self.escapeSequence(for: event) {
             sendInputBytes(bytes, to: surface)
             return
         }
 
-        // Regular text — letters, digits, symbols, AND Ctrl+letter (NSEvent
-        // already gives us the right control byte: Ctrl+A → "\u{01}", etc.).
-        // Skip Private-Use-Area "characters" (legacy function-key glyphs)
-        // that we don't have an explicit escape for; piping those would
-        // render tofu in the PTY.
-        guard let chars = event.characters, !chars.isEmpty else { return }
-        let firstScalar = chars.unicodeScalars.first?.value ?? 0
-        if firstScalar >= 0xE000 && firstScalar <= 0xF8FF { return }
-        sendInputBytes(chars, to: surface)
+        // Ctrl+letter — NSEvent already gives the control byte (Ctrl+A →
+        // "\u{01}"); IME would swallow these, so we forward them ourselves.
+        if mods.contains(.control), !mods.contains(.option),
+           let chars = event.characters, !chars.isEmpty,
+           let scalar = chars.unicodeScalars.first?.value, scalar < 0x20 {
+            sendInputBytes(chars, to: surface)
+            return
+        }
+
+        // Regular text + IME composition. inputContext routes through
+        // NSTextInputClient: insertText for committed input, setMarkedText
+        // for in-progress composition.
+        inputContext?.handleEvent(event)
     }
 
     private func sendInputBytes(_ bytes: String, to surface: ghostty_surface_t) {
@@ -488,11 +500,16 @@ final class GhosttySurfaceView: NSView {
     }
 
     override func keyUp(with event: NSEvent) {
-        guard let surface else {
-            super.keyUp(with: event)
-            return
-        }
-        sendKey(event: event, action: GHOSTTY_ACTION_RELEASE, surface: surface)
+        // Intentionally do not forward key-release to libghostty: when an
+        // app (e.g. Codex / ratatui-crossterm) pushes kitty keyboard
+        // protocol with event-types enabled, libghostty turns the release
+        // into an escape sequence that the app then re-interprets as a
+        // second press, doubling every keystroke (codex#18564). Press +
+        // modifier flagsChanged carry enough state for libghostty's
+        // internal modifier tracking; release is only meaningful to
+        // applications that opt into the kitty enhancement, and those that
+        // do tend to mishandle it.
+        super.keyUp(with: event)
     }
 
     override func flagsChanged(with event: NSEvent) {
@@ -862,4 +879,54 @@ private extension ghostty_input_mouse_state_e {
 private extension ghostty_input_mouse_button_e {
     static var LEFT: Self { GHOSTTY_MOUSE_LEFT }
     static var RIGHT: Self { GHOSTTY_MOUSE_RIGHT }
+}
+
+// MARK: - NSTextInputClient (IME / 中日韩 composition)
+
+extension GhosttySurfaceView: @preconcurrency NSTextInputClient {
+    func insertText(_ string: Any, replacementRange: NSRange) {
+        guard let surface else { return }
+        let text = (string as? NSAttributedString)?.string ?? (string as? String) ?? ""
+        guard !text.isEmpty else { return }
+        sendInputBytes(text, to: surface)
+        isComposing = false
+    }
+
+    func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        let length = (string as? NSAttributedString)?.length ?? (string as? String)?.count ?? 0
+        isComposing = length > 0
+    }
+
+    func unmarkText() { isComposing = false }
+
+    func selectedRange() -> NSRange { NSRange(location: NSNotFound, length: 0) }
+
+    func markedRange() -> NSRange {
+        // Length here is a sentinel — IME just needs to see a non-zero
+        // marked range while composing. The actual marked string isn't
+        // rendered (firstRect pushes it off-surface).
+        isComposing ? NSRange(location: 0, length: 1) : NSRange(location: NSNotFound, length: 0)
+    }
+
+    func hasMarkedText() -> Bool { isComposing }
+
+    func attributedSubstring(forProposedRange range: NSRange, actualRange: NSRangePointer?) -> NSAttributedString? { nil }
+
+    func characterIndex(for point: NSPoint) -> Int { NSNotFound }
+
+    func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
+        // libghostty doesn't expose the cursor cell rect, so we can't anchor
+        // the IME marked text inline at the cursor. If we return a rect
+        // inside the view, the system paints "nihao" composition over the
+        // surface and TUIs that don't redraw aggressively (Codex) leave a
+        // ghost (`nihao你好`). Returning a 1×1 rect just below the window
+        // pushes both marked text and the candidate window outside the
+        // surface, accepting an off-anchor candidate window in exchange for
+        // no ghost residue inside the terminal.
+        guard let window else { return .zero }
+        let frame = window.frame
+        return NSRect(x: frame.minX, y: frame.minY - 4, width: 1, height: 1)
+    }
+
+    func validAttributesForMarkedText() -> [NSAttributedString.Key] { [] }
 }

@@ -139,7 +139,6 @@ final class WorkspaceStoreTests: XCTestCase {
             workspaces: [
                 PersistedWorkspace(
                     id: wsId,
-                    title: "kookycode",
                     workingDirectoryPath: "/tmp/projectA",
                     tabs: [
                         PersistedTab(id: tab1, agentId: "terminal", currentDirectoryPath: "/tmp/projectA"),
@@ -154,7 +153,7 @@ final class WorkspaceStoreTests: XCTestCase {
         XCTAssertEqual(store.workspaces.count, 1)
         let ws = store.workspaces[0]
         XCTAssertEqual(ws.id, wsId)
-        XCTAssertEqual(ws.title, "kookycode")
+        XCTAssertEqual(ws.title, "projectA")
         XCTAssertEqual(ws.workingDirectory.path, "/tmp/projectA")
         XCTAssertEqual(ws.tabs.map(\.id), [tab1, tab2])
         XCTAssertEqual(ws.tabs[1].agent.id, "claude-code")
@@ -169,7 +168,6 @@ final class WorkspaceStoreTests: XCTestCase {
             workspaces: [
                 PersistedWorkspace(
                     id: wsId,
-                    title: "x",
                     workingDirectoryPath: "/tmp/projectA",
                     tabs: [PersistedTab(id: tabId, agentId: "terminal", currentDirectoryPath: "/tmp/projectA/deep")],
                     activeTabId: tabId

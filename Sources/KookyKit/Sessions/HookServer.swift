@@ -8,9 +8,23 @@ import Foundation
 /// The hooks themselves run as short-lived child processes of the agent (e.g.
 /// Claude Code spawns them per Stop / UserPromptSubmit / Notification). They
 /// connect, write one line, close — we accept and read in a single pass.
+/// Lifecycle signal an agent's hook fired. Wire format is the raw String
+/// case names; the enum lets `WorkspaceStore` switch exhaustively.
+enum HookEvent: String {
+    case running, attention, idle, ended
+
+    var activityState: SessionActivityState {
+        switch self {
+        case .running: return .running
+        case .attention: return .attention
+        case .idle, .ended: return .idle
+        }
+    }
+}
+
 @MainActor
 final class HookServer {
-    typealias Handler = (_ event: String, _ sessionId: UUID) -> Void
+    typealias Handler = (_ agent: AgentTemplate, _ event: HookEvent, _ sessionId: UUID) -> Void
 
     private let handler: Handler
     private var listenFd: Int32 = -1
@@ -92,16 +106,22 @@ final class HookServer {
         guard clientFd >= 0 else { return }
         defer { close(clientFd) }
 
+        // Single read up to 4 KiB. Hook payloads are < 200 B and unix
+        // SOCK_STREAM kernel-buffers small writes whole, so partial reads
+        // aren't a practical concern at our message size.
         var buffer = [UInt8](repeating: 0, count: 4096)
         let n = buffer.withUnsafeMutableBufferPointer { read(clientFd, $0.baseAddress, $0.count) }
         guard n > 0 else { return }
         let data = Data(bytes: buffer, count: n)
         guard
             let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let event = dict["event"] as? String,
+            let agentSlug = dict["agent"] as? String,
+            let eventName = dict["event"] as? String,
             let surface = dict["surface"] as? String,
-            let id = UUID(uuidString: surface)
+            let id = UUID(uuidString: surface),
+            let agent = AgentTemplate.from(hookSlug: agentSlug),
+            let event = HookEvent(rawValue: eventName)
         else { return }
-        handler(event, id)
+        handler(agent, event, id)
     }
 }

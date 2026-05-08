@@ -37,14 +37,13 @@ final class WorkspaceStore {
     }
 
     @discardableResult
-    func addWorkspace(workingDirectory: URL? = nil, title: String? = nil) -> Workspace {
+    func addWorkspace(workingDirectory: URL? = nil) -> Workspace {
         // Default: inherit active workspace's current cwd (which itself tracks
         // the active tab's OSC 7 reports). Falls back to $HOME on first launch.
         let dir = workingDirectory
             ?? active?.workingDirectory
             ?? URL(fileURLWithPath: NSHomeDirectory())
-        let resolvedTitle = title ?? Self.defaultTitle(for: dir)
-        let ws = Workspace(title: resolvedTitle, workingDirectory: dir)
+        let ws = Workspace(workingDirectory: dir)
         workspaces.append(ws)
         activeWorkspaceId = ws.id
         addTab(in: ws)
@@ -88,23 +87,42 @@ final class WorkspaceStore {
             return
         }
         if workspace.activeTabId == session.id {
-            let nextIdx = min(idx, workspace.tabs.count - 1)
-            workspace.activeTabId = workspace.tabs[nextIdx].id
+            let next = workspace.tabs[min(idx, workspace.tabs.count - 1)]
+            workspace.activeTabId = next.id
+            // Sidebar title / path follow workingDirectory, so sync it to the
+            // tab we just promoted — otherwise the row keeps showing the
+            // closed tab's cwd.
+            if workspace.workingDirectory != next.currentDirectory {
+                workspace.workingDirectory = next.currentDirectory
+            }
         }
         scheduleSave()
     }
 
-    /// Routes a hook event to the named session. Called from `HookServer`
-    /// after a `kooky-hook` write lands. Unknown events are ignored.
-    func applyHookEvent(_ event: String, sessionId: UUID) {
+    /// Routes a hook event to the named session. If a plain Terminal tab
+    /// reports an agent hook (user ran `claude` / `codex` inside the shell),
+    /// upgrade the session's template so the sidebar / tab icon catches up.
+    /// On `.ended`, drop back to `.terminal` so a future agent run in the
+    /// same tab can re-promote.
+    func applyHookEvent(agent: AgentTemplate, event: HookEvent, sessionId: UUID) {
         for ws in workspaces {
             guard let session = ws.tabs.first(where: { $0.id == sessionId }) else { continue }
-            switch event {
-            case "running": session.activityState = .running
-            case "attention": session.activityState = .attention
-            case "idle": session.activityState = .idle
-            default: break
+            let agentBefore = session.agent.id
+            if event == .ended {
+                // Only revert when the agent reporting the end matches the
+                // session's current agent. Otherwise a Codex run inside a
+                // Claude tab (or a delayed `ended` from a prior run) would
+                // wipe the still-active Claude icon.
+                if session.agent.id == agent.id {
+                    session.agent = .terminal
+                }
+            } else if session.agent.id == AgentTemplate.terminal.id {
+                session.agent = agent
             }
+            session.activityState = event.activityState
+            // activityState isn't persisted; only re-save when the template
+            // actually changed (promote / revert).
+            if session.agent.id != agentBefore { scheduleSave() }
             return
         }
     }
@@ -133,7 +151,6 @@ final class WorkspaceStore {
         for ws in state.workspaces {
             let workspace = Workspace(
                 id: ws.id,
-                title: ws.title,
                 workingDirectory: URL(fileURLWithPath: ws.workingDirectoryPath)
             )
             for persisted in ws.tabs {
@@ -180,15 +197,7 @@ final class WorkspaceStore {
         let engine = engineFactory()
         var config = template.makeSessionConfig()
         config.workingDirectory = initialCwd.path
-        // Lets the kooky-hook CLI tag inbound hook events back to this session.
-        config.environment["KOOKY_SURFACE_ID"] = sessionId.uuidString
-        // Hooks JSON path consumed by the bundled `claude` wrapper.
-        config.environment["KOOKY_HOOKS_PATH"] = KookyShellIntegration.claudeHooksPath
-        // Wrapper directory; the rc files re-prepend it to PATH after the
-        // user's .zshrc / .bashrc has had a chance to rewrite PATH itself.
-        config.environment["KOOKY_BIN_DIR"] = KookyShellIntegration.kookyBinDirectory
-        let parentPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/local/bin:/usr/bin:/bin"
-        config.environment["PATH"] = "\(KookyShellIntegration.kookyBinDirectory):\(parentPath)"
+        config.environment.merge(KookyShellIntegration.kookyEnvironment(for: sessionId)) { _, new in new }
         engine.start(config: config)
         let session = Session(id: sessionId, engine: engine, currentDirectory: initialCwd, agent: template)
         wirePwdSync(engine: engine, session: session, workspace: workspace)
@@ -227,9 +236,4 @@ final class WorkspaceStore {
         )
     }
 
-    /// Last path component; "Home" when the dir is `$HOME` (reads nicer than "corey").
-    private static func defaultTitle(for url: URL) -> String {
-        if url.standardizedFileURL.path == NSHomeDirectory() { return "Home" }
-        return url.lastPathComponent
-    }
 }

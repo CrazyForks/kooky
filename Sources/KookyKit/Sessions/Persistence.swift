@@ -11,7 +11,6 @@ struct PersistedState: Codable, Equatable {
 
 struct PersistedWorkspace: Codable, Equatable {
     var id: UUID
-    var title: String
     var workingDirectoryPath: String
     var tabs: [PersistedTab]
     var activeTabId: UUID?
@@ -19,15 +18,13 @@ struct PersistedWorkspace: Codable, Equatable {
     @MainActor
     init(_ ws: Workspace) {
         self.id = ws.id
-        self.title = ws.title
         self.workingDirectoryPath = ws.workingDirectory.path
         self.tabs = ws.tabs.map(PersistedTab.init)
         self.activeTabId = ws.activeTabId
     }
 
-    init(id: UUID, title: String, workingDirectoryPath: String, tabs: [PersistedTab], activeTabId: UUID?) {
+    init(id: UUID, workingDirectoryPath: String, tabs: [PersistedTab], activeTabId: UUID?) {
         self.id = id
-        self.title = title
         self.workingDirectoryPath = workingDirectoryPath
         self.tabs = tabs
         self.activeTabId = activeTabId
