@@ -1,0 +1,26 @@
+import AppKit
+@testable import KookyKit
+
+/// In-memory stand-in for `TerminalEngine` so `WorkspaceStore` tests don't
+/// need libghostty or a real PTY. Records calls so tests can assert on them.
+@MainActor
+final class TestEngine: TerminalEngine {
+    let view: NSView = NSView()
+    var backgroundColor: NSColor { .black }
+    var onPwdChange: ((String) -> Void)?
+
+    private(set) var startedConfigs: [TerminalSessionConfig] = []
+    private(set) var terminateCount = 0
+
+    func start(config: TerminalSessionConfig) {
+        startedConfigs.append(config)
+    }
+
+    func terminate() {
+        terminateCount += 1
+    }
+
+    func emitPwd(_ path: String) {
+        onPwdChange?(path)
+    }
+}
