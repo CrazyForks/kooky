@@ -24,15 +24,22 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the roadmap and design notes.
 
 Download the latest `Kooky-vX.Y.Z.dmg` from [Releases](https://github.com/iAmCorey/kooky/releases), open it, drag `Kooky.app` to `Applications`.
 
-**First launch will be blocked by Gatekeeper** because the build is adhoc-signed (no paid Apple Developer ID yet — public-distribution signing + notarization are deferred until the project has real users). Bypass once with either:
+**First launch will be blocked by Gatekeeper** because the build is adhoc-signed (no paid Apple Developer ID yet — public-distribution signing + notarization land when the project has real users). You'll see *"Kooky cannot be opened because Apple cannot check it for malicious software"* or *"Kooky is damaged and cannot be opened"*. One of these two paths gets you through:
+
+**Path A (GUI) — System Settings**
+
+1. Double-click `Kooky.app` once. macOS blocks it and shows the warning dialog. Dismiss the dialog.
+2. Open **System Settings → Privacy & Security**.
+3. Scroll to the **Security** section. You'll see "Kooky was blocked to protect your Mac" with an **Open Anyway** button. Click it. Enter your password.
+4. Double-click `Kooky.app` again. The dialog now offers **Open** — click it. Done.
+
+**Path B (Terminal) — strip quarantine**
 
 ```sh
-# Option A — right-click in Finder, hold ⌃, click "Open"
-# Option B — strip the quarantine attribute one-shot:
 xattr -d com.apple.quarantine /Applications/Kooky.app
 ```
 
-After the first launch, macOS remembers and won't ask again.
+Either way, macOS only blocks the first launch. After that you launch normally from Spotlight / Dock / Finder.
 
 ## Building from source
 
