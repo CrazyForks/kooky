@@ -20,7 +20,21 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the roadmap and design notes.
 - **macOS-native.** Feels like a Mac app, not a web view.
 - **Zero cloud.** Fully local, no telemetry, no accounts.
 
-## Building
+## Install
+
+Download the latest `Kooky-vX.Y.Z.dmg` from [Releases](https://github.com/iAmCorey/kooky/releases), open it, drag `Kooky.app` to `Applications`.
+
+**First launch will be blocked by Gatekeeper** because the build is adhoc-signed (no paid Apple Developer ID yet — public-distribution signing + notarization are deferred until the project has real users). Bypass once with either:
+
+```sh
+# Option A — right-click in Finder, hold ⌃, click "Open"
+# Option B — strip the quarantine attribute one-shot:
+xattr -d com.apple.quarantine /Applications/Kooky.app
+```
+
+After the first launch, macOS remembers and won't ask again.
+
+## Building from source
 
 Requires Xcode 26+ and macOS 15+.
 
@@ -31,9 +45,15 @@ Requires Xcode 26+ and macOS 15+.
 swift build
 swift run
 swift test          # 31 unit tests covering AgentTemplate + WorkspaceStore (incl. persistence + splits + cross-pane move + OSC 133 command status)
+
+# Produce a real macOS .app bundle (writes dist/Kooky.app):
+./scripts/build-app.sh
+
+# Package as DMG for distribution (writes dist/Kooky-vX.Y.Z.dmg):
+./scripts/build-dmg.sh --build
 ```
 
-`Vendor/` is gitignored; the setup script is idempotent and skips the download when the pinned SHA already matches.
+`Vendor/` and `dist/` are gitignored. The libghostty setup script is idempotent and skips the download when the pinned SHA already matches.
 
 ## License
 
