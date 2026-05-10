@@ -1,12 +1,12 @@
 # kooky
 
-> *给写代码的人做的 macOS 终端。*
+> *给写代码的人用的 macOS 终端。*
 
 🇨🇳 中文  ·  🇬🇧 [English](README.md)
 
-![kooky 截图 —— 侧边栏三个 workspace,两个 pane 并排跑 Claude Code 和 Codex,`+` 菜单展开了五种内置 agent](screenshot.png)
+![kooky 截图：侧边栏里有三个 workspace，两个 pane 并排运行 Claude Code 和 Codex，`+` 菜单展开了五种内置 agent](screenshot.png)
 
-现在的终端都是在 AI agent 出现之前设计的。**kooky 直接把 agent 会话做成 tab** —— Claude Code / Codex / Gemini CLI 跟 shell 并排放在一起,界面会跟着 agent 的状态走。开源、仅支持 macOS、MIT 许可。底层 GPU 渲染走 [libghostty](https://github.com/ghostty-org/ghostty)。
+很多终端是在 AI agent 进入日常开发之前设计的。**kooky 让 agent 会话和普通 shell 一样成为独立 tab**：Claude Code / Codex / Gemini CLI 可以跟 shell 放在一起，界面也会跟着每个 agent 的状态变化。开源、仅支持 macOS、MIT 许可。底层 GPU 渲染基于 [libghostty](https://github.com/ghostty-org/ghostty)。
 
 **[下载最新版](https://github.com/iAmCorey/kooky/releases/latest)**  ·  [架构文档](ARCHITECTURE.md)  ·  [更新日志](CHANGELOG.md)
 
@@ -14,33 +14,33 @@
 
 ## 它做什么
 
-**vertical tabs,做得像样的那种。** 侧边栏放所有 workspace,可以折叠成三种宽度(`⌘⌃S` 循环切)。每个 pane 都有自己的 tab 栏, 风格的 split。tab 可以拖来拖去,也可以拖到另一个 pane 里(整个会话连着引擎和 scrollback 一起搬过去)。所有状态重启之后都还在。
+**垂直 tab，但不是凑合的那种。** 侧边栏管理所有 workspace，可以在三种宽度间折叠（`⌘⌃S` 循环切换）。每个 pane 都有自己的 tab 栏，分屏方式接近 。tab 可以拖动排序，也可以拖到另一个 pane；整个会话会连同引擎状态和 scrollback 一起移动。重启后状态会恢复。
 
-**一键开 AI agent。** Claude Code · Codex · Gemini CLI · OpenCode · Amp。`+` 菜单里点一个 —— shell 还没把命令行打出来,agent 已经在跑了。侧边栏上的圆点实时告诉你每个 agent 现在在干嘛:跑命令中、等你回复、还是闲着。
+**一键启动 AI agent。** Claude Code · Codex · Gemini CLI · OpenCode · Amp。`+` 菜单里选一个，agent 会在第一个 prompt 出现前启动。侧边栏圆点显示每个 agent 的状态：运行中、需要处理，或者空闲。
 
-**知道你的 shell 干了啥。** OSC 133 / FinalTerm 钩子装在我们自己的 ZDOTDIR 里,**不动你的** `~/.zshrc`。上条命令跑挂的时候,对应 tab 和它所在的 workspace 上会冒一个小红点;鼠标悬停可以看到 `exit N · 12.4s`。`⌘↑` / `⌘↓` 直接在历史输出里跳到上一个 / 下一个命令提示符。
+**知道 shell 刚刚发生了什么。** OSC 133 / FinalTerm 钩子装在 kooky 自己的 ZDOTDIR 里，**不会改你的** `~/.zshrc`。上一条命令失败时，对应 tab 和 workspace 会出现红点；悬停可看到 `exit N · 12.4s`。pane 底部状态栏会显示 Git 分支、diff 统计、Node 版本和 Python env；Node 和 Git 分支可以点击切换。`⌘↑` / `⌘↓` 可以在 scrollback 里跳到上一个 / 下一个命令提示符。
 
-**全键盘操作。** `⌘T` / `⌘N` 新开 tab / workspace · `⌘W` / `⌘⇧W` 关闭 · `⌘1-9` / `⌥⌘1-9` 切换 · `⌘D` / `⌘⇧D` 向右 / 向下分屏 · `⌘[` `⌘]` 切换焦点 · `⌘=` / `⌘-` / `⌘0` 字号 · `⌘K` 清屏。
+**完整的键盘操作。** `⌘T` / `⌘N` 新建 tab / workspace · `⌘W` / `⌘⇧W` 关闭 · `⌘1-9` / `⌥⌘1-9` 切换 · `⌘D` / `⌘⇧D` 向右 / 向下分屏 · `⌘[` `⌘]` 切换焦点 · `⌘=` / `⌘-` / `⌘0` 调整字号 · `⌘K` 清屏。
 
-**该有的 macOS 体验都有。** Onest + JetBrains Mono 字体。顶部 32pt 给红绿灯留位置,旁边放了一块专门用来拖窗的区域(解决了拖标题栏和拖 tab 抢手势的老毛病)。自定义 About 面板、原生菜单带快捷键提示、中日韩 / 越南文等 IME 都支持。状态写在 `~/Library/Application Support/kooky/`,不连云、不发遥测、不要账号。
+**该有的 macOS 体验都有。** Onest + JetBrains Mono 字体。顶部 32pt 的 chrome 区域给红绿灯留出位置，并提供专门的窗口拖拽区域，避免拖窗口和拖 tab 抢手势。自定义 About 面板、带快捷键提示的原生菜单、中日韩 / 越南文等 IME 都支持。状态写在 `~/Library/Application Support/kooky/`，不连云、不发遥测、不需要账号。
 
 ## 安装
 
-从 [Releases](https://github.com/iAmCorey/kooky/releases) 下载最新的 `.dmg`,打开后把 `Kooky.app` 拖进 `Applications` 文件夹。
+从 [Releases](https://github.com/iAmCorey/kooky/releases) 下载最新的 `.dmg`，打开后把 `Kooky.app` 拖进 `Applications` 文件夹。
 
-**第一次启动会被 Gatekeeper 拦下来**,因为现在是 adhoc 签名 —— 还没买 Apple Developer ID,等项目有真实用户的时候再花那笔钱。你会看到 *"Kooky cannot be opened because Apple cannot check it for malicious software"* 或者 *"is damaged and cannot be opened"* 这两类报错。下面三种方法挑一个就能过:
+**第一次启动会被 Gatekeeper 拦下来**，因为当前构建是 adhoc 签名（还没有 Apple Developer ID；公开分发签名和公证会等有真实用户后再做）。你会看到 *"Kooky cannot be opened because Apple cannot check it for malicious software"* 或者 *"is damaged and cannot be opened"* 这两类报错。下面三种方法任选一个即可：
 
 <details>
 <summary><b>方法 A —— 走系统设置 <i>(推荐)</i></b></summary>
 
-1. 先双击一次 `Kooky.app`,macOS 会弹警告,把警告窗口关掉。
-2. 打开 **系统设置 → 隐私与安全性**,往下翻到 **安全性** 这一段。
-3. 看到 *"Kooky was blocked to protect your Mac"*,点旁边的 **Open Anyway**,输密码。
-4. 再双击一次 `Kooky.app`,这次会有 **Open** 按钮,点它。完事。
+1. 先双击一次 `Kooky.app`，macOS 会弹警告，把警告窗口关掉。
+2. 打开 **系统设置 → 隐私与安全性**，往下翻到 **安全性** 这一段。
+3. 看到 *"Kooky was blocked to protect your Mac"* 后，点旁边的 **Open Anyway**，输入密码。
+4. 再双击一次 `Kooky.app`，这次会有 **Open** 按钮，点它即可。
 </details>
 
 <details>
-<summary><b>方法 B —— Terminal 一行搞定</b></summary>
+<summary><b>方法 B —— 终端一行命令</b></summary>
 
 ```sh
 xattr -d com.apple.quarantine /Applications/Kooky.app
@@ -48,38 +48,38 @@ xattr -d com.apple.quarantine /Applications/Kooky.app
 </details>
 
 <details>
-<summary><b>方法 C —— 连 "Open Anyway" 按钮都没出现的话</b></summary>
+<summary><b>方法 C —— 连 "Open Anyway" 按钮都没有</b></summary>
 
-新版 Sequoia 有时对 adhoc 签名的 app **根本不给** "Open Anyway" 按钮。这种情况下先把旧版的 "Anywhere" 选项打开,再回去走方法 A:
+新版 Sequoia 有时会对 adhoc 签名的 app 完全不显示 "Open Anyway" 按钮。这种情况下可以先把旧版的 "Anywhere" 选项打开，再回去走方法 A：
 
 ```sh
-sudo spctl --global-disable      # macOS 15+;老系统用 --master-disable
+sudo spctl --global-disable      # macOS 15+；老系统用 --master-disable
 # 系统设置 → 隐私与安全性 → "Allow applications from" 选 Anywhere
-# 双击 Kooky.app,这下能跑了
-sudo spctl --global-enable       # kooky 跑过一次之后立刻把 Gatekeeper 打开
+# 双击 Kooky.app，这次应该可以启动
+sudo spctl --global-enable       # Kooky 跑过一次之后，立刻把 Gatekeeper 打开
 ```
 
-注意这条**是系统级开关** —— 关着的时候 macOS 会让任何未签名 app 都能跑。kooky 跑过一次就把它打开,系统会单独记住信任过 kooky,以后不会再拦。
+注意：这是**系统级开关**。关着的时候，macOS 会允许任何未签名 app 启动。Kooky 跑过一次就把它重新打开；系统会单独记住已经信任过 Kooky，以后不会再拦。
 </details>
 
 macOS **只拦第一次启动**。之后从 Spotlight、Dock、Finder 启动都跟普通 app 一样。
 
 ## 从源码构建
 
-需要 Xcode 26+ 和 macOS 14+(Sonoma —— 因为用了 `@Observable`,这是它能跑的最低系统)。
+需要 Xcode 26+ 和 macOS 14+（Sonoma，`@Observable` 的最低系统要求）。
 
 ```sh
-./scripts/setup-libghostty.sh        # 一次性:把预编译的 libghostty xcframework 下到 Vendor/
+./scripts/setup-libghostty.sh        # 一次性：把预编译的 libghostty xcframework 下到 Vendor/
 swift build
 swift run                            # 开发模式直接跑
-swift test                           # 31 个单测
+swift test                           # 67 个单测
 
 ./scripts/build-app.sh               # 产出 dist/Kooky.app
 ./scripts/build-dmg.sh --build       # 产出 dist/Kooky-vX.Y.Z.dmg
 ```
 
-`Vendor/` 和 `dist/` 都在 `.gitignore` 里。libghostty 那个 setup 脚本可以反复跑,SHA 没变就直接跳过。
+`Vendor/` 和 `dist/` 都在 `.gitignore` 里。libghostty 的 setup 脚本可以反复跑；SHA 没变时会直接跳过。
 
-## License
+## 许可证
 
-MIT —— 见 [LICENSE](LICENSE)。打包进来的第三方资源各自保留自己的 license,详见 [NOTICE.md](NOTICE.md)。
+MIT —— 见 [LICENSE](LICENSE)。打包进来的第三方资源保留各自的许可证，详见 [NOTICE.md](NOTICE.md)。

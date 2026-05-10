@@ -2,29 +2,61 @@ import Darwin
 import Foundation
 
 // kooky-hook: invoked by an agent's hook system (Claude Code's `--settings`
-// hooks, Codex equivalents, …) to ping the running kooky app over a unix
-// socket. Exit code is always 0 — agents shouldn't fail because our app
-// happens to be closed.
+// hooks, Codex equivalents, …) and the shell precmd hook (`env` mode) to
+// ping the running kooky app over a unix socket.
+//
+// Exit codes:
+//   0 — IPC succeeded, OR caller is outside kooky (no surface id) / args
+//       malformed (programmer error). Both are "no retry needed."
+//   1 — IPC failed (kooky not listening, socket gone, write error). Shell
+//       callers use this to keep their dedup cache un-advanced so the next
+//       prompt re-attempts. Without this distinction, a single transient
+//       failure (kooky restarting, socket recreated) would freeze the env
+//       cache permanently.
 //
 // Usage: kooky-hook <agent> <event>
 //   <agent> ∈ claude | codex (or any AgentTemplate.id)
 //   <event> ∈ running | attention | idle
+// Usage: kooky-hook env <VIRTUAL_ENV> <CONDA_DEFAULT_ENV> <NVM_BIN> <NVM_DIR> <NODE_VERSION>
 // Reads:  $KOOKY_SURFACE_ID       UUID of the originating session
 // Reads:  any stdin               drained but ignored (Claude pipes JSON in)
 
-guard CommandLine.arguments.count >= 3 else { exit(0) }
-let agent = CommandLine.arguments[1]
-let event = CommandLine.arguments[2]
 let surface = ProcessInfo.processInfo.environment["KOOKY_SURFACE_ID"] ?? ""
 guard !surface.isEmpty else { exit(0) }
 
 let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
 let socketPath = support.appendingPathComponent("kooky/socket").path
 
-let payload = #"{"agent":"\#(agent)","event":"\#(event)","surface":"\#(surface)"}\#n"#
+func arg(_ index: Int) -> String {
+    CommandLine.arguments.indices.contains(index) ? CommandLine.arguments[index] : ""
+}
+
+let payloadObject: [String: String]
+if CommandLine.arguments.count >= 2, CommandLine.arguments[1] == "env" {
+    payloadObject = [
+        "kind": "env",
+        "surface": surface,
+        "VIRTUAL_ENV": arg(2),
+        "CONDA_DEFAULT_ENV": arg(3),
+        "NVM_BIN": arg(4),
+        "NVM_DIR": arg(5),
+        "KOOKY_NODE_VERSION": arg(6),
+    ]
+} else if CommandLine.arguments.count >= 3 {
+    payloadObject = [
+        "agent": CommandLine.arguments[1],
+        "event": CommandLine.arguments[2],
+        "surface": surface,
+    ]
+} else {
+    exit(0)
+}
+
+guard var payload = try? JSONSerialization.data(withJSONObject: payloadObject) else { exit(0) }
+payload.append(0x0A)
 
 let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-guard fd >= 0 else { exit(0) }
+guard fd >= 0 else { exit(1) }
 defer { close(fd) }
 
 var addr = sockaddr_un()
@@ -44,7 +76,7 @@ let connected = withUnsafePointer(to: &addr) { addrPtr in
         connect(fd, $0, len)
     }
 }
-guard connected == 0 else { exit(0) }
+guard connected == 0 else { exit(1) }
 
-let bytes = Array(payload.utf8)
-_ = bytes.withUnsafeBufferPointer { write(fd, $0.baseAddress, $0.count) }
+let written = payload.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
+exit(written < 0 ? 1 : 0)

@@ -98,6 +98,24 @@ final class WorkspaceStoreTests: XCTestCase {
         XCTAssertEqual(session.lastCommandExit, 0)
     }
 
+    func testShellEnvironmentReportUpdatesSessionEnvironment() {
+        let store = makeStore()
+        let ws = store.addWorkspace(workingDirectory: projectA)
+        let session = firstPane(ws).tabs[0]
+
+        store.applyShellEnvironment([
+            "VIRTUAL_ENV": "/tmp/projectA/.venv",
+            "CONDA_DEFAULT_ENV": "",
+            "NVM_BIN": "/Users/corey/.nvm/versions/node/v22.3.0/bin",
+            "NVM_DIR": "/Users/corey/.nvm",
+            "KOOKY_NODE_VERSION": "v22.3.0",
+        ], sessionId: session.id)
+
+        XCTAssertEqual(session.environment.pythonVenv, ".venv")
+        XCTAssertEqual(session.environment.nodeVersion, "v22.3.0")
+        XCTAssertEqual(session.environment.nvmDirectory, "/Users/corey/.nvm")
+    }
+
     func testWorkspaceFailureAggregatesAcrossPanes() {
         let store = makeStore()
         let ws = store.addWorkspace(workingDirectory: projectA)

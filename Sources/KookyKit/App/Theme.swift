@@ -29,6 +29,12 @@ enum Theme {
     static let activityAttention = Color(.sRGB, red: 0.91, green: 0.69, blue: 0.40, opacity: 1)
     static let activityFailure = Color(.sRGB, red: 0.91, green: 0.40, blue: 0.40, opacity: 1)
 
+    /// Git diff colors for the pane's bottom-right status — green for
+    /// insertions, red for deletions. `gitDeletion` reuses the failure red so
+    /// "red == something to look at" stays consistent across signals.
+    static let gitInsertion = Color(.sRGB, red: 0.45, green: 0.78, blue: 0.50, opacity: 1)
+    static let gitDeletion = activityFailure
+
     // MARK: Fonts
     private static let displayName = "Onest"
     private static let monoName = "JetBrainsMono-Regular"

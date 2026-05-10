@@ -18,8 +18,13 @@ private enum MenuTag {
 public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var window: NSWindow?
     let store = WorkspaceStore()
-    private lazy var hookServer = HookServer { [weak store] agent, event, sessionId in
-        store?.applyHookEvent(agent: agent, event: event, sessionId: sessionId)
+    private lazy var hookServer = HookServer { [weak store] message in
+        switch message {
+        case .agent(let agent, let event, let sessionId):
+            store?.applyHookEvent(agent: agent, event: event, sessionId: sessionId)
+        case .shellEnvironment(let env, let sessionId):
+            store?.applyShellEnvironment(env, sessionId: sessionId)
+        }
     }
 
 

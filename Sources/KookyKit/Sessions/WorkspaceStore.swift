@@ -36,6 +36,7 @@ final class WorkspaceStore {
 
     private let engineFactory: @MainActor () -> any TerminalEngine
     private let persistence: any Persistence
+    private let gitStatusFetcher = GitStatusFetcher()
 
     private var pendingSave: Task<Void, Never>?
     private static let saveDebounce: UInt64 = 1_000_000_000
@@ -368,6 +369,12 @@ final class WorkspaceStore {
         if session.agent.id != agentBefore { scheduleSave() }
     }
 
+    func applyShellEnvironment(_ env: [String: String], sessionId: UUID) {
+        guard let session = findSession(id: sessionId) else { return }
+        session.shellEnvironment = env
+        refreshEnvironment(for: session)
+    }
+
     private func findSession(id: UUID) -> Session? {
         for ws in workspaces {
             if let pane = ws.root.pane(containingSessionId: id) {
@@ -466,6 +473,11 @@ final class WorkspaceStore {
     }
 
     private func wireSessionCallbacks(engine: any TerminalEngine, session: Session, workspace: Workspace) {
+        // Initial refresh — without these, the status bar stays empty until
+        // the user `cd`s or runs a command. Both fetchers silently hide
+        // results for non-applicable cwds, so the calls are harmless.
+        refreshGitStatus(for: session)
+        refreshEnvironment(for: session)
         engine.onPwdChange = { [weak self, weak session, weak workspace] pwd in
             guard let session else { return }
             let url = URL(fileURLWithPath: pwd)
@@ -475,16 +487,23 @@ final class WorkspaceStore {
             if let workspace, workspace.activeSession?.id == session.id, workspace.workingDirectory.path != pwd {
                 workspace.workingDirectory = url
             }
+            self?.refreshGitStatus(for: session)
+            self?.refreshEnvironment(for: session)
             self?.scheduleSave()
         }
         engine.onFocus = { [weak self, weak session, weak workspace] in
             guard let self, let session, let workspace else { return }
             self.activateTab(session, in: workspace)
         }
-        engine.onCommandFinished = { [weak session] exit, duration in
+        engine.onCommandFinished = { [weak self, weak session] exit, duration in
             guard let session else { return }
             session.lastCommandExit = exit
             session.lastCommandDuration = duration
+            // A finished command may have changed the working tree (commit /
+            // git add / file edits) or installed a venv / dropped an .nvmrc.
+            // Refresh so the bar doesn't lie.
+            self?.refreshGitStatus(for: session)
+            self?.refreshEnvironment(for: session)
         }
         engine.onSearchStart = { [weak session] needle in
             guard let session else { return }
@@ -508,6 +527,29 @@ final class WorkspaceStore {
             guard let session, session.searchSelected != selected else { return }
             session.searchSelected = selected
         }
+    }
+
+    private func refreshGitStatus(for session: Session) {
+        gitStatusFetcher.fetch(sessionId: session.id, cwd: session.currentDirectory) { [weak session] status in
+            guard let session, session.gitStatus != status else { return }
+            session.gitStatus = status
+        }
+    }
+
+    private func refreshEnvironment(for session: Session) {
+        let pid = session.engine.foregroundPid
+        let env: ProjectEnvironment
+        if session.shellEnvironment.isEmpty {
+            env = EnvironmentDetector.detect(cwd: session.currentDirectory, pid: pid)
+        } else {
+            env = EnvironmentDetector.extract(
+                shellEnv: session.shellEnvironment,
+                cwd: session.currentDirectory,
+                allowProjectFallback: false
+            )
+        }
+        guard session.environment != env else { return }
+        session.environment = env
     }
 
     private func scheduleSave() {

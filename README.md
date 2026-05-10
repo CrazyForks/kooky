@@ -6,7 +6,7 @@
 
 ![kooky — sidebar with three workspaces, two panes running Claude Code and Codex side by side, the `+` menu showing the five built-in agent templates](screenshot.png)
 
-Existing terminals were built before AI agents lived in your dev loop. **kooky treats agent sessions as first-class tabs** — Claude Code, Codex, Gemini CLI live next to your shells, and the chrome reacts to what each is doing. Open-source, macOS-only, MIT. GPU rendering via [libghostty](https://github.com/ghostty-org/ghostty).
+Existing terminals were built before AI agents lived in your dev loop. **kooky treats agent sessions as first-class tabs** — Claude Code, Codex, and Gemini CLI live next to your shells, and the chrome reacts to what each one is doing. Open-source, macOS-only, MIT. GPU rendering via [libghostty](https://github.com/ghostty-org/ghostty).
 
 **[Download latest](https://github.com/iAmCorey/kooky/releases/latest)**  ·  [Architecture notes](ARCHITECTURE.md)  ·  [Changelog](CHANGELOG.md)
 
@@ -18,7 +18,7 @@ Existing terminals were built before AI agents lived in your dev loop. **kooky t
 
 **One-click AI agent sessions.** Claude Code · Codex · Gemini CLI · OpenCode · Amp. Pick one from the `+` menu — the agent boots before your first prompt prints. Sidebar dot tracks per-agent activity (running / attention / idle).
 
-**Knows what your shell did.** OSC 133 / FinalTerm hooks installed via a ZDOTDIR wrapper that **does not touch** your `~/.zshrc`. Per-tab + per-workspace red dot when the last command failed; hover for `exit N · 12.4s`. `⌘↑` / `⌘↓` jump between prompts in scrollback.
+**Knows what your shell did.** OSC 133 / FinalTerm hooks installed via a ZDOTDIR wrapper that **does not touch** your `~/.zshrc`. Per-tab + per-workspace red dot when the last command failed; hover for `exit N · 12.4s`. Pane status bars show git branch, diff stats, Node version, and Python env; click the Node or branch pill to switch. `⌘↑` / `⌘↓` jump between prompts in scrollback.
 
 **Full keyboard.** `⌘T` / `⌘N` new tab / workspace · `⌘W` / `⌘⇧W` close · `⌘1-9` / `⌥⌘1-9` switch · `⌘D` / `⌘⇧D` split right / down · `⌘[` `⌘]` focus pane · `⌘=` / `⌘-` / `⌘0` font size · `⌘K` clear pane.
 
@@ -28,7 +28,7 @@ Existing terminals were built before AI agents lived in your dev loop. **kooky t
 
 Download the latest `.dmg` from [Releases](https://github.com/iAmCorey/kooky/releases). Open it and drag `Kooky.app` to `Applications`.
 
-**First launch is blocked by Gatekeeper** because the build is adhoc-signed (no Apple Developer ID yet — public-distribution signing + notarization land when there are real users). You'll see *"Kooky cannot be opened because Apple cannot check it for malicious software"* or *"is damaged and cannot be opened"*. Pick whichever bypass works for you:
+**First launch is blocked by Gatekeeper** because the build is adhoc-signed (no Apple Developer ID yet — public-distribution signing and notarization will come when there are real users). You'll see *"Kooky cannot be opened because Apple cannot check it for malicious software"* or *"is damaged and cannot be opened"*. Pick whichever bypass works for you:
 
 <details>
 <summary><b>Path A — System Settings <i>(recommended)</i></b></summary>
@@ -72,7 +72,7 @@ Requires Xcode 26+ and macOS 14+ (Sonoma — `@Observable` is the floor).
 ./scripts/setup-libghostty.sh        # one-time: fetch the libghostty xcframework
 swift build
 swift run                            # dev mode
-swift test                           # 31 unit tests
+swift test                           # 67 unit tests
 
 ./scripts/build-app.sh               # writes dist/Kooky.app
 ./scripts/build-dmg.sh --build       # writes dist/Kooky-vX.Y.Z.dmg

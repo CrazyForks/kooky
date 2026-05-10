@@ -47,6 +47,21 @@ final class Session: Identifiable {
     var searchTotal = 0
     var searchSelected = -1
 
+    /// Latest git status for the session's cwd. `branch == nil` when the cwd
+    /// isn't inside a git repo (or git isn't installed). Refreshed by
+    /// `WorkspaceStore` on cwd-change + command-finished hooks. Runtime-only;
+    /// not persisted.
+    var gitStatus: GitStatus = .empty
+
+    /// Project-environment indicators (Python venv name, Node version)
+    /// reported by the live shell prompt hook, with project-file fallback.
+    var environment: ProjectEnvironment = .empty
+
+    /// Latest live shell env reported by the prompt hook. Kernel proc env
+    /// snapshots are not reliable after `nvm use` / `activate` mutate the
+    /// running shell, so this takes priority when present.
+    var shellEnvironment: [String: String] = [:]
+
     /// `lastPathComponent` of the cwd, with `~` for $HOME — unless `customTitle`
     /// is set, which always wins. Empty cwd path falls back to the agent name
     /// so a degenerate URL doesn't render as blank.

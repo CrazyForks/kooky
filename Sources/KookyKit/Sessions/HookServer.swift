@@ -1,9 +1,9 @@
 import Darwin
 import Foundation
 
-/// Listens on a per-user unix socket for one-shot JSON event lines from agent
-/// hooks (sent by the `kooky-hook` CLI). Wire format is one line per event:
-/// `{"event":"running|attention|idle","surface":"<UUID>"}`.
+/// Listens on a per-user unix socket for one-shot JSON event lines from
+/// hooks (sent by the `KookyHook` CLI): agent lifecycle events and prompt-time
+/// shell env snapshots. Wire format is one JSON object per line.
 ///
 /// The hooks themselves run as short-lived child processes of the agent (e.g.
 /// Claude Code spawns them per Stop / UserPromptSubmit / Notification). They
@@ -22,9 +22,14 @@ enum HookEvent: String {
     }
 }
 
+enum HookMessage {
+    case agent(agent: AgentTemplate, event: HookEvent, sessionId: UUID)
+    case shellEnvironment(env: [String: String], sessionId: UUID)
+}
+
 @MainActor
 final class HookServer {
-    typealias Handler = (_ agent: AgentTemplate, _ event: HookEvent, _ sessionId: UUID) -> Void
+    typealias Handler = (_ message: HookMessage) -> Void
 
     private let handler: Handler
     private var listenFd: Int32 = -1
@@ -113,15 +118,31 @@ final class HookServer {
         let n = buffer.withUnsafeMutableBufferPointer { read(clientFd, $0.baseAddress, $0.count) }
         guard n > 0 else { return }
         let data = Data(bytes: buffer, count: n)
+        guard let message = Self.parseMessage(data) else { return }
+        handler(message)
+    }
+
+    static func parseMessage(_ data: Data) -> HookMessage? {
         guard
             let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let surface = dict["surface"] as? String,
+            let id = UUID(uuidString: surface)
+        else { return nil }
+
+        if dict["kind"] as? String == "env" {
+            let envKeys = ["VIRTUAL_ENV", "CONDA_DEFAULT_ENV", "NVM_BIN", "NVM_DIR", "KOOKY_NODE_VERSION"]
+            let env = Dictionary(uniqueKeysWithValues: envKeys.map { key in
+                (key, dict[key] as? String ?? "")
+            })
+            return .shellEnvironment(env: env, sessionId: id)
+        }
+
+        guard
             let agentSlug = dict["agent"] as? String,
             let eventName = dict["event"] as? String,
-            let surface = dict["surface"] as? String,
-            let id = UUID(uuidString: surface),
             let agent = AgentTemplate.from(hookSlug: agentSlug),
             let event = HookEvent(rawValue: eventName)
-        else { return }
-        handler(agent, event, id)
+        else { return nil }
+        return .agent(agent: agent, event: event, sessionId: id)
     }
 }

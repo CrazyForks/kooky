@@ -205,6 +205,11 @@ final class LibghosttyEngine: TerminalEngine {
         get { surfaceView.onSearchSelected }
         set { surfaceView.onSearchSelected = newValue }
     }
+    var foregroundPid: pid_t? {
+        guard let surface = surfaceView.surface else { return nil }
+        let pid = pid_t(ghostty_surface_foreground_pid(surface))
+        return pid > 0 ? pid : nil
+    }
 
     init() {
         surfaceView = GhosttySurfaceView()
@@ -228,6 +233,10 @@ final class LibghosttyEngine: TerminalEngine {
         return name.withCString { cstr in
             ghostty_surface_binding_action(surface, cstr, UInt(name.utf8.count))
         }
+    }
+
+    func sendInput(_ text: String) {
+        surfaceView.sendInput(text)
     }
 }
 
@@ -554,6 +563,11 @@ final class GhosttySurfaceView: NSView {
         bytes.withCString { cstr in
             ghostty_surface_text_input(surface, cstr, UInt(strlen(cstr)))
         }
+    }
+
+    func sendInput(_ text: String) {
+        guard let surface, !text.isEmpty else { return }
+        sendInputBytes(text, to: surface)
     }
 
     /// Map an NSEvent to the byte sequence a TUI expects on the PTY. Returns

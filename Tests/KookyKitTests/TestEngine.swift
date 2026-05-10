@@ -14,6 +14,7 @@ final class TestEngine: TerminalEngine {
     var onSearchEnd: (() -> Void)?
     var onSearchTotal: ((Int) -> Void)?
     var onSearchSelected: ((Int) -> Void)?
+    var foregroundPid: pid_t? { nil }
 
     private(set) var startedConfigs: [TerminalSessionConfig] = []
     private(set) var terminateCount = 0
@@ -31,6 +32,11 @@ final class TestEngine: TerminalEngine {
     func performAction(_ name: String) -> Bool {
         performedActions.append(name)
         return true
+    }
+
+    private(set) var sentInputs: [String] = []
+    func sendInput(_ text: String) {
+        sentInputs.append(text)
     }
 
     func emitPwd(_ path: String) {

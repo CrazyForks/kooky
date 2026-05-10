@@ -65,4 +65,57 @@ final class ShellIntegrationTests: XCTestCase {
         XCTAssertTrue(body.contains("KOOKY_SURFACE_ID"))
         XCTAssertTrue(body.contains("kooky-managed-do-not-edit"), "plugin must carry the upgrade-safety marker")
     }
+
+    func testEnvStatusBlockReportsLiveShellEnvironment() {
+        let body = KookyShellIntegration.envStatusBlock
+
+        XCTAssertTrue(body.contains("\"$KOOKY_HOOK_BIN\" env"))
+        XCTAssertTrue(body.contains(#""${VIRTUAL_ENV:-}""#))
+        XCTAssertTrue(body.contains(#""${CONDA_DEFAULT_ENV:-}""#))
+        XCTAssertTrue(body.contains(#""${NVM_BIN:-}""#))
+        XCTAssertTrue(body.contains(#""${NVM_DIR:-}""#))
+        XCTAssertTrue(body.contains("--version"), "must invoke node --version")
+        XCTAssertTrue(body.contains("_KOOKY_NODE_KEY_LAST"), "must memoize node version against path+NVM_BIN")
+        XCTAssertTrue(body.contains("_KOOKY_ENV_LAST"), "must skip the kooky-hook IPC when env unchanged")
+    }
+
+    @MainActor
+    func testHookServerParsesAgentPayload() throws {
+        let id = UUID()
+        let data = try JSONSerialization.data(withJSONObject: [
+            "agent": "claude",
+            "event": "running",
+            "surface": id.uuidString,
+        ])
+
+        guard case .agent(let agent, let event, let sessionId) = HookServer.parseMessage(data) else {
+            return XCTFail("expected agent hook message")
+        }
+        XCTAssertEqual(agent, .claudeCode)
+        XCTAssertEqual(event, .running)
+        XCTAssertEqual(sessionId, id)
+    }
+
+    @MainActor
+    func testHookServerParsesShellEnvironmentPayload() throws {
+        let id = UUID()
+        let data = try JSONSerialization.data(withJSONObject: [
+            "kind": "env",
+            "surface": id.uuidString,
+            "VIRTUAL_ENV": "/tmp/app/.venv",
+            "CONDA_DEFAULT_ENV": "",
+            "NVM_BIN": "/Users/corey/.nvm/versions/node/v20.1.0/bin",
+            "NVM_DIR": "/Users/corey/.nvm",
+            "KOOKY_NODE_VERSION": "v20.1.0",
+        ])
+
+        guard case .shellEnvironment(let env, let sessionId) = HookServer.parseMessage(data) else {
+            return XCTFail("expected shell environment hook message")
+        }
+        XCTAssertEqual(sessionId, id)
+        XCTAssertEqual(env["VIRTUAL_ENV"], "/tmp/app/.venv")
+        XCTAssertEqual(env["NVM_BIN"], "/Users/corey/.nvm/versions/node/v20.1.0/bin")
+        XCTAssertEqual(env["NVM_DIR"], "/Users/corey/.nvm")
+        XCTAssertEqual(env["KOOKY_NODE_VERSION"], "v20.1.0")
+    }
 }

@@ -320,8 +320,11 @@ enum KookyShellIntegration {
         [[ -n "$KOOKY_BIN_DIR" ]] && export PATH="$KOOKY_BIN_DIR:$PATH"
 
         _kooky_osc7_pwd() { printf '\\e]7;file://%s%s\\e\\\\' "$HOSTNAME" "$PWD"; }
-        PROMPT_COMMAND="_kooky_osc7_pwd${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+        \(envStatusBlock)
+
+        PROMPT_COMMAND="_kooky_osc7_pwd;_kooky_env_status${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
         _kooky_osc7_pwd
+        _kooky_env_status
 
         \(agentLaunchBlock)
         """
@@ -355,6 +358,8 @@ enum KookyShellIntegration {
         _kooky_osc7_pwd() { printf '\\e]7;file://%s%s\\e\\\\' "$HOST" "$PWD" }
         add-zsh-hook chpwd _kooky_osc7_pwd
         _kooky_osc7_pwd
+
+        \(envStatusBlock)
 
         \(osc133Block)
 
@@ -393,6 +398,41 @@ enum KookyShellIntegration {
         fi
         """
 
+    /// Two layers of memoization in this hook avoid heavy per-prompt work:
+    /// (a) `node --version` is the dominant cost (~50-200ms for V8 cold-start
+    ///     on every prompt). We cache its result against the resolved `node`
+    ///     binary path + NVM_BIN — if neither changed, the cached version is
+    ///     still valid.
+    /// (b) the `kooky-hook env` IPC fork is skipped entirely when no env key
+    ///     differs from the previous send. Most prompts have steady env, so
+    ///     this turns the hook into a no-op the vast majority of the time.
+    static let envStatusBlock = """
+        _kooky_env_status() {
+            [[ -n "$KOOKY_SURFACE_ID" && -n "$KOOKY_HOOK_BIN" && -x "$KOOKY_HOOK_BIN" ]] || return 0
+            local _kooky_node_path=""
+            command -v node >/dev/null 2>&1 && _kooky_node_path="$(command -v node)"
+            local _kooky_node_key="${_kooky_node_path}|${NVM_BIN:-}"
+            if [[ "$_kooky_node_key" != "$_KOOKY_NODE_KEY_LAST" ]]; then
+                _KOOKY_NODE_VERSION_LAST=""
+                [[ -n "$_kooky_node_path" ]] && _KOOKY_NODE_VERSION_LAST="$("$_kooky_node_path" --version 2>/dev/null)"
+                _KOOKY_NODE_KEY_LAST="$_kooky_node_key"
+            fi
+            local _kooky_env_now="${VIRTUAL_ENV:-}|${CONDA_DEFAULT_ENV:-}|${NVM_BIN:-}|${NVM_DIR:-}|$_KOOKY_NODE_VERSION_LAST"
+            [[ "$_kooky_env_now" == "$_KOOKY_ENV_LAST" ]] && return 0
+            # Only advance the dedup cache when the IPC actually succeeded —
+            # if kooky-hook returns non-zero (kooky restarting, socket gone
+            # before the hook server bound), the next prompt will retry
+            # instead of staying frozen at the unsent value.
+            "$KOOKY_HOOK_BIN" env "${VIRTUAL_ENV:-}" "${CONDA_DEFAULT_ENV:-}" "${NVM_BIN:-}" "${NVM_DIR:-}" "$_KOOKY_NODE_VERSION_LAST" 2>/dev/null \
+                && _KOOKY_ENV_LAST="$_kooky_env_now"
+            # Mask our internal IPC status so user precmd hooks downstream in
+            # zsh's precmd_functions chain don't see `$?=1` and bleed it into
+            # their prompt rendering. The dedup logic is internal — its
+            # success/failure must not leak into the rest of the shell.
+            return 0
+        }
+        """
+
     /// FinalTerm / OSC 133 prompt+command boundary markers. libghostty parses
     /// these and fires `GHOSTTY_ACTION_COMMAND_FINISHED` on `D`, which kooky
     /// uses to surface per-tab last-command status (exit + duration) and to
@@ -409,6 +449,11 @@ enum KookyShellIntegration {
             __kooky_133_first=0
             printf '\e]133;A\e\\'
             [[ "$PROMPT" != *$'\e]133;B\e\\'* ]] && PROMPT="${PROMPT}"$'\e]133;B\e\\'
+            _kooky_env_status
+            # Same masking concern as `_kooky_env_status` itself: the kooky
+            # hooks must not leak `$?` into user prompts that downstream
+            # precmd hooks may sample.
+            return 0
         }
         __kooky_133_preexec() { printf '\e]133;C\e\\' }
         add-zsh-hook precmd __kooky_133_precmd

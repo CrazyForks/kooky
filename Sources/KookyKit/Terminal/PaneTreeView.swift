@@ -49,10 +49,255 @@ private struct PaneView: View {
                             .padding(.trailing, Theme.space3)
                         }
                     }
+                if active.gitStatus.branch != nil || !active.environment.isEmpty {
+                    Rectangle().fill(Theme.chromeHairline).frame(height: 1)
+                    PaneStatusBar(session: active)
+                }
             } else {
                 Color.clear
             }
         }
+    }
+}
+
+/// Chrome status bar pinned to the bottom of the active pane — Warp-style
+/// approximation. libghostty owns the terminal grid, so we can't inline
+/// above the prompt; pinning to chrome below the terminal is the closest
+/// equivalent. Each segment is its own bordered pill with leading icon,
+/// stacked right-aligned. Hidden entirely when no segment has data.
+private struct PaneStatusBar: View {
+    @Bindable var session: Session
+
+    var body: some View {
+        // Order: project context (changes rarely) on the left, working-tree
+        // state (changes per save / commit) on the right. Eyes scanning
+        // right-to-left hit "what changed" first, then "what project context".
+        // ViewThatFits picks the first variant whose intrinsic width fits the
+        // pane — when splits get narrow, slots drop by priority instead of
+        // truncating mid-glyph or wrapping into a second row.
+        HStack(spacing: 0) {
+            Spacer(minLength: 0)
+            ViewThatFits(in: .horizontal) {
+                segmentRow([pythonSegment, nodeSegment, branchSegment, diffSegment])
+                segmentRow([nodeSegment, branchSegment, diffSegment])
+                segmentRow([branchSegment, diffSegment])
+                segmentRow([diffSegment])
+                segmentRow([branchSegment])
+            }
+        }
+        .font(Theme.mono(11))
+        .padding(.horizontal, Theme.space4)
+        .padding(.vertical, 5)
+        .background(Theme.chromeBackground)
+    }
+
+    private func segmentRow(_ segments: [AnyView]) -> some View {
+        HStack(spacing: 8) { ForEach(0..<segments.count, id: \.self) { segments[$0] } }
+    }
+
+    private var pythonSegment: AnyView {
+        guard let venv = session.environment.pythonVenv else { return AnyView(EmptyView()) }
+        return AnyView(StatusSegment(systemImage: "p.circle.fill") {
+            Text(venv).foregroundStyle(Theme.chromeForeground)
+        })
+    }
+
+    private var nodeSegment: AnyView {
+        guard let version = session.environment.nodeVersion else { return AnyView(EmptyView()) }
+        let nvmDir = session.environment.nvmDirectory
+        return AnyView(SwitchableStatusSegment<String>(
+            systemImage: "n.circle.fill",
+            label: version,
+            helpText: "Switch Node version",
+            popoverWidth: 190,
+            popoverMaxHeight: 280,
+            emptyMessage: "No nvm versions found",
+            loadItems: { NodeVersionInventory.installedVersions(nvmDirectory: nvmDir) },
+            isCurrent: { NodeVersionInventory.isSameVersion($0, version) },
+            titleFor: { $0 },
+            commandFor: NodeVersionInventory.shellUseCommand,
+            session: session
+        ))
+    }
+
+    private var branchSegment: AnyView {
+        guard let branch = session.gitStatus.branch else { return AnyView(EmptyView()) }
+        let cwd = session.currentDirectory
+        return AnyView(SwitchableStatusSegment<String>(
+            systemImage: "arrow.triangle.branch",
+            label: branch,
+            helpText: "Switch Git branch",
+            popoverWidth: 230,
+            popoverMaxHeight: 320,
+            emptyMessage: "No local branches found",
+            loadItems: { GitBranchInventory.localBranches(cwd: cwd) },
+            isCurrent: { $0 == branch },
+            titleFor: { $0 },
+            commandFor: GitBranchInventory.shellSwitchCommand,
+            session: session
+        ))
+    }
+
+    private var diffSegment: AnyView {
+        let s = session.gitStatus
+        guard s.branch != nil, s.filesChanged > 0 else { return AnyView(EmptyView()) }
+        return AnyView(StatusSegment(systemImage: "line.3.horizontal.button.angledtop.vertical.right") {
+            // Order mirrors `git diff --shortstat` itself: files → +N → −N.
+            // File count in chromeMuted (it's a count, not a delta) so the
+            // saturated +/- pair pops as the actual change signal.
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("\(s.filesChanged)")
+                    .foregroundStyle(Theme.chromeMuted)
+                if s.insertions > 0 {
+                    SignedNumber(sign: "+", value: s.insertions, color: Theme.gitInsertion)
+                }
+                if s.deletions > 0 {
+                    // Unicode minus (U+2212), not hyphen — balanced
+                    // typographic pair with `+`.
+                    SignedNumber(sign: "−", value: s.deletions, color: Theme.gitDeletion)
+                }
+            }
+        })
+    }
+}
+
+/// One bordered segment of the status bar — leading SF Symbol icon at
+/// `chromeMuted`, body content rendered by the caller. Wraps each
+/// data-source (git, Python env, Node version, …) in a uniform pill so
+/// adding new sources is just `StatusSegment(systemImage: ...) { ... }`.
+private struct StatusSegment<Content: View>: View {
+    let systemImage: String
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 7) {
+            Image(systemName: systemImage)
+                .imageScale(.small)
+                .foregroundStyle(Theme.chromeMuted)
+            content()
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .overlay(
+            RoundedRectangle(cornerRadius: 4)
+                .stroke(Theme.chromeFaint, lineWidth: 1)
+        )
+    }
+}
+
+/// `+47` / `−12` as one cohesive typographic token — sign rendered at 60%
+/// saturation of its digit creates a subtle hierarchical stagger that reads
+/// as designed, not as a UI widget. JetBrains Mono is fixed-width, so the
+/// two-Text HStack stays optically tight without manual kerning.
+private struct SignedNumber: View {
+    let sign: String
+    let value: Int
+    let color: Color
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Text(sign).foregroundStyle(color.opacity(0.6))
+            Text("\(value)").foregroundStyle(color)
+        }
+    }
+}
+
+/// A `StatusSegment` you can click — opens a popover listing alternatives,
+/// click one to inject a shell command. Shared shell for both the Node
+/// version switcher and the git branch switcher; new switchers (Python
+/// versions, mise tools, …) just instantiate with their own loader +
+/// formatter.
+///
+/// `loadItems` is called only on click, not on `onAppear` — popover content
+/// is what triggers the inventory work, so a tab the user never opens the
+/// switcher on does zero filesystem / subprocess.
+private struct SwitchableStatusSegment<Item: Hashable>: View {
+    let systemImage: String
+    let label: String
+    let helpText: String
+    let popoverWidth: CGFloat
+    let popoverMaxHeight: CGFloat
+    let emptyMessage: String
+    let loadItems: () -> [Item]
+    let isCurrent: (Item) -> Bool
+    let titleFor: (Item) -> String
+    let commandFor: (Item) -> String
+    let session: Session
+
+    @State private var isSwitcherOpen = false
+    @State private var isHovered = false
+    @State private var items: [Item] = []
+
+    var body: some View {
+        Button {
+            items = loadItems()
+            isSwitcherOpen.toggle()
+        } label: {
+            StatusSegment(systemImage: systemImage) {
+                Text(label)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .foregroundStyle(Theme.chromeForeground)
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(isHovered || isSwitcherOpen ? Theme.chromeHover : .clear)
+            )
+        }
+        .buttonStyle(.plain)
+        .contentShape(RoundedRectangle(cornerRadius: 4))
+        .help(helpText)
+        .onHover { isHovered = $0 }
+        .popover(isPresented: $isSwitcherOpen, arrowEdge: .bottom) {
+            KookyMenuList(width: popoverWidth, maxHeight: popoverMaxHeight) {
+                if items.isEmpty {
+                    KookyMenuRow(title: emptyMessage, isDisabled: true) {}
+                } else {
+                    ForEach(items, id: \.self) { item in
+                        let current = isCurrent(item)
+                        KookyMenuRow(
+                            title: titleFor(item),
+                            isDisabled: current,
+                            leading: { menuRowCheckmark(visible: current) }
+                        ) {
+                            isSwitcherOpen = false
+                            session.engine.sendInput(commandFor(item))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Scrollable menu shell shared by every popover in the status bar (and
+/// future ones). Width varies per call site; vertical chrome and bg are
+/// constant. Keeps `KookyMenuRow`'s sibling layout consistent across the
+/// app.
+private struct KookyMenuList<Content: View>: View {
+    let width: CGFloat
+    let maxHeight: CGFloat
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 2, content: content).padding(6)
+        }
+        .frame(width: width)
+        .frame(maxHeight: maxHeight)
+        .background(Theme.chromeBackground)
+    }
+}
+
+@ViewBuilder
+private func menuRowCheckmark(visible: Bool) -> some View {
+    if visible {
+        Image(systemName: "checkmark")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(Theme.chromeForeground)
+            .frame(width: 14)
+    } else {
+        Color.clear.frame(width: 14, height: 11)
     }
 }
 

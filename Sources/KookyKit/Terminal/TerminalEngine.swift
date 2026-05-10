@@ -50,6 +50,10 @@ protocol TerminalEngine: AnyObject {
     var onSearchEnd: (() -> Void)? { get set }
     var onSearchTotal: ((Int) -> Void)? { get set }
     var onSearchSelected: ((Int) -> Void)? { get set }
+    /// PID of the foreground process inside the surface. Used only as an
+    /// initial/fallback env snapshot before the prompt hook reports live
+    /// `VIRTUAL_ENV` / `NVM_BIN`.
+    var foregroundPid: pid_t? { get }
     func start(config: TerminalSessionConfig)
     func terminate()
     /// Trigger a libghostty named action (e.g. `increase_font_size:1`,
@@ -57,4 +61,6 @@ protocol TerminalEngine: AnyObject {
     /// `true` when the engine recognised and dispatched the action.
     @discardableResult
     func performAction(_ name: String) -> Bool
+    /// Sends committed text into the PTY as if the user typed it.
+    func sendInput(_ text: String)
 }
