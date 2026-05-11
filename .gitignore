@@ -36,3 +36,10 @@ dist/
 # Local AI agent context — not for public history
 CLAUDE.md
 AGENTS.md
+AGENT.md
+GEMINI.md
+.cursorrules
+.cursor/
+.clinerules
+.windsurfrules
+.continue/
