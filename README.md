@@ -8,7 +8,7 @@
 
 A minimal macOS terminal built for AI coding. Sidebar workspaces; horizontal / vertical split panes; one-click agent launch; per-agent activity readout; live workspace state with one-click Node and branch switching. Open-source, MIT-licensed. No accounts, no telemetry; app state stays local. GPU rendering via [libghostty](https://github.com/ghostty-org/ghostty).
 
-**[Download latest](https://github.com/iAmCorey/kooky/releases/latest)**  ·  [Architecture notes](ARCHITECTURE.md)  ·  [Changelog](CHANGELOG.md)
+**[Download latest](https://github.com/iAmCorey/kooky/releases/latest)**  ·  [Changelog](CHANGELOG.md)
 
 ---
 
