@@ -24,6 +24,8 @@ A minimal modern terminal built for AI coding. Sidebar workspaces; horizontal / 
 
 **SwiftUI-native, minimal chrome.** Onest + JetBrains Mono. Custom About panel, native menus with shortcut hints, full IME support.
 
+**Configurable.** Settings (`⌘,`) for font / cursor + a JSON config at `~/.kooky/settings.json` for any ghostty key. Kooky reads ghostty's own `~/.config/ghostty/config` first, then layers your overrides on top; first-launch offers to import an existing ghostty setup.
+
 **Local by default.** No accounts, no telemetry, no cloud sync. Kooky keeps its own state on your device.
 
 **libghostty-powered.** GPU-accelerated cell rendering, same engine as ghostty. Fast.

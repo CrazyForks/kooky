@@ -24,6 +24,8 @@
 
 **SwiftUI 原生开发，简约风格。** Onest + JetBrains Mono 字体。自定义 About 面板、带快捷键提示的原生菜单、中日韩等 IME 都支持。
 
+**可配置。** Settings 面板（`⌘,`）配字体 / 光标，深度配置走 `~/.kooky/settings.json`，支持所有 ghostty 配置 key。kooky 先读你的 `~/.config/ghostty/config`，再用 settings.json 覆盖；首次启动会询问是否导入现有 ghostty 配置。
+
 **默认本地。** 不需要账号，不做遥测，没有云同步。kooky 自己的状态都保存在本机。
 
 **基于 libghostty。** 使用和 ghostty 同源的 GPU 终端渲染引擎。
