@@ -2,6 +2,11 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.9.8 — 2026-05-13
+
+- **Spot the focused pane at a glance.** With splits, it's hard to tell which pane has the cursor. Non-focused panes now dim their chrome (tab strip + status bar) to 50% opacity, animated via the shared `Theme.chromeTransition` token. Terminal content stays at full brightness so code is still crisp. Single-pane workspaces look identical to before.
+- **Internals.** Pane chrome opacity collapsed into two `Group { ... }.opacity(...)` blocks (top tab strip + bottom status bar) with the implicit `.animation()` scoped away from `TerminalView` — libghostty's `IOSurfaceLayer` never enters the animatable subtree.
+
 ## v0.9.7 — 2026-05-12
 
 - **Settings.** New JSON config at `~/.kooky/settings.json` plus a native Settings window (`⌘,` in the kooky app menu). v1 surfaces Font Family / Font Size / Cursor Style; advanced users edit the raw JSON via "Open in New Tab" — opens `${EDITOR:-vi}` inside a kooky tab. Bottom-right Restart button cleanly relaunches via a detached helper that waits for the current PID to exit before `open -n`, so socket / persistence state never collides.

@@ -30,10 +30,17 @@ private struct PaneView: View {
     @Bindable var store: WorkspaceStore
     let isFocused: Bool
 
+    private static let inactiveChromeOpacity: Double = 0.5
+
     var body: some View {
+        let chromeOpacity = isFocused ? 1.0 : Self.inactiveChromeOpacity
         VStack(spacing: 0) {
-            TabBarView(pane: pane, workspace: workspace, store: store)
-            Rectangle().fill(Theme.chromeHairline).frame(height: 1)
+            Group {
+                TabBarView(pane: pane, workspace: workspace, store: store)
+                Rectangle().fill(Theme.chromeHairline).frame(height: 1)
+            }
+            .opacity(chromeOpacity)
+            .animation(Theme.chromeTransition, value: isFocused)
             if let active = pane.activeTab {
                 TerminalView(engine: active.engine)
                     .id(active.id)
@@ -51,8 +58,12 @@ private struct PaneView: View {
                         }
                     }
                 if active.gitStatus.branch != nil || !active.environment.isEmpty {
-                    Rectangle().fill(Theme.chromeHairline).frame(height: 1)
-                    PaneStatusBar(session: active)
+                    Group {
+                        Rectangle().fill(Theme.chromeHairline).frame(height: 1)
+                        PaneStatusBar(session: active)
+                    }
+                    .opacity(chromeOpacity)
+                    .animation(Theme.chromeTransition, value: isFocused)
                 }
             } else {
                 Color.clear
