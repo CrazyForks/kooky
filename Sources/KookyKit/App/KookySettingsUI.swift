@@ -29,6 +29,11 @@ final class KookySettingsModel {
     /// shipped in a future kooky still shows up.
     var agentOrder: [String] = []
     var hiddenAgents: Set<String> = []
+    /// Per-agent CLI options appended after the binary name when launching.
+    /// E.g. `agentOptions["claude-code"] = "--model opus"` → KOOKY_AGENT
+    /// becomes `claude --model opus`. The wrapper rc's `eval` splits on
+    /// whitespace, so users handle their own quoting for spaces.
+    var agentOptions: [String: String] = [:]
 
     private var saveWork: DispatchWorkItem?
 
@@ -49,6 +54,7 @@ final class KookySettingsModel {
         let agents = parsed["agents"] as? [String: Any] ?? [:]
         agentOrder = (agents["order"] as? [String]) ?? []
         hiddenAgents = Set((agents["hidden"] as? [String]) ?? [])
+        agentOptions = (agents["options"] as? [String: String]) ?? [:]
     }
 
     /// Schedules a debounced write. UI bindings call this on every change;
@@ -80,12 +86,14 @@ final class KookySettingsModel {
         terminal["cursor-style"] = cursorStyle == "block" ? nil : cursorStyle
         parsed["terminal"] = terminal
 
-        if agentOrder.isEmpty && hiddenAgents.isEmpty {
+        let nonEmptyOptions = agentOptions.filter { !$0.value.isEmpty }
+        if agentOrder.isEmpty && hiddenAgents.isEmpty && nonEmptyOptions.isEmpty {
             parsed.removeValue(forKey: "agents")
         } else {
             var agents = parsed["agents"] as? [String: Any] ?? [:]
             agents["order"] = agentOrder.isEmpty ? nil : agentOrder
             agents["hidden"] = hiddenAgents.isEmpty ? nil : Array(hiddenAgents).sorted()
+            agents["options"] = nonEmptyOptions.isEmpty ? nil : nonEmptyOptions
             parsed["agents"] = agents
         }
 
@@ -95,6 +103,7 @@ final class KookySettingsModel {
     func resetAgentCustomisation() {
         agentOrder = []
         hiddenAgents = []
+        agentOptions = [:]
         scheduleSave()
     }
 }
@@ -141,6 +150,7 @@ struct KookySettingsView: View {
         .onChange(of: model.cursorStyle) { _, _ in model.scheduleSave() }
         .onChange(of: model.agentOrder) { _, _ in model.scheduleSave() }
         .onChange(of: model.hiddenAgents) { _, _ in model.scheduleSave() }
+        .onChange(of: model.agentOptions) { _, _ in model.scheduleSave() }
     }
 
     private var sidebar: some View {
@@ -246,7 +256,7 @@ struct KookySettingsView: View {
     private var codingAgentsDetail: some View {
         VStack(alignment: .leading, spacing: 0) {
             AgentReorderList(model: model)
-            Text("Drag a row to reorder. Switch hides from the `+` menu. Terminal stays pinned first.")
+            Text("Drag to reorder. Switch hides from the `+` menu. Chevron reveals launch options (e.g. `--model opus`). Terminal stays pinned first.")
                 .font(Theme.mono(11))
                 .foregroundStyle(Theme.chromeMuted)
                 .padding(.horizontal, 28)
@@ -355,6 +365,14 @@ private struct SettingsHairline: View {
     }
 }
 
+/// 1pt hairline stroke, sharp corners — the brutalist border shared by
+/// `BracketButton` and the options textfield.
+private extension View {
+    func bracketBorder() -> some View {
+        overlay(Rectangle().stroke(Theme.chromeHairline, lineWidth: 1))
+    }
+}
+
 /// Plain-text `[bracketed]` button. Hairline border, mono, sharp corners.
 private struct BracketButton: View {
     let title: String
@@ -372,9 +390,7 @@ private struct BracketButton: View {
                 .foregroundStyle(Theme.chromeForeground)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                .overlay(
-                    Rectangle().stroke(Theme.chromeHairline, lineWidth: 1)
-                )
+                .bracketBorder()
         }
         .buttonStyle(.plain)
     }
@@ -388,6 +404,7 @@ private struct AgentReorderList: View {
     @Bindable var model: KookySettingsModel
     @State private var draggingId: String?
     @State private var endTargeted: Bool = false
+    @State private var expandedId: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -397,7 +414,15 @@ private struct AgentReorderList: View {
                     template: template,
                     visible: !model.hiddenAgents.contains(template.id),
                     isDragging: draggingId == template.id,
+                    isExpanded: expandedId == template.id,
+                    options: Binding(
+                        get: { model.agentOptions[template.id] ?? "" },
+                        set: { model.agentOptions[template.id] = $0 }
+                    ),
                     onToggleVisible: { toggle(template.id) },
+                    onToggleExpanded: {
+                        expandedId = expandedId == template.id ? nil : template.id
+                    },
                     onBeginDrag: { draggingId = template.id },
                     onDrop: { droppedId in
                         defer { draggingId = nil }
@@ -418,7 +443,7 @@ private struct AgentReorderList: View {
                     guard let id = items.first else { return false }
                     return moveToEnd(id)
                 } isTargeted: { endTargeted = $0 }
-            if !model.agentOrder.isEmpty || !model.hiddenAgents.isEmpty {
+            if hasCustomisation {
                 Button("reset to defaults") { model.resetAgentCustomisation() }
                     .buttonStyle(.plain)
                     .font(Theme.mono(11))
@@ -435,6 +460,12 @@ private struct AgentReorderList: View {
     /// user dragged them, so toggling visibility doesn't move them. The
     /// `+` menu's filter to visible-only lives in `AgentTemplate.visibleOrdered`.
     private var rows: [AgentTemplate] { AgentTemplate.ordered(model: model) }
+
+    private var hasCustomisation: Bool {
+        !model.agentOrder.isEmpty
+            || !model.hiddenAgents.isEmpty
+            || model.agentOptions.values.contains(where: { !$0.isEmpty })
+    }
 
     private func toggle(_ id: String) {
         if model.hiddenAgents.contains(id) {
@@ -476,29 +507,74 @@ private struct AgentRow: View {
     let template: AgentTemplate
     let visible: Bool
     let isDragging: Bool
+    let isExpanded: Bool
+    @Binding var options: String
     let onToggleVisible: () -> Void
+    let onToggleExpanded: () -> Void
     let onBeginDrag: () -> Void
     let onDrop: (String) -> Bool
     @State private var isTargeted = false
 
     var body: some View {
-        HStack(spacing: 12) {
-            dragHandle
-            AgentIconView(asset: template.iconAsset, fallbackSymbol: template.symbol, size: 14)
-                .opacity(visible ? 1.0 : 0.35)
-            Text(template.title)
-                .font(Theme.mono(12.5))
-                .foregroundStyle(visible ? Theme.chromeForeground : Theme.chromeMuted)
-            Spacer(minLength: 14)
-            Toggle("", isOn: Binding(get: { visible }, set: { _ in onToggleVisible() }))
-                .toggleStyle(.switch)
-                .controlSize(.mini)
-                .labelsHidden()
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 12) {
+                dragHandle
+                AgentIconView(asset: template.iconAsset, fallbackSymbol: template.symbol, size: 14)
+                    .opacity(visible ? 1.0 : 0.35)
+                Text(template.title)
+                    .font(Theme.mono(12.5))
+                    .foregroundStyle(visible ? Theme.chromeForeground : Theme.chromeMuted)
+                Spacer(minLength: 14)
+                disclosureButton
+                Toggle("", isOn: Binding(get: { visible }, set: { _ in onToggleVisible() }))
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .labelsHidden()
+            }
+            .padding(.horizontal, 22)
+            .padding(.vertical, 10)
+            .background(dropZone)
+            if isExpanded { optionsField }
         }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 10)
         .opacity(isDragging ? 0.35 : 1.0)
-        .background(dropZone)
+    }
+
+    private var disclosureButton: some View {
+        Button(action: onToggleExpanded) {
+            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(Theme.chromeMuted.opacity(isExpanded ? 1.0 : 0.7))
+                .frame(width: 18, height: 18)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Indent the expansion sub-row so it visually hangs under the agent
+    /// name. Approximates `row hpad + handle + spacing + icon` from the
+    /// HStack above; a magic-but-named constant keeps the layout legible
+    /// without reaching for `.alignmentGuide`.
+    private static let optionsRowIndent: CGFloat = 56
+
+    private var optionsField: some View {
+        HStack(spacing: 10) {
+            Text("options")
+                .font(Theme.mono(11))
+                .foregroundStyle(Theme.chromeMuted)
+                .frame(width: 50, alignment: .leading)
+            TextField("--model opus", text: $options)
+                .textFieldStyle(.plain)
+                .font(Theme.mono(12))
+                .foregroundStyle(Theme.chromeForeground)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .bracketBorder()
+                .id(template.id)
+        }
+        .padding(.leading, Self.optionsRowIndent)
+        .padding(.trailing, 22)
+        .padding(.top, 2)
+        .padding(.bottom, 12)
     }
 
     /// `.dropDestination` lives on a clear background layer so the row's

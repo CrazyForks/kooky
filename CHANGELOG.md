@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.10.2 — 2026-05-14
+
+- **Per-agent launch options.** Each row in `⌘,` → Coding Agents now has a chevron — click it to expand a `options` textfield underneath. Whatever you type is appended after the binary name when launching: `claude --model opus`, `codex --resume`, `gemini --temp 0.7`, etc. Empty = use the default. Persists to `~/.kooky/settings.json` under `agents.options`. The wrapper rc's `eval` splits on whitespace so tokens with spaces (e.g. a quoted file path) need their own quoting in the field.
+
 ## v0.10.1 — 2026-05-14
 
 - **Customise the `+` menu's agent list from Settings.** New "Coding Agents" category in `⌘,` Settings lets you hide agents you don't use and reorder the rest. Terminal stays pinned first (it's the baseline). Up / down arrows on each row reorder, the trailing switch toggles visibility, and a "reset to defaults" link wipes both back to the shipping order. Persists to `~/.kooky/settings.json` under a new `agents` section (`order` + `hidden`). New agents shipped in future kooky versions appear automatically in their default slot even if you've customised the order.

@@ -26,7 +26,11 @@ struct AgentTemplate: Identifiable, Hashable {
         tintHex.flatMap(Color.init(hex:))
     }
 
-    func makeSessionConfig() -> TerminalSessionConfig {
+    /// `extraOptions` is appended after `initialCommand` (space-separated)
+    /// when forming `KOOKY_AGENT`. The wrapper rc's `eval` splits on
+    /// whitespace, so the caller handles its own quoting for tokens that
+    /// contain spaces.
+    func makeSessionConfig(extraOptions: String? = nil) -> TerminalSessionConfig {
         // Pick a shell that has a kooky integration wrapper. Plain terminal
         // sessions respect $SHELL where we have a wrapper (zsh/bash); other
         // shells (fish/nu/...) get $SHELL too, just without cwd tracking.
@@ -43,7 +47,12 @@ struct AgentTemplate: Identifiable, Hashable {
         case (.other, .some):
             config = .zshShell()
         }
-        if let initialCommand { config.environment["KOOKY_AGENT"] = initialCommand }
+        if let initialCommand {
+            let trimmedExtras = extraOptions?.trimmingCharacters(in: .whitespaces) ?? ""
+            config.environment["KOOKY_AGENT"] = trimmedExtras.isEmpty
+                ? initialCommand
+                : "\(initialCommand) \(trimmedExtras)"
+        }
         return config
     }
 }

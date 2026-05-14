@@ -60,6 +60,11 @@ final class WorkspaceStore {
     }
 
     private let engineFactory: @MainActor () -> any TerminalEngine
+    /// Resolves per-agent launch options at spawn time. Production wires this
+    /// to `KookySettingsModel.shared.agentOptions[id]`; tests pass a closure
+    /// that returns nil so unit tests stay independent of the developer's
+    /// real `~/.kooky/settings.json`.
+    private let optionsProvider: @MainActor (String) -> String?
     private let persistence: any Persistence
     private let gitStatusFetcher = GitStatusFetcher()
     /// One watcher per session — refreshes git status when `.git/HEAD` or
@@ -96,10 +101,12 @@ final class WorkspaceStore {
 
     init(
         persistence: any Persistence = FilePersistence.shared,
-        engineFactory: @escaping @MainActor () -> any TerminalEngine = { LibghosttyEngine() }
+        engineFactory: @escaping @MainActor () -> any TerminalEngine = { LibghosttyEngine() },
+        optionsProvider: @escaping @MainActor (String) -> String? = { KookySettingsModel.shared.agentOptions[$0] }
     ) {
         self.persistence = persistence
         self.engineFactory = engineFactory
+        self.optionsProvider = optionsProvider
         if let saved = persistence.load(), !saved.workspaces.isEmpty {
             restore(from: saved)
         } else {
@@ -568,7 +575,7 @@ final class WorkspaceStore {
     /// the workspace exists, so callbacks can't capture it here.
     private func spawnSession(template: AgentTemplate, initialCwd: URL, sessionId: UUID = UUID()) -> Session {
         let engine = engineFactory()
-        var config = template.makeSessionConfig()
+        var config = template.makeSessionConfig(extraOptions: optionsProvider(template.id))
         config.workingDirectory = initialCwd.path
         config.environment.merge(KookyShellIntegration.kookyEnvironment(for: sessionId)) { _, new in new }
         engine.start(config: config)

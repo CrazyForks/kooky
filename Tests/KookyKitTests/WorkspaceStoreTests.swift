@@ -18,7 +18,8 @@ final class WorkspaceStoreTests: XCTestCase {
     private func makeStore(initial: PersistedState? = nil) -> WorkspaceStore {
         WorkspaceStore(
             persistence: InMemoryPersistence(initial: initial),
-            engineFactory: { TestEngine() }
+            engineFactory: { TestEngine() },
+            optionsProvider: { _ in nil }
         )
     }
 
