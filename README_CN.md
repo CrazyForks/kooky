@@ -24,7 +24,7 @@
 
 **SwiftUI 原生开发，简约风格。** Onest + JetBrains Mono 字体。自定义 About 面板、带快捷键提示的原生菜单、中日韩等 IME 都支持。
 
-**可配置。** Settings 面板（`⌘,`）走侧边栏布局：**Terminal**（字体 / 光标 / 字号）、**Coding Agents**（拖拽排序、开关可见、为每个 agent 单独配启动参数比如 `--model opus`）、**Advanced**（直接打开 raw JSON）。所有覆盖落在 `~/.kooky/settings.json` —— kooky 先读你的 `~/.config/ghostty/config`，再用 settings.json 覆盖；首次启动会询问是否导入现有 ghostty 配置。
+**可配置。** Settings 面板（`⌘,`）走侧边栏布局：**Terminal**（字体 / 光标 / 字号）、**Coding Agents**（拖拽排序、开关可见、为每个 agent 单独配启动参数比如 `--model opus`、选一个默认 agent 让 `+` 和 `⌘T` 不弹菜单直接开）、**Advanced**（直接打开 raw JSON）。所有覆盖落在 `~/.kooky/settings.json` —— kooky 先读你的 `~/.config/ghostty/config`，再用 settings.json 覆盖；首次启动会询问是否导入现有 ghostty 配置。
 
 **默认本地。** 不需要账号，不做遥测，没有云同步。kooky 自己的状态都保存在本机。
 
