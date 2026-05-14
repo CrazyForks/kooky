@@ -2,6 +2,11 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.9.10 — 2026-05-14
+
+- **Friendlier "agent not installed" message.** When you open a Claude / Codex / OpenCode / Amp tab on a machine where the CLI isn't on `PATH`, the wrapper used to spit out `kooky: real 'X' binary not found in PATH` — easy to miss before the shell prompt redraws over it. Now it prints a yellow `⚠ X is not installed.` block with breathing whitespace. No install instructions baked in (each agent's install path drifts — brew taps rename, curl URLs change, npm package names move), so kooky just names the gap and steps out of the user's way.
+- **`curl | bash` installers now write to your real `~/.zshrc`.** kooky's zsh wrapper sets `ZDOTDIR` to an ephemeral per-PID temp dir so it can layer hooks on top of your shell config. Installer scripts (opencode, rustup, …) detect `$ZDOTDIR/.zshrc` to decide where to append `export PATH=…` — which meant they were silently writing into kooky's tmp rc and vanishing on kooky exit. The wrapper rc now `unset`s `ZDOTDIR` after sourcing your real `~/.zshrc` (or restores the user's original value via `KOOKY_ORIGINAL_ZDOTDIR` for dotfile organizers), so child processes see the genuine config path and `PATH` exports survive.
+
 ## v0.9.9 — 2026-05-13
 
 - **Non-focused panes now fully dim, terminal content included.** v0.9.8 dimmed only the chrome (tab strip + status bar) — the terminal grids stayed at full brightness so the contrast was subtle. v0.9.9 lifts the `.opacity()` from the two chrome `Group`s to the whole pane, so libghostty's `IOSurfaceLayer` rides along too. Verified: SwiftUI `.opacity()` propagates to the `NSViewRepresentable` → `NSView.alphaValue` → metal-backed `IOSurfaceLayer` correctly. Single-pane workspaces look identical.

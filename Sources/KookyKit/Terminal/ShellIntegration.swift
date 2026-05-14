@@ -80,7 +80,7 @@ enum KookyShellIntegration {
     /// `kookyBinDirectory` so wrapper shims resolve before the real binaries.
     static func kookyEnvironment(for sessionId: UUID) -> [String: String] {
         let parentPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/local/bin:/usr/bin:/bin"
-        return [
+        var env: [String: String] = [
             "KOOKY_SURFACE_ID": sessionId.uuidString,
             "KOOKY_HOOKS_PATH": claudeHooksPath,
             "KOOKY_BIN_DIR": kookyBinDirectory,
@@ -96,6 +96,15 @@ enum KookyShellIntegration {
             // well-known capability profile.
             "TERM": "xterm-256color",
         ]
+        // Preserve the user's original ZDOTDIR (if they had one — rare, mostly
+        // dotfile organizers). The wrapper rc consumes this to restore ZDOTDIR
+        // after sourcing ~/.zshrc; child installer scripts then see the real
+        // value (or no ZDOTDIR at all) and write PATH exports to ~/.zshrc
+        // instead of our ephemeral wrapper rc.
+        if let original = ProcessInfo.processInfo.environment["ZDOTDIR"], !original.isEmpty {
+            env["KOOKY_ORIGINAL_ZDOTDIR"] = original
+        }
+        return env
     }
 
     /// Writes wrapper shims, hook configs, and the OpenCode plugin to disk.
@@ -209,7 +218,7 @@ enum KookyShellIntegration {
         unset IFS
 
         if [[ -z "$real" ]]; then
-            echo "kooky: real '\(binary)' binary not found in PATH" >&2
+            printf '\\n  \\033[33m⚠\\033[0m  %s is not installed.\\n\\n' "\(binary)" >&2
             exit 127
         fi
         """
@@ -358,6 +367,18 @@ enum KookyShellIntegration {
         )
         let zshrc = """
         [[ -f "$HOME/.zshrc" ]] && source "$HOME/.zshrc"
+
+        # zsh has now consumed ZDOTDIR to locate this rc; restore the user's
+        # original (almost always empty) so child processes look at the real
+        # ~/.zshrc. Without this, `curl | bash`-style installers (opencode,
+        # rustup, etc.) detect `$ZDOTDIR/.zshrc` and append PATH exports to
+        # our ephemeral wrapper rc — gone the moment kooky exits.
+        if [[ -n "$KOOKY_ORIGINAL_ZDOTDIR" ]]; then
+            export ZDOTDIR="$KOOKY_ORIGINAL_ZDOTDIR"
+            unset KOOKY_ORIGINAL_ZDOTDIR
+        else
+            unset ZDOTDIR
+        fi
 
         # User rc may rewrite PATH; re-prepend the kooky wrapper directory so
         # `claude` etc. resolve to our shims first.
