@@ -7,11 +7,13 @@ final class AgentTemplateTests: XCTestCase {
     }
 
     func testAgentTemplatesPublishKookyAgentEnv() {
-        XCTAssertEqual(AgentTemplate.claudeCode.makeSessionConfig().environment["KOOKY_AGENT"], "claude")
-        XCTAssertEqual(AgentTemplate.codex.makeSessionConfig().environment["KOOKY_AGENT"], "codex")
-        XCTAssertEqual(AgentTemplate.gemini.makeSessionConfig().environment["KOOKY_AGENT"], "gemini")
-        XCTAssertEqual(AgentTemplate.opencode.makeSessionConfig().environment["KOOKY_AGENT"], "opencode")
-        XCTAssertEqual(AgentTemplate.amp.makeSessionConfig().environment["KOOKY_AGENT"], "amp")
+        for template in AgentTemplate.all where template.id != "terminal" {
+            XCTAssertEqual(
+                template.makeSessionConfig().environment["KOOKY_AGENT"],
+                template.initialCommand,
+                "agent template \(template.id) must publish KOOKY_AGENT matching its initialCommand"
+            )
+        }
     }
 
     func testAllTemplatesAreUniqueAndIncludeTerminal() {
@@ -28,7 +30,7 @@ final class AgentTemplateTests: XCTestCase {
     func testAgentTemplatesPickAShellWithIntegrationWrapper() {
         // Agent must run under one of our wrappers (zsh ZDOTDIR or bash
         // --rcfile) — anything else means KOOKY_AGENT never fires.
-        for template in [AgentTemplate.claudeCode, .codex, .gemini, .opencode, .amp] {
+        for template in AgentTemplate.all where template.id != "terminal" {
             let cmd = template.makeSessionConfig().command
             XCTAssertTrue(
                 cmd == "/bin/zsh" || cmd.contains("kooky-bash-launch-"),

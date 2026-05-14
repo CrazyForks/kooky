@@ -16,7 +16,7 @@ A minimal modern terminal built for AI coding. Sidebar workspaces; horizontal / 
 
 **Vertical tabs & split panes.** Sidebar workspaces with three-state collapse (`⌘⌃S`). Each pane owns its own tab strip and active tab. Drag tabs to reorder, or across panes to move sessions whole. State persists across launches.
 
-**One-click AI agent sessions.** Claude Code · Codex · Gemini CLI · OpenCode · Amp. Pick one from the `+` menu; the agent boots before your first prompt prints.
+**One-click AI agent sessions.** Claude Code · Codex · Gemini CLI · OpenCode · Amp · Cursor CLI. Pick one from the `+` menu; the agent boots before your first prompt prints.
 
 **Agent activity readout.** Sidebar dot tracks each agent in real time — running (blue), waiting on you (amber), idle (none). Tab + workspace dots also turn red when the last command exited non-zero; hover for `exit N · 12.4s`.
 

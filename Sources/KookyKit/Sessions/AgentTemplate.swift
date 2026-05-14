@@ -103,11 +103,20 @@ extension AgentTemplate {
         initialCommand: "amp"
     )
 
-    static let all: [AgentTemplate] = [.terminal, .claudeCode, .codex, .gemini, .opencode, .amp]
+    static let cursor = AgentTemplate(
+        id: "cursor",
+        title: "Cursor CLI",
+        symbol: "cube",
+        iconAsset: "cursor",
+        tintHex: "F54E00",
+        initialCommand: "cursor-agent"
+    )
 
-    /// Looks up a template from the short slug an agent's hook system reports
-    /// (`claude` / `codex` / `gemini` / `opencode` / `amp`). The slug is what
-    /// the user types to launch the CLI — we keyed `initialCommand` to it.
+    static let all: [AgentTemplate] = [.terminal, .claudeCode, .codex, .gemini, .opencode, .amp, .cursor]
+
+    /// Looks up a template by the slug an agent's hook system reports — the
+    /// same string as the template's `initialCommand` (the binary name the
+    /// user types). Returns nil for unknown slugs.
     static func from(hookSlug: String) -> AgentTemplate? {
         all.first { $0.initialCommand == hookSlug }
     }

@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.10.0 — 2026-05-14
+
+- **Cursor CLI joins the agent menu.** New entry in the `+` menu for `cursor-agent` (Cursor's coding-agent CLI, installed via `curl https://cursor.com/install -fsS | bash`). Wired the same way as Amp — bracket wrapper sends `running` before launch / `ended` after exit so the sidebar dot and tab icon track lifecycle. Mid-run state (the in-prompt "attention" yellow dot) waits on Cursor exposing real lifecycle hooks in the CLI; as of now their hooks system is IDE-only.
+
 ## v0.9.12 — 2026-05-14
 
 - **"agent not installed" message now reads cleaner.** Dropped the `⚠` emoji from the wrapper's missing-binary line — felt out of place in a minimal terminal. The line is still yellow so it stands out from regular shell output, just plainer prose: `opencode is not installed.`

@@ -117,6 +117,7 @@ enum KookyShellIntegration {
         // in the spawned shell is enough for hooks to fire from gemini itself.
         writeWrapper(name: "opencode", script: bracketWrapperScript(slug: "opencode"))
         writeWrapper(name: "amp", script: bracketWrapperScript(slug: "amp"))
+        writeWrapper(name: "cursor-agent", script: bracketWrapperScript(slug: "cursor-agent"))
 
         let hookCmd = kookyHookBinaryPath
         writeJSON(at: claudeHooksPath, object: claudeHooksObject(hookCmd: hookCmd))
