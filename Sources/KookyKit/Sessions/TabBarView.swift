@@ -68,11 +68,14 @@ private struct AddTabButton: View {
             size: 28,
             help: "New tab"
         ) {
-            // When the user has hidden every coding agent, the popover would
-            // show a single Terminal row — needless friction. Open a Terminal
-            // directly and skip the menu.
-            let agents = AgentTemplate.visibleOrdered(model: KookySettingsModel.shared)
-            if agents.count <= 1 {
+            // Two short-circuit paths that skip the popover entirely:
+            //   1. user picked a default agent in Settings — open it
+            //   2. every coding agent is hidden so the popover would show
+            //      just Terminal anyway — open Terminal
+            let model = KookySettingsModel.shared
+            if let defaultTemplate = AgentTemplate.defaultLaunchTemplate(model: model) {
+                store.addTab(in: workspace, pane: pane, template: defaultTemplate)
+            } else if AgentTemplate.visibleOrdered(model: model).count <= 1 {
                 store.addTab(in: workspace, pane: pane, template: .terminal)
             } else {
                 isMenuOpen.toggle()

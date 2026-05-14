@@ -150,4 +150,16 @@ extension AgentTemplate {
     static func visibleOrdered(model: KookySettingsModel) -> [AgentTemplate] {
         [.terminal] + ordered(model: model).filter { !model.hiddenAgents.contains($0.id) }
     }
+
+    /// Resolves the user's chosen default template for `+` / `⌘T`. Returns
+    /// `nil` (meaning "no default, show the picker") when the saved id is
+    /// missing, unknown, or points to an agent the user has since hidden.
+    /// Looking the id up in `visibleOrdered` gives the stale-default-after-
+    /// hide fallback for free; Terminal is always present there so it stays
+    /// selectable even though it's not customisable from the Settings list.
+    @MainActor
+    static func defaultLaunchTemplate(model: KookySettingsModel) -> AgentTemplate? {
+        guard let id = model.defaultAgentId else { return nil }
+        return visibleOrdered(model: model).first { $0.id == id }
+    }
 }

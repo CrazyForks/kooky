@@ -4,7 +4,7 @@
 
 🇬🇧 English  ·  🇨🇳 [中文](README_CN.md)
 
-![kooky — sidebar with three workspaces, two panes running Claude Code and Codex side by side, the `+` menu showing the five built-in agent templates](screenshot.png)
+![kooky — sidebar with three workspaces, two panes running Claude Code and Codex side by side, the `+` menu showing the six built-in agent templates](screenshot.png)
 
 A minimal modern terminal built for AI coding. Sidebar workspaces; horizontal / vertical split panes; one-click agent launch; per-agent activity readout; live workspace state with one-click Node and branch switching. Open-source, MIT-licensed. No accounts, no telemetry; app state stays local. GPU rendering via [libghostty](https://github.com/ghostty-org/ghostty).
 
@@ -24,7 +24,7 @@ A minimal modern terminal built for AI coding. Sidebar workspaces; horizontal / 
 
 **SwiftUI-native, minimal chrome.** Onest + JetBrains Mono. Custom About panel, native menus with shortcut hints, full IME support.
 
-**Configurable.** Settings (`⌘,`) for font / cursor + a JSON config at `~/.kooky/settings.json` for any ghostty key. Kooky reads ghostty's own `~/.config/ghostty/config` first, then layers your overrides on top; first-launch offers to import an existing ghostty setup.
+**Configurable.** Settings (`⌘,`) with a sidebar layout: **Terminal** (font / cursor / size), **Coding Agents** (drag to reorder, toggle visibility, set per-agent launch options like `--model opus`), **Advanced** (open raw JSON). All overrides live in `~/.kooky/settings.json` — ghostty's own `~/.config/ghostty/config` is read first and your overrides layer on top; first-launch offers to import an existing ghostty setup.
 
 **Local by default.** No accounts, no telemetry, no cloud sync. Kooky keeps its own state on your device.
 

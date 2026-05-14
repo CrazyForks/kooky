@@ -4,7 +4,7 @@
 
 🇨🇳 中文  ·  🇬🇧 [English](README.md)
 
-![kooky 截图：侧边栏里有三个 workspace，两个 pane 并排运行 Claude Code 和 Codex，`+` 菜单展开了五种内置 agent](screenshot.png)
+![kooky 截图：侧边栏里有三个 workspace，两个 pane 并排运行 Claude Code 和 Codex，`+` 菜单展开了六种内置 agent](screenshot.png)
 
 专为 AI coding 优化的极简 macOS 终端。支持侧边栏 workspace 管理、水平 / 垂直分屏、一键启动 agent、实时查看 agent 状态，也能在 pane 底部直接看到 Git、Node、Python 等工作区状态。开源，MIT 许可；不需要账号，不做遥测，应用状态都留在本机。GPU 渲染基于 [libghostty](https://github.com/ghostty-org/ghostty)。
 
@@ -24,7 +24,7 @@
 
 **SwiftUI 原生开发，简约风格。** Onest + JetBrains Mono 字体。自定义 About 面板、带快捷键提示的原生菜单、中日韩等 IME 都支持。
 
-**可配置。** Settings 面板（`⌘,`）配字体 / 光标，深度配置走 `~/.kooky/settings.json`，支持所有 ghostty 配置 key。kooky 先读你的 `~/.config/ghostty/config`，再用 settings.json 覆盖；首次启动会询问是否导入现有 ghostty 配置。
+**可配置。** Settings 面板（`⌘,`）走侧边栏布局：**Terminal**（字体 / 光标 / 字号）、**Coding Agents**（拖拽排序、开关可见、为每个 agent 单独配启动参数比如 `--model opus`）、**Advanced**（直接打开 raw JSON）。所有覆盖落在 `~/.kooky/settings.json` —— kooky 先读你的 `~/.config/ghostty/config`，再用 settings.json 覆盖；首次启动会询问是否导入现有 ghostty 配置。
 
 **默认本地。** 不需要账号，不做遥测，没有云同步。kooky 自己的状态都保存在本机。
 

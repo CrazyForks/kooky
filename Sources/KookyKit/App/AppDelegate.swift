@@ -256,7 +256,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
     @objc private func handleNewTab() {
         guard let workspace = store.active else { return }
-        store.addTab(in: workspace)
+        // Keyboard convention: ⌘T is deterministic — open the user's default
+        // agent if set, otherwise Terminal. The visual `+` button keeps the
+        // "Ask each time" popover for mouse interaction.
+        let template = AgentTemplate.defaultLaunchTemplate(model: KookySettingsModel.shared) ?? .terminal
+        store.addTab(in: workspace, template: template)
     }
 
     @objc private func handleNewWorkspace() {

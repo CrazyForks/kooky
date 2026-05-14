@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.10.3 — 2026-05-15
+
+- **Default agent for `+` and `⌘T`.** Settings → Coding Agents now has a "default" picker at the top: pick any visible agent (or Terminal) to skip the popover entirely. `+` and `⌘T` open that agent straight away. Leave it on **Ask each time** to keep the popover on the `+` button — `⌘T` stays deterministic and opens Terminal (keyboard-shortcut convention), so the shortcut is always predictable. If the chosen default gets hidden later, kooky transparently falls back: `+` shows the picker again, `⌘T` opens Terminal. Persists to `~/.kooky/settings.json` under `agents.default`.
+
 ## v0.10.2 — 2026-05-14
 
 - **Per-agent launch options.** Each row in `⌘,` → Coding Agents now has a chevron — click it to expand a `options` textfield underneath. Whatever you type is appended after the binary name when launching: `claude --model opus`, `codex --resume`, `gemini --temp 0.7`, etc. Empty = use the default. Persists to `~/.kooky/settings.json` under `agents.options`. The wrapper rc's `eval` splits on whitespace so tokens with spaces (e.g. a quoted file path) need their own quoting in the field.

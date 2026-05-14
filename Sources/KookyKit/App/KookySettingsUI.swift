@@ -34,6 +34,10 @@ final class KookySettingsModel {
     /// becomes `claude --model opus`. The wrapper rc's `eval` splits on
     /// whitespace, so users handle their own quoting for spaces.
     var agentOptions: [String: String] = [:]
+    /// `id` of the template that `+` / `⌘T` should open without prompting.
+    /// `nil` (or pointing to a now-hidden / unknown agent) means "ask each
+    /// time" — the popover stays. Terminal is always a valid choice.
+    var defaultAgentId: String? = nil
 
     private var saveWork: DispatchWorkItem?
 
@@ -55,6 +59,7 @@ final class KookySettingsModel {
         agentOrder = (agents["order"] as? [String]) ?? []
         hiddenAgents = Set((agents["hidden"] as? [String]) ?? [])
         agentOptions = (agents["options"] as? [String: String]) ?? [:]
+        defaultAgentId = agents["default"] as? String
     }
 
     /// Schedules a debounced write. UI bindings call this on every change;
@@ -87,13 +92,14 @@ final class KookySettingsModel {
         parsed["terminal"] = terminal
 
         let nonEmptyOptions = agentOptions.filter { !$0.value.isEmpty }
-        if agentOrder.isEmpty && hiddenAgents.isEmpty && nonEmptyOptions.isEmpty {
+        if agentOrder.isEmpty && hiddenAgents.isEmpty && nonEmptyOptions.isEmpty && defaultAgentId == nil {
             parsed.removeValue(forKey: "agents")
         } else {
             var agents = parsed["agents"] as? [String: Any] ?? [:]
             agents["order"] = agentOrder.isEmpty ? nil : agentOrder
             agents["hidden"] = hiddenAgents.isEmpty ? nil : Array(hiddenAgents).sorted()
             agents["options"] = nonEmptyOptions.isEmpty ? nil : nonEmptyOptions
+            agents["default"] = defaultAgentId
             parsed["agents"] = agents
         }
 
@@ -104,6 +110,7 @@ final class KookySettingsModel {
         agentOrder = []
         hiddenAgents = []
         agentOptions = [:]
+        defaultAgentId = nil
         scheduleSave()
     }
 }
@@ -151,6 +158,7 @@ struct KookySettingsView: View {
         .onChange(of: model.agentOrder) { _, _ in model.scheduleSave() }
         .onChange(of: model.hiddenAgents) { _, _ in model.scheduleSave() }
         .onChange(of: model.agentOptions) { _, _ in model.scheduleSave() }
+        .onChange(of: model.defaultAgentId) { _, _ in model.scheduleSave() }
     }
 
     private var sidebar: some View {
@@ -255,8 +263,21 @@ struct KookySettingsView: View {
 
     private var codingAgentsDetail: some View {
         VStack(alignment: .leading, spacing: 0) {
+            SettingsRow(label: "default") {
+                Picker("", selection: $model.defaultAgentId) {
+                    Text("Ask each time").tag(String?.none)
+                    Divider()
+                    ForEach(AgentTemplate.visibleOrdered(model: model)) { template in
+                        Text(template.title).tag(String?.some(template.id))
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .frame(minWidth: 180)
+            }
+            SettingsHairline()
             AgentReorderList(model: model)
-            Text("Drag to reorder. Switch hides from the `+` menu. Chevron reveals launch options (e.g. `--model opus`). Terminal stays pinned first.")
+            Text("Default opens with `+` / `⌘T` without a popover. Drag a row to reorder. Switch hides from the `+` menu. Chevron reveals launch options (e.g. `--model opus`). Terminal stays pinned first.")
                 .font(Theme.mono(11))
                 .foregroundStyle(Theme.chromeMuted)
                 .padding(.horizontal, 28)
@@ -465,6 +486,7 @@ private struct AgentReorderList: View {
         !model.agentOrder.isEmpty
             || !model.hiddenAgents.isEmpty
             || model.agentOptions.values.contains(where: { !$0.isEmpty })
+            || model.defaultAgentId != nil
     }
 
     private func toggle(_ id: String) {
