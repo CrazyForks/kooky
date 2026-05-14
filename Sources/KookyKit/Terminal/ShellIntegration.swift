@@ -218,7 +218,13 @@ enum KookyShellIntegration {
         unset IFS
 
         if [[ -z "$real" ]]; then
-            printf '\\n  \\033[33m⚠\\033[0m  %s is not installed.\\n\\n' "\(binary)" >&2
+            printf '\\n  \\033[33m%s is not installed.\\033[0m\\n\\n' "\(binary)" >&2
+            # The new-tab path eagerly sets session.agent based on the template,
+            # expecting bracket wrapper to ping `running` next. We never got
+            # there — revert the icon so it doesn't lie about what's running.
+            if [[ -n "$KOOKY_SURFACE_ID" && -n "$KOOKY_HOOK_BIN" ]]; then
+                "$KOOKY_HOOK_BIN" \(binary) ended 2>/dev/null
+            fi
             exit 127
         fi
         """

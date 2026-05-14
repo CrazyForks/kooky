@@ -2,6 +2,11 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.9.12 — 2026-05-14
+
+- **"agent not installed" message now reads cleaner.** Dropped the `⚠` emoji from the wrapper's missing-binary line — felt out of place in a minimal terminal. The line is still yellow so it stands out from regular shell output, just plainer prose: `opencode is not installed.`
+- **Tab icon no longer lies when the agent is missing.** Opening a new OpenCode / Amp / Claude / Codex tab from the `+` menu used to leave the tab pill stuck on the agent's icon even when its CLI wasn't installed — kooky optimistically sets `session.agent` based on the template, expecting the bracket wrapper to ping `running`, but the missing-binary branch was exiting silently. The wrapper now pings `ended` before exit so kooky reverts the icon back to Terminal.
+
 ## v0.9.11 — 2026-05-14
 
 - **Mac-style text editing shortcuts now work.** zsh out of the box only binds `Alt+B/F` for word jump, so common combos like `Cmd+←` or `Option+Backspace` did nothing in earlier versions. Now they all just work:
