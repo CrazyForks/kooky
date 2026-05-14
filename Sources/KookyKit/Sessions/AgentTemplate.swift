@@ -120,4 +120,25 @@ extension AgentTemplate {
     static func from(hookSlug: String) -> AgentTemplate? {
         all.first { $0.initialCommand == hookSlug }
     }
+
+    /// All non-terminal templates resolved against the user's saved order.
+    /// Templates absent from `model.agentOrder` (typically: a fresh kooky
+    /// install, or an agent shipped in a newer version) are appended in
+    /// their `AgentTemplate.all` position so nothing silently disappears.
+    @MainActor
+    static func ordered(model: KookySettingsModel) -> [AgentTemplate] {
+        let nonTerminal = all.filter { $0.id != "terminal" }
+        let byId = Dictionary(uniqueKeysWithValues: nonTerminal.map { ($0.id, $0) })
+        let userOrderIds = model.agentOrder.filter { byId.keys.contains($0) }
+        let userOrderSet = Set(userOrderIds)
+        let missing = nonTerminal.filter { !userOrderSet.contains($0.id) }
+        return userOrderIds.compactMap { byId[$0] } + missing
+    }
+
+    /// What the `+` menu renders: Terminal pinned first (not user-controlled),
+    /// then `ordered(model:)` filtered to visible agents only.
+    @MainActor
+    static func visibleOrdered(model: KookySettingsModel) -> [AgentTemplate] {
+        [.terminal] + ordered(model: model).filter { !model.hiddenAgents.contains($0.id) }
+    }
 }

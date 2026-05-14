@@ -68,7 +68,15 @@ private struct AddTabButton: View {
             size: 28,
             help: "New tab"
         ) {
-            isMenuOpen.toggle()
+            // When the user has hidden every coding agent, the popover would
+            // show a single Terminal row — needless friction. Open a Terminal
+            // directly and skip the menu.
+            let agents = AgentTemplate.visibleOrdered(model: KookySettingsModel.shared)
+            if agents.count <= 1 {
+                store.addTab(in: workspace, pane: pane, template: .terminal)
+            } else {
+                isMenuOpen.toggle()
+            }
         }
         // Indicator sits in the gap just left of the `+` (offset by half its
         // hit-area), not on the button itself, so it reads as "tab will land
@@ -76,7 +84,7 @@ private struct AddTabButton: View {
         .dropIndicator(active: isTargeted, on: .leading, offset: -3)
         .popover(isPresented: $isMenuOpen, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(AgentTemplate.all) { template in
+                ForEach(AgentTemplate.visibleOrdered(model: KookySettingsModel.shared)) { template in
                     KookyMenuRow(title: template.title) {
                         AgentIconView(asset: template.iconAsset, fallbackSymbol: template.symbol, size: 16)
                     } action: {

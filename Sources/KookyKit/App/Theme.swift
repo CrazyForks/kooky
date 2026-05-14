@@ -43,8 +43,8 @@ enum Theme {
         Font.custom(displayName, size: size).weight(weight)
     }
 
-    static func mono(_ size: CGFloat) -> Font {
-        Font.custom(monoName, size: size)
+    static func mono(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        Font.custom(monoName, size: size).weight(weight)
     }
 
     // MARK: Spacing rhythm — multiples of 4. Use space3+ for chrome breathing.

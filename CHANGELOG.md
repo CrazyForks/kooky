@@ -2,6 +2,17 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.10.1 — 2026-05-14
+
+- **Customise the `+` menu's agent list from Settings.** New "Coding Agents" category in `⌘,` Settings lets you hide agents you don't use and reorder the rest. Terminal stays pinned first (it's the baseline). Up / down arrows on each row reorder, the trailing switch toggles visibility, and a "reset to defaults" link wipes both back to the shipping order. Persists to `~/.kooky/settings.json` under a new `agents` section (`order` + `hidden`). New agents shipped in future kooky versions appear automatically in their default slot even if you've customised the order.
+- **Settings UI redesigned — sidebar layout, brutalist-minimal aesthetic.** Replaces the single long scroll with a two-column layout (categories left, detail right) and rebuilds the whole surface to feel like polishing a `.toml`, not a SaaS settings panel:
+  - Drag-and-drop reorder on the agents list — hover any row to see the open-hand cursor, drag to reorder with a 2pt drop-indicator line marking the target slot (matches the tab DnD pattern in the main window, and the Finder / Mail sidebar reorder convention). A trailing drop catcher below the last row sends an agent to the end. No visible grip glyph — the cursor change is the affordance.
+  - Sidebar reads like a config index — mono font, `▸` prefix on the selected row, no pill highlights, no icons. Top label `SETTINGS` in small-caps tracking.
+  - Row labels are kebab-case config keys in mono (`font-family`, `cursor-style`, `~/.kooky/settings.json`) — the GUI keeps you fluent in the underlying file format.
+  - All decorative chrome dropped: no rounded boxes wrapping sections, no chip-style buttons. 1pt hairlines for every separator, sharp corners, single accent (nothing — the design is pure grayscale + weight hierarchy).
+  - Buttons are bracket-bordered text (`[ open in new tab ]` style), not filled pills. The "apply on restart" hint + restart button now live inside the Terminal category itself — they only apply to the ghostty-routed terminal config, not to agent ordering or other settings, so scoping them to that one category removes the global footer misdirection.
+  - Window bumped to 680×460 to fit the new shape.
+
 ## v0.10.0 — 2026-05-14
 
 - **Cursor CLI joins the agent menu.** New entry in the `+` menu for `cursor-agent` (Cursor's coding-agent CLI, installed via `curl https://cursor.com/install -fsS | bash`). Wired the same way as Amp — bracket wrapper sends `running` before launch / `ended` after exit so the sidebar dot and tab icon track lifecycle. Mid-run state (the in-prompt "attention" yellow dot) waits on Cursor exposing real lifecycle hooks in the CLI; as of now their hooks system is IDE-only.

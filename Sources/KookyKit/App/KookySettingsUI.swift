@@ -11,12 +11,24 @@ import SwiftUI
 @Observable
 @MainActor
 final class KookySettingsModel {
+    /// Singleton so non-Settings UI surfaces (TabBarView's `+` menu, etc.)
+    /// observe the same instance and react to user edits without a reload.
+    static let shared = KookySettingsModel()
+
     var fontFamily: String = ""
     /// `nil` = not overridden — let libghostty fall back to ghostty's own
     /// config (or its default). Writing a default 13 unconditionally would
     /// silently shadow the user's `~/.config/ghostty/config` font-size.
     var fontSize: Int? = nil
     var cursorStyle: String = "block"
+
+    /// User-customised order for the `+` menu agent list (Terminal stays
+    /// pinned first regardless). Empty = use `AgentTemplate.all` order.
+    /// Unknown ids are dropped on load; ids absent from this array but
+    /// present in `AgentTemplate.all` are appended after, so a new agent
+    /// shipped in a future kooky still shows up.
+    var agentOrder: [String] = []
+    var hiddenAgents: Set<String> = []
 
     private var saveWork: DispatchWorkItem?
 
@@ -33,6 +45,10 @@ final class KookySettingsModel {
             fontSize = Int(d)
         }
         cursorStyle = (terminal["cursor-style"] as? String) ?? "block"
+
+        let agents = parsed["agents"] as? [String: Any] ?? [:]
+        agentOrder = (agents["order"] as? [String]) ?? []
+        hiddenAgents = Set((agents["hidden"] as? [String]) ?? [])
     }
 
     /// Schedules a debounced write. UI bindings call this on every change;
@@ -63,118 +79,204 @@ final class KookySettingsModel {
         terminal["font-size"] = fontSize
         terminal["cursor-style"] = cursorStyle == "block" ? nil : cursorStyle
         parsed["terminal"] = terminal
+
+        if agentOrder.isEmpty && hiddenAgents.isEmpty {
+            parsed.removeValue(forKey: "agents")
+        } else {
+            var agents = parsed["agents"] as? [String: Any] ?? [:]
+            agents["order"] = agentOrder.isEmpty ? nil : agentOrder
+            agents["hidden"] = hiddenAgents.isEmpty ? nil : Array(hiddenAgents).sorted()
+            parsed["agents"] = agents
+        }
+
         KookySettings.write(parsed)
+    }
+
+    func resetAgentCustomisation() {
+        agentOrder = []
+        hiddenAgents = []
+        scheduleSave()
     }
 }
 
-/// Settings panel — mirrors the main-window chrome (dark bg, Onest labels,
-/// 1pt hairlines, no rounded grouped form). v1 surface area: 4 ghostty-routed
-/// keys plus an "open raw JSON" escape hatch.
+enum SettingsCategory: String, CaseIterable, Identifiable {
+    case terminal, codingAgents, advanced
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .terminal: return "Terminal"
+        case .codingAgents: return "Coding Agents"
+        case .advanced: return "Advanced"
+        }
+    }
+}
+
+/// Settings panel. Brutalist-minimal:
+///   - sidebar list reads like a config-key index: mono font, `▸` prefix on
+///     the selected row, no pill highlights, no icons
+///   - detail surface is unboxed — rows are hairline-separated, labels are
+///     kebab-case config keys in mono, headers use Onest display for the
+///     single human-readable hook
+///   - all separators are 1pt hairlines, all corners are sharp
+/// The goal is to feel like polishing a `.toml` in a clean GUI, not a SaaS
+/// settings panel.
 struct KookySettingsView: View {
     @Bindable var model: KookySettingsModel
     let onOpenInTab: () -> Void
+    @State private var selected: SettingsCategory = .terminal
 
     var body: some View {
-        VStack(spacing: 0) {
-            ScrollView {
-                VStack(spacing: 0) {
-                    SettingsSection(title: "Terminal") {
-                        SettingsRow(label: "Font Family") {
-                            Picker("", selection: $model.fontFamily) {
-                                Text("Default").tag("")
-                                Divider()
-                                ForEach(Self.monospaceFamilies, id: \.self) { family in
-                                    Text(family).tag(family)
-                                }
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.menu)
-                            .frame(minWidth: 180)
-                        }
-                        SettingsHairline()
-                        SettingsRow(label: "Font Size") {
-                            HStack(spacing: 6) {
-                                Text("\(model.fontSize ?? Self.defaultFontSize)")
-                                    .font(Theme.mono(12))
-                                    .foregroundStyle(Theme.chromeForeground)
-                                    .monospacedDigit()
-                                    .frame(width: 28, alignment: .trailing)
-                                Stepper("", value: fontSizeBinding, in: 8...32)
-                                    .labelsHidden()
-                            }
-                        }
-                        SettingsHairline()
-                        SettingsRow(label: "Cursor Style") {
-                            Picker("", selection: $model.cursorStyle) {
-                                Text("Block").tag("block")
-                                Text("Underline").tag("underline")
-                                Text("Bar").tag("bar")
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.menu)
-                            .frame(minWidth: 180)
-                        }
-                    }
-                    SettingsSection(title: "Advanced") {
-                        SettingsRow(label: "settings.json") {
-                            Button(action: onOpenInTab) {
-                                Text("Open in New Tab")
-                                    .font(Theme.display(12, weight: .regular))
-                                    .foregroundStyle(Theme.chromeForeground)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 4)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 5)
-                                            .fill(Theme.chromeFaint.opacity(0.5))
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    } caption: {
-                        Text("For options not surfaced here, edit `~/.kooky/settings.json` directly.")
-                    }
-                }
-                .padding(.vertical, 16)
-            }
-            footerHint
+        HStack(spacing: 0) {
+            sidebar
+            Rectangle().fill(Theme.chromeHairline).frame(width: 1)
+            ScrollView { detail }
+                .frame(maxWidth: .infinity)
         }
         .background(Theme.chromeBackground)
         .preferredColorScheme(.dark)
         .onChange(of: model.fontFamily) { _, _ in model.scheduleSave() }
         .onChange(of: model.fontSize) { _, _ in model.scheduleSave() }
         .onChange(of: model.cursorStyle) { _, _ in model.scheduleSave() }
+        .onChange(of: model.agentOrder) { _, _ in model.scheduleSave() }
+        .onChange(of: model.hiddenAgents) { _, _ in model.scheduleSave() }
     }
 
-    private var footerHint: some View {
-        VStack(spacing: 0) {
-            Rectangle().fill(Theme.chromeHairline).frame(height: 1)
-            HStack(spacing: 12) {
-                Text("Changes apply when you restart kooky.")
-                    .font(Theme.display(11.5, weight: .regular))
-                    .foregroundStyle(Theme.chromeMuted)
-                Spacer()
-                Button {
-                    restartApp()
-                } label: {
-                    Text("Restart")
-                        .font(Theme.display(12, weight: .medium))
-                        .foregroundStyle(Theme.chromeForeground)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 5)
-                        .background(
-                            RoundedRectangle(cornerRadius: 5)
-                                .fill(Theme.chromeFaint.opacity(0.6))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 5)
-                                .stroke(Theme.chromeHairline, lineWidth: 1)
-                        )
-                }
-                .buttonStyle(.plain)
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("SETTINGS")
+                .font(Theme.mono(10, weight: .medium))
+                .tracking(1.6)
+                .foregroundStyle(Theme.chromeMuted.opacity(0.85))
+                .padding(.horizontal, 18)
+                .padding(.top, 22)
+                .padding(.bottom, 18)
+            ForEach(SettingsCategory.allCases) { category in
+                sidebarRow(category)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            Spacer()
         }
+        .frame(width: 168, alignment: .topLeading)
+        .background(Theme.chromeFaint.opacity(0.08))
+    }
+
+    private func sidebarRow(_ category: SettingsCategory) -> some View {
+        let isSelected = selected == category
+        return HStack(spacing: 0) {
+            Text(isSelected ? "▸" : " ")
+                .font(Theme.mono(11, weight: .medium))
+                .foregroundStyle(isSelected ? Theme.chromeForeground : Color.clear)
+                .frame(width: 14, alignment: .leading)
+            Text(category.title)
+                .font(Theme.mono(12, weight: isSelected ? .medium : .regular))
+                .foregroundStyle(isSelected ? Theme.chromeForeground : Theme.chromeMuted)
+            Spacer()
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 7)
+        .contentShape(Rectangle())
+        .onTapGesture { selected = category }
+    }
+
+    @ViewBuilder
+    private var detail: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(selected.title)
+                .font(Theme.display(22, weight: .medium))
+                .foregroundStyle(Theme.chromeForeground)
+                .padding(.horizontal, 28)
+                .padding(.top, 26)
+                .padding(.bottom, 22)
+            Rectangle()
+                .fill(Theme.chromeHairline)
+                .frame(width: 32, height: 1)
+                .padding(.horizontal, 28)
+                .padding(.bottom, 18)
+            switch selected {
+            case .terminal: terminalDetail
+            case .codingAgents: codingAgentsDetail
+            case .advanced: advancedDetail
+            }
+            Spacer(minLength: 28)
+        }
+    }
+
+    private var terminalDetail: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SettingsRow(label: "font-family") {
+                Picker("", selection: $model.fontFamily) {
+                    Text("Default").tag("")
+                    Divider()
+                    ForEach(Self.monospaceFamilies, id: \.self) { family in
+                        Text(family).tag(family)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .frame(minWidth: 180)
+            }
+            SettingsHairline()
+            SettingsRow(label: "font-size") {
+                HStack(spacing: 8) {
+                    Text("\(model.fontSize ?? Self.defaultFontSize)")
+                        .font(Theme.mono(12))
+                        .foregroundStyle(Theme.chromeForeground)
+                        .monospacedDigit()
+                        .frame(width: 28, alignment: .trailing)
+                    Stepper("", value: fontSizeBinding, in: 8...32)
+                        .labelsHidden()
+                }
+            }
+            SettingsHairline()
+            SettingsRow(label: "cursor-style") {
+                Picker("", selection: $model.cursorStyle) {
+                    Text("Block").tag("block")
+                    Text("Underline").tag("underline")
+                    Text("Bar").tag("bar")
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .frame(minWidth: 180)
+            }
+            terminalRestartCallout
+        }
+    }
+
+    private var codingAgentsDetail: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            AgentReorderList(model: model)
+            Text("Drag a row to reorder. Switch hides from the `+` menu. Terminal stays pinned first.")
+                .font(Theme.mono(11))
+                .foregroundStyle(Theme.chromeMuted)
+                .padding(.horizontal, 28)
+                .padding(.top, 16)
+        }
+    }
+
+    private var advancedDetail: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SettingsRow(label: "~/.kooky/settings.json") {
+                BracketButton("open in new tab", action: onOpenInTab)
+            }
+            Text("Edit the raw JSON for any key not exposed above. Comments (`//`, `/* */`) are accepted.")
+                .font(Theme.mono(11))
+                .foregroundStyle(Theme.chromeMuted)
+                .padding(.horizontal, 28)
+                .padding(.top, 16)
+        }
+    }
+
+    private var terminalRestartCallout: some View {
+        HStack(spacing: 12) {
+            Text("Terminal settings apply on restart.")
+                .font(Theme.mono(11.5))
+                .foregroundStyle(Theme.chromeMuted)
+            Spacer()
+            BracketButton("restart kooky", action: restartApp)
+        }
+        .padding(.horizontal, 28)
+        .padding(.top, 22)
     }
 
     private func restartApp() {
@@ -227,79 +329,215 @@ struct KookySettingsView: View {
 
 }
 
-/// Section header + content block. Header uses Onest small-caps tracking
-/// to match the rest of the sidebar / status chrome aesthetic.
-private struct SettingsSection<Content: View>: View {
-    let title: String
-    @ViewBuilder var content: () -> Content
-    let caption: AnyView?
-
-    init(title: String, @ViewBuilder content: @escaping () -> Content) {
-        self.title = title
-        self.content = content
-        self.caption = nil
-    }
-
-    init<Caption: View>(
-        title: String,
-        @ViewBuilder content: @escaping () -> Content,
-        @ViewBuilder caption: () -> Caption
-    ) {
-        self.title = title
-        self.content = content
-        self.caption = AnyView(caption())
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title.uppercased())
-                .font(Theme.display(10, weight: .medium))
-                .tracking(0.8)
-                .foregroundStyle(Theme.chromeMuted)
-                .padding(.horizontal, 20)
-                .padding(.top, 6)
-            VStack(spacing: 0) {
-                content()
-            }
-            .background(Theme.chromeFaint.opacity(0.18))
-            .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(Theme.chromeHairline, lineWidth: 1)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-            .padding(.horizontal, 16)
-            if let caption {
-                caption
-                    .font(Theme.display(11.5, weight: .regular))
-                    .foregroundStyle(Theme.chromeMuted)
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 4)
-            }
-        }
-        .padding(.bottom, 18)
-    }
-}
-
 private struct SettingsRow<Trailing: View>: View {
     let label: String
     @ViewBuilder var trailing: () -> Trailing
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 14) {
             Text(label)
-                .font(Theme.display(12.5, weight: .regular))
+                .font(Theme.mono(12.5))
                 .foregroundStyle(Theme.chromeForeground)
-            Spacer(minLength: 12)
+            Spacer(minLength: 14)
             trailing()
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 28)
+        .padding(.vertical, 11)
     }
 }
 
 private struct SettingsHairline: View {
     var body: some View {
-        Rectangle().fill(Theme.chromeHairline).frame(height: 1)
+        Rectangle()
+            .fill(Theme.chromeHairline.opacity(0.55))
+            .frame(height: 1)
+            .padding(.horizontal, 28)
+    }
+}
+
+/// Plain-text `[bracketed]` button. Hairline border, mono, sharp corners.
+private struct BracketButton: View {
+    let title: String
+    let action: () -> Void
+
+    init(_ title: String, action: @escaping () -> Void) {
+        self.title = title
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(Theme.mono(11.5, weight: .medium))
+                .foregroundStyle(Theme.chromeForeground)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .overlay(
+                    Rectangle().stroke(Theme.chromeHairline, lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// Reorderable list of non-terminal agent templates. The user's saved order
+/// (`model.agentOrder`) is the source of truth; templates absent from it
+/// (e.g. a fresh kooky install, or a new agent in a future version) are
+/// appended in their default `AgentTemplate.all` position.
+private struct AgentReorderList: View {
+    @Bindable var model: KookySettingsModel
+    @State private var draggingId: String?
+    @State private var endTargeted: Bool = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, template in
+                if index > 0 { SettingsHairline() }
+                AgentRow(
+                    template: template,
+                    visible: !model.hiddenAgents.contains(template.id),
+                    isDragging: draggingId == template.id,
+                    onToggleVisible: { toggle(template.id) },
+                    onBeginDrag: { draggingId = template.id },
+                    onDrop: { droppedId in
+                        defer { draggingId = nil }
+                        return reorder(draggedId: droppedId, before: template.id)
+                    }
+                )
+            }
+            // Trailing drop catcher — drag past the last row to send the
+            // agent to the end of the list. Without this, the bottom-most
+            // position is only reachable by dropping onto the second-to-last
+            // row, which reads wrong.
+            Color.clear
+                .frame(height: 10)
+                .contentShape(Rectangle())
+                .dropIndicator(active: endTargeted, on: .top, offset: 4)
+                .dropDestination(for: String.self) { items, _ in
+                    defer { draggingId = nil }
+                    guard let id = items.first else { return false }
+                    return moveToEnd(id)
+                } isTargeted: { endTargeted = $0 }
+            if !model.agentOrder.isEmpty || !model.hiddenAgents.isEmpty {
+                Button("reset to defaults") { model.resetAgentCustomisation() }
+                    .buttonStyle(.plain)
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.chromeMuted)
+                    .underline()
+                    .padding(.horizontal, 28)
+                    .padding(.top, 14)
+            }
+        }
+    }
+
+    /// All non-terminal templates in the user's chosen order — visible and
+    /// hidden alike. Hidden agents render greyed out but stay wherever the
+    /// user dragged them, so toggling visibility doesn't move them. The
+    /// `+` menu's filter to visible-only lives in `AgentTemplate.visibleOrdered`.
+    private var rows: [AgentTemplate] { AgentTemplate.ordered(model: model) }
+
+    private func toggle(_ id: String) {
+        if model.hiddenAgents.contains(id) {
+            model.hiddenAgents.remove(id)
+        } else {
+            model.hiddenAgents.insert(id)
+        }
+    }
+
+    private func reorder(draggedId: String, before targetId: String) -> Bool {
+        var ids = rows.map(\.id)
+        guard let sourceIdx = ids.firstIndex(of: draggedId),
+              let targetIdx = ids.firstIndex(of: targetId),
+              sourceIdx != targetIdx else { return false }
+        let item = ids.remove(at: sourceIdx)
+        // After remove, target index shifts left by 1 if source was earlier.
+        let adjustedTarget = sourceIdx < targetIdx ? targetIdx - 1 : targetIdx
+        ids.insert(item, at: adjustedTarget)
+        withAnimation(.easeInOut(duration: 0.18)) {
+            model.agentOrder = ids
+        }
+        return true
+    }
+
+    private func moveToEnd(_ draggedId: String) -> Bool {
+        var ids = rows.map(\.id)
+        guard let sourceIdx = ids.firstIndex(of: draggedId),
+              sourceIdx != ids.count - 1 else { return false }
+        let item = ids.remove(at: sourceIdx)
+        ids.append(item)
+        withAnimation(.easeInOut(duration: 0.18)) {
+            model.agentOrder = ids
+        }
+        return true
+    }
+}
+
+private struct AgentRow: View {
+    let template: AgentTemplate
+    let visible: Bool
+    let isDragging: Bool
+    let onToggleVisible: () -> Void
+    let onBeginDrag: () -> Void
+    let onDrop: (String) -> Bool
+    @State private var isTargeted = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            dragHandle
+            AgentIconView(asset: template.iconAsset, fallbackSymbol: template.symbol, size: 14)
+                .opacity(visible ? 1.0 : 0.35)
+            Text(template.title)
+                .font(Theme.mono(12.5))
+                .foregroundStyle(visible ? Theme.chromeForeground : Theme.chromeMuted)
+            Spacer(minLength: 14)
+            Toggle("", isOn: Binding(get: { visible }, set: { _ in onToggleVisible() }))
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .labelsHidden()
+        }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 10)
+        .opacity(isDragging ? 0.35 : 1.0)
+        .background(dropZone)
+    }
+
+    /// `.dropDestination` lives on a clear background layer so the row's
+    /// foreground (Toggle in particular) keeps independent hit-testing.
+    /// Earlier attempts attached the drop modifier to the row HStack with
+    /// `.contentShape(Rectangle())`; SwiftUI then routed clicks via the
+    /// row-wide content shape and toggles registered against the wrong row.
+    private var dropZone: some View {
+        Color.clear
+            .contentShape(Rectangle())
+            .dropIndicator(active: isTargeted && !isDragging, on: .top)
+            .dropDestination(for: String.self) { items, _ in
+                guard let id = items.first, id != template.id else { return false }
+                return onDrop(id)
+            } isTargeted: { isTargeted = $0 }
+            .allowsHitTesting(true)
+    }
+
+    /// Only the `≡` glyph is the drag source. Putting `.onDrag` on the whole
+    /// row hijacked toggle taps when the user clicked near the switch edge.
+    /// Scoping the gesture here also scopes the openHand cursor to the
+    /// handle, which is the standard macOS reorder affordance.
+    private var dragHandle: some View {
+        Image(systemName: "line.3.horizontal")
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(Theme.chromeMuted.opacity(0.7))
+            .frame(width: 22, height: 22)
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                if hovering {
+                    NSCursor.openHand.push()
+                } else {
+                    NSCursor.pop()
+                }
+            }
+            .onDrag {
+                onBeginDrag()
+                return NSItemProvider(object: template.id as NSString)
+            }
     }
 }
 
@@ -310,7 +548,7 @@ private struct SettingsHairline: View {
 @MainActor
 final class KookySettingsWindowController: NSWindowController {
     static let shared = KookySettingsWindowController()
-    private let model = KookySettingsModel()
+    private let model = KookySettingsModel.shared
     private weak var store: WorkspaceStore?
     private var host: NSHostingController<KookySettingsView>?
 
@@ -342,7 +580,7 @@ final class KookySettingsWindowController: NSWindowController {
         let window = NSWindow(contentViewController: host)
         window.title = "Settings"
         window.styleMask = [.titled, .closable]
-        window.setContentSize(NSSize(width: 480, height: 420))
+        window.setContentSize(NSSize(width: 680, height: 460))
         window.isReleasedWhenClosed = false
         // Match main-window chrome — forced dark so `Theme.chrome*` tokens
         // render readably regardless of system appearance.
