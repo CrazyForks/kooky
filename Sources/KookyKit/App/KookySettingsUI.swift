@@ -38,6 +38,11 @@ final class KookySettingsModel {
     /// `nil` (or pointing to a now-hidden / unknown agent) means "ask each
     /// time" — the popover stays. Terminal is always a valid choice.
     var defaultAgentId: String? = nil
+    /// User-defined agent entries (`agents.custom` in settings.json). Each
+    /// becomes a runtime `AgentTemplate` via `AgentTemplate.fromCustom`,
+    /// joins the `+` menu / Settings list alongside the builtin agents,
+    /// and supports the same visibility / order / options machinery.
+    var customAgents: [CustomAgentData] = []
 
     private var saveWork: DispatchWorkItem?
 
@@ -60,6 +65,25 @@ final class KookySettingsModel {
         hiddenAgents = Set((agents["hidden"] as? [String]) ?? [])
         agentOptions = (agents["options"] as? [String: String]) ?? [:]
         defaultAgentId = agents["default"] as? String
+
+        let rawCustom = (agents["custom"] as? [[String: Any]]) ?? []
+        let builtinIds = Set(AgentTemplate.builtin.map(\.id))
+        var seen: Set<String> = []
+        customAgents = rawCustom.compactMap { dict -> CustomAgentData? in
+            guard let id = dict["id"] as? String, !id.isEmpty else { return nil }
+            // Drop hand-edited collisions with builtin agents, and the
+            // second occurrence of a duplicated id, so the live `all` list
+            // is guaranteed-unique downstream.
+            if builtinIds.contains(id) { return nil }
+            if !seen.insert(id).inserted { return nil }
+            return CustomAgentData(
+                id: id,
+                title: (dict["title"] as? String) ?? "",
+                command: (dict["command"] as? String) ?? "",
+                symbol: (dict["symbol"] as? String) ?? "",
+                tintHex: (dict["tintHex"] as? String) ?? ""
+            )
+        }
     }
 
     /// Schedules a debounced write. UI bindings call this on every change;
@@ -92,7 +116,21 @@ final class KookySettingsModel {
         parsed["terminal"] = terminal
 
         let nonEmptyOptions = agentOptions.filter { !$0.value.isEmpty }
-        if agentOrder.isEmpty && hiddenAgents.isEmpty && nonEmptyOptions.isEmpty && defaultAgentId == nil {
+        let serialisedCustom: [[String: Any]] = customAgents.compactMap { c in
+            guard !c.id.isEmpty else { return nil }
+            var dict: [String: Any] = ["id": c.id]
+            if !c.title.isEmpty { dict["title"] = c.title }
+            if !c.command.isEmpty { dict["command"] = c.command }
+            if !c.symbol.isEmpty { dict["symbol"] = c.symbol }
+            if !c.tintHex.isEmpty { dict["tintHex"] = c.tintHex }
+            return dict
+        }
+        let allDefaults = agentOrder.isEmpty
+            && hiddenAgents.isEmpty
+            && nonEmptyOptions.isEmpty
+            && defaultAgentId == nil
+            && serialisedCustom.isEmpty
+        if allDefaults {
             parsed.removeValue(forKey: "agents")
         } else {
             var agents = parsed["agents"] as? [String: Any] ?? [:]
@@ -100,6 +138,7 @@ final class KookySettingsModel {
             agents["hidden"] = hiddenAgents.isEmpty ? nil : Array(hiddenAgents).sorted()
             agents["options"] = nonEmptyOptions.isEmpty ? nil : nonEmptyOptions
             agents["default"] = defaultAgentId
+            agents["custom"] = serialisedCustom.isEmpty ? nil : serialisedCustom
             parsed["agents"] = agents
         }
 
@@ -111,6 +150,28 @@ final class KookySettingsModel {
         hiddenAgents = []
         agentOptions = [:]
         defaultAgentId = nil
+        customAgents = []
+        scheduleSave()
+    }
+
+    /// Appends a new blank custom agent. The id is `custom-N`, the title is
+    /// empty (user fills it inline) — `AgentTemplate.fromCustom` falls back
+    /// to showing the id as title until the user edits it.
+    func addCustomAgent() {
+        let usedIds = Set(AgentTemplate.builtin.map(\.id) + customAgents.map(\.id))
+        var n = customAgents.count + 1
+        var candidate = "custom-\(n)"
+        while usedIds.contains(candidate) { n += 1; candidate = "custom-\(n)" }
+        customAgents.append(CustomAgentData(id: candidate))
+        scheduleSave()
+    }
+
+    func deleteCustomAgent(id: String) {
+        customAgents.removeAll { $0.id == id }
+        agentOrder.removeAll { $0 == id }
+        hiddenAgents.remove(id)
+        agentOptions.removeValue(forKey: id)
+        if defaultAgentId == id { defaultAgentId = nil }
         scheduleSave()
     }
 }
@@ -159,6 +220,7 @@ struct KookySettingsView: View {
         .onChange(of: model.hiddenAgents) { _, _ in model.scheduleSave() }
         .onChange(of: model.agentOptions) { _, _ in model.scheduleSave() }
         .onChange(of: model.defaultAgentId) { _, _ in model.scheduleSave() }
+        .onChange(of: model.customAgents) { _, _ in model.scheduleSave() }
     }
 
     private var sidebar: some View {
@@ -436,10 +498,13 @@ private struct AgentReorderList: View {
                     visible: !model.hiddenAgents.contains(template.id),
                     isDragging: draggingId == template.id,
                     isExpanded: expandedId == template.id,
+                    isCustom: isCustomId(template.id),
                     options: Binding(
                         get: { model.agentOptions[template.id] ?? "" },
                         set: { model.agentOptions[template.id] = $0 }
                     ),
+                    title: customBinding(id: template.id, \.title),
+                    command: customBinding(id: template.id, \.command),
                     onToggleVisible: { toggle(template.id) },
                     onToggleExpanded: {
                         expandedId = expandedId == template.id ? nil : template.id
@@ -448,7 +513,8 @@ private struct AgentReorderList: View {
                     onDrop: { droppedId in
                         defer { draggingId = nil }
                         return reorder(draggedId: droppedId, before: template.id)
-                    }
+                    },
+                    onDelete: isCustomId(template.id) ? { model.deleteCustomAgent(id: template.id) } : nil
                 )
             }
             // Trailing drop catcher — drag past the last row to send the
@@ -464,16 +530,51 @@ private struct AgentReorderList: View {
                     guard let id = items.first else { return false }
                     return moveToEnd(id)
                 } isTargeted: { endTargeted = $0 }
-            if hasCustomisation {
-                Button("reset to defaults") { model.resetAgentCustomisation() }
-                    .buttonStyle(.plain)
-                    .font(Theme.mono(11))
-                    .foregroundStyle(Theme.chromeMuted)
-                    .underline()
-                    .padding(.horizontal, 28)
-                    .padding(.top, 14)
+            HStack {
+                Button {
+                    let newId = model.customAgents.last?.id
+                    model.addCustomAgent()
+                    if let id = model.customAgents.last?.id, id != newId {
+                        expandedId = id
+                    }
+                } label: {
+                    Text("+ add custom agent")
+                        .font(Theme.mono(11, weight: .medium))
+                        .foregroundStyle(Theme.chromeForeground)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .bracketBorder()
+                }
+                .buttonStyle(.plain)
+                Spacer()
+                if hasCustomisation {
+                    Button("reset to defaults") { model.resetAgentCustomisation() }
+                        .buttonStyle(.plain)
+                        .font(Theme.mono(11))
+                        .foregroundStyle(Theme.chromeMuted)
+                        .underline()
+                }
             }
+            .padding(.horizontal, 28)
+            .padding(.top, 14)
         }
+    }
+
+    private func isCustomId(_ id: String) -> Bool {
+        model.customAgents.contains(where: { $0.id == id })
+    }
+
+    /// Binding into a specific custom agent's field. Returns a no-op binding
+    /// if the row is a built-in agent (`AgentRow` ignores these bindings
+    /// when `isCustom == false`).
+    private func customBinding(id: String, _ key: WritableKeyPath<CustomAgentData, String>) -> Binding<String> {
+        Binding(
+            get: { model.customAgents.first(where: { $0.id == id })?[keyPath: key] ?? "" },
+            set: { newValue in
+                guard let idx = model.customAgents.firstIndex(where: { $0.id == id }) else { return }
+                model.customAgents[idx][keyPath: key] = newValue
+            }
+        )
     }
 
     /// All non-terminal templates in the user's chosen order — visible and
@@ -487,6 +588,7 @@ private struct AgentReorderList: View {
             || !model.hiddenAgents.isEmpty
             || model.agentOptions.values.contains(where: { !$0.isEmpty })
             || model.defaultAgentId != nil
+            || !model.customAgents.isEmpty
     }
 
     private func toggle(_ id: String) {
@@ -530,11 +632,18 @@ private struct AgentRow: View {
     let visible: Bool
     let isDragging: Bool
     let isExpanded: Bool
+    let isCustom: Bool
     @Binding var options: String
+    /// Title binding — only consulted when `isCustom` so the user can rename
+    /// their custom agent inline. Bound to a no-op for builtin rows.
+    @Binding var title: String
+    /// Launch-command binding — same scoping rule as `title`.
+    @Binding var command: String
     let onToggleVisible: () -> Void
     let onToggleExpanded: () -> Void
     let onBeginDrag: () -> Void
     let onDrop: (String) -> Bool
+    let onDelete: (() -> Void)?
     @State private var isTargeted = false
 
     var body: some View {
@@ -556,7 +665,7 @@ private struct AgentRow: View {
             .padding(.horizontal, 22)
             .padding(.vertical, 10)
             .background(dropZone)
-            if isExpanded { optionsField }
+            if isExpanded { expandedForm }
         }
         .opacity(isDragging ? 0.35 : 1.0)
     }
@@ -578,25 +687,51 @@ private struct AgentRow: View {
     /// without reaching for `.alignmentGuide`.
     private static let optionsRowIndent: CGFloat = 56
 
-    private var optionsField: some View {
+    @ViewBuilder
+    private var expandedForm: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if isCustom {
+                editRow(label: "title", placeholder: "My Agent", text: $title)
+                editRow(label: "command", placeholder: "aichat --model gpt-4", text: $command)
+            }
+            editRow(label: "options", placeholder: "--model opus", text: $options)
+            if isCustom {
+                HStack {
+                    Spacer()
+                    if let onDelete {
+                        Button("delete agent", action: onDelete)
+                            .buttonStyle(.plain)
+                            .font(Theme.mono(11))
+                            .foregroundStyle(Theme.activityFailure.opacity(0.85))
+                            .underline()
+                    }
+                }
+                .padding(.leading, Self.optionsRowIndent)
+                .padding(.trailing, 22)
+                .padding(.top, 4)
+            }
+        }
+        .padding(.top, 2)
+        .padding(.bottom, 12)
+        .id(template.id)
+    }
+
+    private func editRow(label: String, placeholder: String, text: Binding<String>) -> some View {
         HStack(spacing: 10) {
-            Text("options")
+            Text(label)
                 .font(Theme.mono(11))
                 .foregroundStyle(Theme.chromeMuted)
                 .frame(width: 50, alignment: .leading)
-            TextField("--model opus", text: $options)
+            TextField(placeholder, text: text)
                 .textFieldStyle(.plain)
                 .font(Theme.mono(12))
                 .foregroundStyle(Theme.chromeForeground)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 5)
                 .bracketBorder()
-                .id(template.id)
         }
         .padding(.leading, Self.optionsRowIndent)
         .padding(.trailing, 22)
-        .padding(.top, 2)
-        .padding(.bottom, 12)
     }
 
     /// `.dropDestination` lives on a clear background layer so the row's

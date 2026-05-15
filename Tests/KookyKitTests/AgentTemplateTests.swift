@@ -1,6 +1,7 @@
 import XCTest
 @testable import KookyKit
 
+@MainActor
 final class AgentTemplateTests: XCTestCase {
     func testTerminalTemplateHasNoAgentEnv() {
         XCTAssertNil(AgentTemplate.terminal.makeSessionConfig().environment["KOOKY_AGENT"])

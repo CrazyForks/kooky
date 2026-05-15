@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.10.5 — 2026-05-15
+
+- **Define your own agent.** New `+ add custom agent` button at the bottom of Settings → Coding Agents lets you wire any CLI as a first-class kooky agent: type a title and a launch command (`aichat`, `mistral-cli --model 7b`, `~/scripts/my-helper.sh`, anything), and it shows up in the `+` menu alongside Claude Code / Copilot / etc. Custom agents are full citizens — drag to reorder, hide / show, set per-agent options, pick as default, the works. Icon uses a generic SF Symbol (`wand.and.stars`) so you don't have to deal with image uploads. Delete from the same expanded row. Persists under `agents.custom` in `~/.kooky/settings.json`; advanced users can hand-edit `symbol` and `tintHex` there if they want a different fallback glyph or pip color.
+
 ## v0.10.4 — 2026-05-15
 
 - **GitHub Copilot joins the agent menu.** New entry for `copilot` (GitHub Copilot CLI — went GA Feb 2026 as a real interactive TUI, not the old one-shot `gh copilot suggest`). Install with `brew install copilot-cli` or `npm install -g @github/copilot`. Wired like Amp and Cursor — bracket wrapper sends `running` before launch / `ended` after exit so the sidebar dot and tab icon track lifecycle. Mid-run state via Copilot's own hook system (it's fully featured — `userPromptSubmitted` / `agentStop` / `notification` events) is deferred to the next release while we work out the merge with users' existing `~/.copilot/settings.json`.

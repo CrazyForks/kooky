@@ -130,11 +130,23 @@ extension AgentTemplate {
         initialCommand: "copilot"
     )
 
-    static let all: [AgentTemplate] = [.terminal, .claudeCode, .codex, .gemini, .opencode, .amp, .cursor, .copilot]
+    /// The 8 templates shipped with kooky. User-defined custom agents are
+    /// merged on top via `all` at runtime.
+    static let builtin: [AgentTemplate] = [.terminal, .claudeCode, .codex, .gemini, .opencode, .amp, .cursor, .copilot]
+
+    /// All templates available right now — `builtin` plus the user's custom
+    /// agents from Settings → Coding Agents. MainActor-isolated because it
+    /// reads `KookySettingsModel.shared` to materialise custom entries.
+    @MainActor
+    static var all: [AgentTemplate] {
+        builtin + KookySettingsModel.shared.customAgents.map(AgentTemplate.fromCustom)
+    }
 
     /// Looks up a template by the slug an agent's hook system reports — the
     /// same string as the template's `initialCommand` (the binary name the
-    /// user types). Returns nil for unknown slugs.
+    /// user types). Returns nil for unknown slugs. MainActor because it
+    /// pulls the live `all` (built-in + custom).
+    @MainActor
     static func from(hookSlug: String) -> AgentTemplate? {
         all.first { $0.initialCommand == hookSlug }
     }
@@ -146,7 +158,11 @@ extension AgentTemplate {
     @MainActor
     static func ordered(model: KookySettingsModel) -> [AgentTemplate] {
         let nonTerminal = all.filter { $0.id != "terminal" }
-        let byId = Dictionary(uniqueKeysWithValues: nonTerminal.map { ($0.id, $0) })
+        // Use `uniquingKeysWith` so a hand-edited settings.json that puts a
+        // custom agent on a builtin id (or two customs on the same id) lands
+        // on the first occurrence instead of crashing the launcher. Builtin
+        // entries are appended first in `all`, so they win the tie.
+        let byId = Dictionary(nonTerminal.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let userOrderIds = model.agentOrder.filter { byId.keys.contains($0) }
         let userOrderSet = Set(userOrderIds)
         let missing = nonTerminal.filter { !userOrderSet.contains($0.id) }
@@ -154,10 +170,17 @@ extension AgentTemplate {
     }
 
     /// What the `+` menu renders: Terminal pinned first (not user-controlled),
-    /// then `ordered(model:)` filtered to visible agents only.
+    /// then `ordered(model:)` filtered to visible agents whose `initialCommand`
+    /// is set. The `initialCommand != nil` gate skips half-configured custom
+    /// agents (just-added or command-cleared) so the launch surface never
+    /// offers a row that would spawn a plain Terminal but get recorded as
+    /// that custom agent. They still appear in Settings → Coding Agents so
+    /// the user can finish editing them.
     @MainActor
     static func visibleOrdered(model: KookySettingsModel) -> [AgentTemplate] {
-        [.terminal] + ordered(model: model).filter { !model.hiddenAgents.contains($0.id) }
+        [.terminal] + ordered(model: model).filter {
+            !model.hiddenAgents.contains($0.id) && $0.initialCommand != nil
+        }
     }
 
     /// Resolves the user's chosen default template for `+` / `⌘T`. Returns
@@ -170,5 +193,44 @@ extension AgentTemplate {
     static func defaultLaunchTemplate(model: KookySettingsModel) -> AgentTemplate? {
         guard let id = model.defaultAgentId else { return nil }
         return visibleOrdered(model: model).first { $0.id == id }
+    }
+
+    /// Materialises a user-defined custom agent into a runtime `AgentTemplate`.
+    /// `iconAsset` stays nil — v1 only supports SF Symbol fallbacks for custom
+    /// agents, not bundled PNGs.
+    static func fromCustom(_ data: CustomAgentData) -> AgentTemplate {
+        AgentTemplate(
+            id: data.id,
+            title: data.title.isEmpty ? data.id : data.title,
+            symbol: data.symbol.isEmpty ? "wand.and.stars" : data.symbol,
+            iconAsset: nil,
+            tintHex: data.tintHex.isEmpty ? nil : data.tintHex,
+            initialCommand: data.command.isEmpty ? nil : data.command
+        )
+    }
+}
+
+/// User-defined agent entry. Stored in `settings.json` under
+/// `agents.custom`; round-tripped through `KookySettingsModel.customAgents`.
+struct CustomAgentData: Hashable, Identifiable {
+    /// Slug — must be unique across builtin + custom. Generated as
+    /// `custom-N` on creation; user-editable from Settings.
+    var id: String
+    /// Display title shown in the `+` menu and Settings row.
+    var title: String
+    /// Full launch command, e.g. `aichat --model gpt-4o`. Whitespace-split
+    /// by the wrapper's `eval`, same as the `agents.options` field.
+    var command: String
+    /// SF Symbol fallback. Falls back to `wand.and.stars` if user typoed.
+    var symbol: String
+    /// Optional sRGB hex (no `#`) for the sidebar pip tint. Empty = no tint.
+    var tintHex: String
+
+    init(id: String, title: String = "", command: String = "", symbol: String = "wand.and.stars", tintHex: String = "") {
+        self.id = id
+        self.title = title
+        self.command = command
+        self.symbol = symbol
+        self.tintHex = tintHex
     }
 }
