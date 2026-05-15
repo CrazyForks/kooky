@@ -56,7 +56,13 @@ struct AgentTemplate: Identifiable, Hashable {
     /// when forming `KOOKY_AGENT`. The wrapper rc's `eval` splits on
     /// whitespace, so the caller handles its own quoting for tokens that
     /// contain spaces.
-    func makeSessionConfig(extraOptions: String? = nil) -> TerminalSessionConfig {
+    ///
+    /// `resumeId`, when present and the template is Claude Code (or a custom
+    /// based on Claude Code), prepends `--resume <id>` to the launch command
+    /// so the new tab continues an existing conversation. Other agents
+    /// silently ignore it for v1 — their CLIs support `--resume <id>` too,
+    /// but the id-capture path (Claude's hook payload) is Claude-only today.
+    func makeSessionConfig(extraOptions: String? = nil, resumeId: String? = nil) -> TerminalSessionConfig {
         // Pick a shell that has a kooky integration wrapper. Plain terminal
         // sessions respect $SHELL where we have a wrapper (zsh/bash); other
         // shells (fish/nu/...) get $SHELL too, just without cwd tracking.
@@ -75,11 +81,28 @@ struct AgentTemplate: Identifiable, Hashable {
         }
         if let initialCommand {
             let trimmedExtras = extraOptions?.trimmingCharacters(in: .whitespaces) ?? ""
-            config.environment["KOOKY_AGENT"] = trimmedExtras.isEmpty
-                ? initialCommand
-                : "\(initialCommand) \(trimmedExtras)"
+            // Resume flag goes between binary name and options:
+            //   `claude --resume <id> --model opus`
+            // — Claude takes it as a positional argument to its top-level
+            // command; appending after extras would still work but reads
+            // worse in `ps`.
+            var resumeFragment = ""
+            if supportsResume, let id = resumeId, !id.isEmpty {
+                resumeFragment = " --resume \(id)"
+            }
+            let extrasFragment = trimmedExtras.isEmpty ? "" : " \(trimmedExtras)"
+            config.environment["KOOKY_AGENT"] = "\(initialCommand)\(resumeFragment)\(extrasFragment)"
         }
         return config
+    }
+
+    /// Only Claude Code (and customs based on it) supports the
+    /// `--resume <id>` injection path today: that's the only agent whose
+    /// hooks pipe `session_id` back to kooky so we can persist + reuse it.
+    /// Other agents' CLIs do accept `--resume <id>` syntactically, but we
+    /// don't have a reliable id-capture mechanism for them yet.
+    var supportsResume: Bool {
+        id == "claude-code" || baseAgentId == "claude-code"
     }
 }
 

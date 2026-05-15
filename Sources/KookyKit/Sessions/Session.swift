@@ -28,6 +28,15 @@ final class Session: Identifiable {
     /// Empty / whitespace input via `renameTab` clears this back to `nil` so
     /// the tab title resumes tracking the cwd.
     var customTitle: String?
+    /// Last conversation id this tab's agent reported (currently only Claude
+    /// — its SessionStart / Stop / SessionEnd hook JSON input carries
+    /// `session_id`). Persisted via `PersistedTab.conversationId` so that the
+    /// next kooky launch can spawn the agent with `--resume <id>` and
+    /// continue the conversation where the user left off. Per-Session field
+    /// (not per-Pane / per-Workspace) because each tab is its own
+    /// conversation — `KOOKY_SURFACE_ID` already routes hook payloads to
+    /// the correct Session, so multi-tab Claude users don't cross-attribute.
+    var conversationId: String?
     /// Exit status of the most recent command — populated from libghostty's
     /// `OSC 133;D` event. `nil` until the shell reports its first finish (or
     /// when it omits the exit field). Not persisted: each launch starts fresh.
@@ -77,12 +86,14 @@ final class Session: Identifiable {
         engine: any TerminalEngine,
         currentDirectory: URL,
         agent: AgentTemplate,
-        customTitle: String? = nil
+        customTitle: String? = nil,
+        conversationId: String? = nil
     ) {
         self.id = id
         self.engine = engine
         self.currentDirectory = currentDirectory
         self.agent = agent
         self.customTitle = customTitle
+        self.conversationId = conversationId
     }
 }

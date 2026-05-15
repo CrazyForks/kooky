@@ -65,6 +65,10 @@ final class WorkspaceStore {
     /// that returns nil so unit tests stay independent of the developer's
     /// real `~/.kooky/settings.json`.
     private let optionsProvider: @MainActor (String) -> String?
+    /// Reads `KookySettingsModel.shared.resumeConversations` at spawn time;
+    /// tests inject a static value (typically `true`) for the same reason
+    /// as `optionsProvider`.
+    private let resumeProvider: @MainActor () -> Bool
     private let persistence: any Persistence
     private let gitStatusFetcher = GitStatusFetcher()
     /// One watcher per session — refreshes git status when `.git/HEAD` or
@@ -84,6 +88,9 @@ final class WorkspaceStore {
         let customTitle: String?
         let workspaceId: UUID
         let paneId: UUID
+        /// Captured conversation id so `⌘⇧T` resumes the Claude session
+        /// the user just closed (subject to `resumeConversations` setting).
+        let conversationId: String?
     }
 
     /// LIFO stack of recently-closed tabs for ⌘⇧T (reopen). Capped at
@@ -102,11 +109,13 @@ final class WorkspaceStore {
     init(
         persistence: any Persistence = FilePersistence.shared,
         engineFactory: @escaping @MainActor () -> any TerminalEngine = { LibghosttyEngine() },
-        optionsProvider: @escaping @MainActor (String) -> String? = { KookySettingsModel.shared.agentOptions[$0] }
+        optionsProvider: @escaping @MainActor (String) -> String? = { KookySettingsModel.shared.agentOptions[$0] },
+        resumeProvider: @escaping @MainActor () -> Bool = { KookySettingsModel.shared.resumeConversations }
     ) {
         self.persistence = persistence
         self.engineFactory = engineFactory
         self.optionsProvider = optionsProvider
+        self.resumeProvider = resumeProvider
         if let saved = persistence.load(), !saved.workspaces.isEmpty {
             restore(from: saved)
         } else {
@@ -196,13 +205,14 @@ final class WorkspaceStore {
         in workspace: Workspace,
         pane: Pane? = nil,
         template: AgentTemplate = .terminal,
-        initialCwd: URL? = nil
+        initialCwd: URL? = nil,
+        conversationId: String? = nil
     ) -> Session {
         guard let target = pane ?? workspace.activePane ?? workspace.root.firstPane else {
             preconditionFailure("workspace has no panes")
         }
         let cwd = initialCwd ?? workspace.workingDirectory
-        let session = spawnSession(template: template, initialCwd: cwd)
+        let session = spawnSession(template: template, initialCwd: cwd, conversationId: conversationId)
         wireSessionCallbacks(engine: session.engine, session: session, workspace: workspace)
         target.tabs.append(session)
         target.activeTabId = session.id
@@ -326,7 +336,8 @@ final class WorkspaceStore {
             cwd: session.currentDirectory,
             customTitle: session.customTitle,
             workspaceId: workspace.id,
-            paneId: pane.id
+            paneId: pane.id,
+            conversationId: session.conversationId
         ))
         if recentlyClosed.count > Self.closedTabHistoryLimit {
             recentlyClosed.removeFirst(recentlyClosed.count - Self.closedTabHistoryLimit)
@@ -348,7 +359,13 @@ final class WorkspaceStore {
             ?? workspace.activePane
             ?? workspace.root.firstPane
         let cwd = resolvedSpawnCwd(state.cwd.path)
-        let session = addTab(in: workspace, pane: pane, template: state.agent, initialCwd: cwd)
+        let session = addTab(
+            in: workspace,
+            pane: pane,
+            template: state.agent,
+            initialCwd: cwd,
+            conversationId: state.conversationId
+        )
         if let custom = state.customTitle, !custom.isEmpty {
             session.customTitle = custom
         }
@@ -498,6 +515,19 @@ final class WorkspaceStore {
         refreshEnvironment(for: session)
     }
 
+    /// Stores the conversation id reported by an agent's hook payload onto
+    /// the originating Session and schedules a save so the value survives
+    /// across kooky launches. Same-value writes are dropped so we don't
+    /// churn persistence on every hook firing — Claude pings `session_id`
+    /// on every SessionStart / UserPromptSubmit / Stop / SessionEnd, so the
+    /// dedup keeps the debounce loop quiet.
+    func applyConversationId(conversationId: String, sessionId: UUID) {
+        guard let session = findSession(id: sessionId) else { return }
+        guard session.conversationId != conversationId else { return }
+        session.conversationId = conversationId
+        scheduleSave()
+    }
+
     private func findSession(id: UUID) -> Session? {
         for ws in workspaces {
             if let pane = ws.root.pane(containingSessionId: id) {
@@ -555,7 +585,12 @@ final class WorkspaceStore {
             let pane = Pane(id: p.id)
             for tab in p.tabs {
                 let agent = AgentTemplate.all.first { $0.id == tab.agentId } ?? .terminal
-                let session = spawnSession(template: agent, initialCwd: resolvedSpawnCwd(tab.currentDirectoryPath), sessionId: tab.id)
+                let session = spawnSession(
+                    template: agent,
+                    initialCwd: resolvedSpawnCwd(tab.currentDirectoryPath),
+                    sessionId: tab.id,
+                    conversationId: tab.conversationId
+                )
                 session.customTitle = tab.customTitle
                 pane.tabs.append(session)
             }
@@ -581,13 +616,29 @@ final class WorkspaceStore {
     /// Spawns the engine + Session. Caller wires `onPwdChange` / `onFocus`
     /// after a workspace ref is available — `restore` builds sessions before
     /// the workspace exists, so callbacks can't capture it here.
-    private func spawnSession(template: AgentTemplate, initialCwd: URL, sessionId: UUID = UUID()) -> Session {
+    private func spawnSession(template: AgentTemplate, initialCwd: URL, sessionId: UUID = UUID(), conversationId: String? = nil) -> Session {
         let engine = engineFactory()
-        var config = template.makeSessionConfig(extraOptions: optionsProvider(template.id))
+        // Resume gated by user setting — `resumeConversations` flips this off
+        // when the user wants every Claude tab to start fresh without
+        // losing the persisted conversation id (it stays on disk so the
+        // setting can be flipped back on later). Non-resumable templates
+        // ignore the value via `makeSessionConfig`'s own `supportsResume`
+        // gate, so we don't have to re-check here.
+        let resumeId = resumeProvider() ? conversationId : nil
+        var config = template.makeSessionConfig(
+            extraOptions: optionsProvider(template.id),
+            resumeId: resumeId
+        )
         config.workingDirectory = initialCwd.path
         config.environment.merge(KookyShellIntegration.kookyEnvironment(for: sessionId)) { _, new in new }
         engine.start(config: config)
-        return Session(id: sessionId, engine: engine, currentDirectory: initialCwd, agent: template)
+        return Session(
+            id: sessionId,
+            engine: engine,
+            currentDirectory: initialCwd,
+            agent: template,
+            conversationId: conversationId
+        )
     }
 
     private func wireSessionCallbacks(engine: any TerminalEngine, session: Session, workspace: Workspace) {

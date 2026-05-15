@@ -19,7 +19,8 @@ final class WorkspaceStoreTests: XCTestCase {
         WorkspaceStore(
             persistence: InMemoryPersistence(initial: initial),
             engineFactory: { TestEngine() },
-            optionsProvider: { _ in nil }
+            optionsProvider: { _ in nil },
+            resumeProvider: { true }
         )
     }
 
@@ -482,5 +483,60 @@ final class WorkspaceStoreTests: XCTestCase {
         XCTAssertEqual(saved.workspaces.count, 2)
         XCTAssertEqual(saved.workspaces.last?.workingDirectoryPath, "/tmp/projectB")
         XCTAssertEqual(saved.activeWorkspaceId, store.activeWorkspaceId)
+    }
+
+    func testApplyConversationIdWritesToCorrectSessionOnly() {
+        // Two Claude tabs running in parallel — each gets its own conversation
+        // id via separate `applyConversationId` calls, neither stomps the
+        // other. Same isolation we get in prod via KOOKY_SURFACE_ID routing.
+        let store = makeStore()
+        let ws = store.addWorkspace(workingDirectory: projectA)
+        let pane = firstPane(ws)
+        let tabA = store.addTab(in: ws, template: .claudeCode)
+        let tabB = store.addTab(in: ws, template: .claudeCode)
+        _ = pane
+
+        store.applyConversationId(conversationId: "convo-a", sessionId: tabA.id)
+        store.applyConversationId(conversationId: "convo-b", sessionId: tabB.id)
+
+        XCTAssertEqual(tabA.conversationId, "convo-a")
+        XCTAssertEqual(tabB.conversationId, "convo-b")
+    }
+
+    func testConversationIdSurvivesPersistenceRoundTrip() throws {
+        let persistence = InMemoryPersistence()
+        let store = WorkspaceStore(persistence: persistence, engineFactory: { TestEngine() })
+        let ws = store.addWorkspace(workingDirectory: projectA)
+        let tab = store.addTab(in: ws, template: .claudeCode)
+        store.applyConversationId(conversationId: "convo-roundtrip", sessionId: tab.id)
+        store.flushPersistence()
+
+        let saved = try XCTUnwrap(persistence.saved)
+        let persistedTab = saved.workspaces
+            .flatMap(\.root.allTabs)
+            .first { $0.id == tab.id }
+        XCTAssertEqual(persistedTab?.conversationId, "convo-roundtrip")
+    }
+
+    func testReopenLastClosedTabRestoresConversationId() {
+        let store = makeStore()
+        let ws = store.addWorkspace(workingDirectory: projectA)
+        let tab = store.addTab(in: ws, template: .claudeCode)
+        store.applyConversationId(conversationId: "convo-reopen", sessionId: tab.id)
+        store.closeTab(tab, in: ws)
+
+        let reopened = store.reopenLastClosedTab()
+        XCTAssertEqual(reopened?.conversationId, "convo-reopen")
+    }
+}
+
+private extension PersistedPaneNode {
+    /// Recursive flatten used by tests to assert per-tab persisted fields
+    /// without re-implementing the pane-tree walker.
+    var allTabs: [PersistedTab] {
+        switch kind {
+        case .pane(let p): return p.tabs
+        case .split(_, let a, let b, _): return a.allTabs + b.allTabs
+        }
     }
 }

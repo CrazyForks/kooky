@@ -24,6 +24,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             store?.applyHookEvent(agent: agent, event: event, sessionId: sessionId)
         case .shellEnvironment(let env, let sessionId):
             store?.applyShellEnvironment(env, sessionId: sessionId)
+        case .conversationId(let conversationId, let sessionId):
+            store?.applyConversationId(conversationId: conversationId, sessionId: sessionId)
         }
     }
 

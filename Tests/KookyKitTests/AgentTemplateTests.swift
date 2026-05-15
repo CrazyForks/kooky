@@ -55,4 +55,36 @@ final class AgentTemplateTests: XCTestCase {
         let data = CustomAgentData(id: "loose-custom", command: "aichat")
         XCTAssertNil(AgentTemplate.fromCustom(data).baseAgentId)
     }
+
+    func testMakeSessionConfigInjectsResumeFlagForClaude() {
+        let config = AgentTemplate.claudeCode.makeSessionConfig(resumeId: "abc-123")
+        XCTAssertEqual(config.environment["KOOKY_AGENT"], "claude --resume abc-123")
+    }
+
+    func testMakeSessionConfigCombinesResumeAndExtras() {
+        let config = AgentTemplate.claudeCode.makeSessionConfig(extraOptions: "--model opus", resumeId: "abc-123")
+        XCTAssertEqual(config.environment["KOOKY_AGENT"], "claude --resume abc-123 --model opus")
+    }
+
+    func testMakeSessionConfigSkipsResumeWhenIdEmpty() {
+        let config = AgentTemplate.claudeCode.makeSessionConfig(resumeId: "")
+        XCTAssertEqual(config.environment["KOOKY_AGENT"], "claude")
+    }
+
+    func testMakeSessionConfigIgnoresResumeOnNonClaudeBuiltins() {
+        // Codex / Cursor / Gemini / OpenCode all support --resume syntactically
+        // but kooky doesn't have a reliable id-capture path for them yet, so
+        // we don't inject the flag — see AgentTemplate.supportsResume.
+        let codexConfig = AgentTemplate.codex.makeSessionConfig(resumeId: "abc-123")
+        XCTAssertEqual(codexConfig.environment["KOOKY_AGENT"], "codex")
+        let copilotConfig = AgentTemplate.copilot.makeSessionConfig(resumeId: "abc-123")
+        XCTAssertEqual(copilotConfig.environment["KOOKY_AGENT"], "copilot")
+    }
+
+    func testMakeSessionConfigInjectsResumeForClaudeBasedCustom() {
+        let custom = CustomAgentData(id: "claude-opus", baseAgentId: "claude-code")
+        let template = AgentTemplate.fromCustom(custom)
+        let config = template.makeSessionConfig(resumeId: "xyz")
+        XCTAssertEqual(config.environment["KOOKY_AGENT"], "claude --resume xyz")
+    }
 }

@@ -25,6 +25,13 @@ enum HookEvent: String {
 enum HookMessage {
     case agent(agent: AgentTemplate, event: HookEvent, sessionId: UUID)
     case shellEnvironment(env: [String: String], sessionId: UUID)
+    /// Claude's hook input JSON carries `session_id` (its conversation id).
+    /// `KookyHook` extracts it and emits this message so kooky can persist
+    /// it on the originating Session and reuse it as `--resume <id>` on
+    /// next launch. The agent slug is implicit in the routing (only Claude
+    /// pipes session_id today) and the consumer doesn't dispatch per-agent
+    /// — so the payload only carries surface + id.
+    case conversationId(conversationId: String, sessionId: UUID)
 }
 
 @MainActor
@@ -140,6 +147,12 @@ final class HookServer {
                 (key, dict[key] as? String ?? "")
             })
             return .shellEnvironment(env: env, sessionId: id)
+        }
+
+        if dict["kind"] as? String == "conversationId",
+           let conversationId = dict["conversationId"] as? String,
+           !conversationId.isEmpty {
+            return .conversationId(conversationId: conversationId, sessionId: id)
         }
 
         guard

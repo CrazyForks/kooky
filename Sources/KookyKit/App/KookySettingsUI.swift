@@ -43,6 +43,12 @@ final class KookySettingsModel {
     /// joins the `+` menu / Settings list alongside the builtin agents,
     /// and supports the same visibility / order / options machinery.
     var customAgents: [CustomAgentData] = []
+    /// When true, kooky launches Claude tabs with `--resume <id>` using the
+    /// conversation id persisted on each tab (captured via Claude's hook
+    /// payload). When false, every Claude tab starts fresh — but the
+    /// persisted conversation id stays on disk so turning the toggle back
+    /// on resumes from where the user left off.
+    var resumeConversations: Bool = true
 
     private var saveWork: DispatchWorkItem?
 
@@ -65,6 +71,7 @@ final class KookySettingsModel {
         hiddenAgents = Set((agents["hidden"] as? [String]) ?? [])
         agentOptions = (agents["options"] as? [String: String]) ?? [:]
         defaultAgentId = agents["default"] as? String
+        resumeConversations = (agents["resumeConversations"] as? Bool) ?? true
 
         let rawCustom = (agents["custom"] as? [[String: Any]]) ?? []
         let builtinIds = Set(AgentTemplate.builtin.map(\.id))
@@ -134,6 +141,7 @@ final class KookySettingsModel {
             && nonEmptyOptions.isEmpty
             && defaultAgentId == nil
             && serialisedCustom.isEmpty
+            && resumeConversations  // default-true is the no-op case
         if allDefaults {
             parsed.removeValue(forKey: "agents")
         } else {
@@ -143,6 +151,8 @@ final class KookySettingsModel {
             agents["options"] = nonEmptyOptions.isEmpty ? nil : nonEmptyOptions
             agents["default"] = defaultAgentId
             agents["custom"] = serialisedCustom.isEmpty ? nil : serialisedCustom
+            // Only serialise when non-default to keep settings.json lean.
+            agents["resumeConversations"] = resumeConversations ? nil : false
             parsed["agents"] = agents
         }
 
@@ -225,6 +235,7 @@ struct KookySettingsView: View {
         .onChange(of: model.agentOptions) { _, _ in model.scheduleSave() }
         .onChange(of: model.defaultAgentId) { _, _ in model.scheduleSave() }
         .onChange(of: model.customAgents) { _, _ in model.scheduleSave() }
+        .onChange(of: model.resumeConversations) { _, _ in model.scheduleSave() }
     }
 
     private var sidebar: some View {
@@ -343,11 +354,12 @@ struct KookySettingsView: View {
             }
             SettingsHairline()
             AgentReorderList(model: model)
-            Text("Default opens with `+` / `⌘T` without a popover. Drag a row to reorder. Switch hides from the `+` menu. Chevron reveals launch options (e.g. `--model opus`). Terminal stays pinned first.")
-                .font(Theme.mono(11))
-                .foregroundStyle(Theme.chromeMuted)
-                .padding(.horizontal, 28)
-                .padding(.top, 16)
+            SettingsHairline()
+            SettingsRow(label: "resume-conversation-when-reopen") {
+                Toggle("", isOn: $model.resumeConversations)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+            }
         }
     }
 

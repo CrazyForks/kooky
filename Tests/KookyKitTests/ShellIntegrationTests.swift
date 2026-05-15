@@ -25,7 +25,7 @@ final class ShellIntegrationTests: XCTestCase {
             let entries = try XCTUnwrap(hooks[event] as? [[String: Any]], "missing event \(event)")
             let inner = try XCTUnwrap((entries.first?["hooks"] as? [[String: Any]])?.first)
             XCTAssertEqual(inner["type"] as? String, "command")
-            XCTAssertEqual(inner["command"] as? String, "\(Self.stubHook) gemini \(state)")
+            XCTAssertEqual(inner["command"] as? String, "'\(Self.stubHook)' gemini \(state)")
         }
     }
 
@@ -41,7 +41,7 @@ final class ShellIntegrationTests: XCTestCase {
         ] {
             let entries = try XCTUnwrap(hooks[event] as? [[String: Any]], "missing event \(event)")
             let inner = try XCTUnwrap((entries.first?["hooks"] as? [[String: Any]])?.first)
-            XCTAssertEqual(inner["command"] as? String, "\(Self.stubHook) claude \(state)")
+            XCTAssertEqual(inner["command"] as? String, "'\(Self.stubHook)' claude \(state)")
         }
     }
 
