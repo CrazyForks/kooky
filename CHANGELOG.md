@@ -2,6 +2,11 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.11.6 — 2026-05-18
+
+- Fixed: shell history and Tab completion now survive kooky restarts.
+- Fixed: environment variables in `~/.zshenv`, `~/.zprofile`, and `~/.bash_profile` now load in kooky terminals.
+
 ## v0.11.5 — 2026-05-18
 
 - Fixed: long Chinese / Japanese / Korean inputs no longer leave a phantom space mid-line.
