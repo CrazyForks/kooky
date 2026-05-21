@@ -625,11 +625,27 @@ final class GhosttySurfaceView: NSView {
             return
         }
 
-        // Special / navigation keys with full modifier handling (CSI mod
-        // digit 2…8 = 1 + Shift + 2·Alt + 4·Ctrl). Skipped while IME is
-        // composing so Enter / Esc / arrows can dismiss / accept the
-        // candidate window without leaking through to the PTY.
-        if !hasMarkedText(), let bytes = Self.escapeSequence(for: event) {
+        // Cursor keys are mode-aware: after a TUI enables DECCKM (`smkx`),
+        // libghostty must switch them from CSI (`ESC [ A`) to SS3
+        // (`ESC O A`). Route the physical key event through libghostty so
+        // old terminfo-strict programs (vim 7.2 on CentOS 6, etc.) see the
+        // active mode instead of kooky hard-coding CSI forever. If libghostty
+        // declines the key — shouldn't happen for a focused surface — fall
+        // back to the CSI form; a non-mode-aware arrow still beats a dead one.
+        if !hasMarkedText(),
+           Self.shouldForwardModeAwareKeyToLibghostty(keyCode: event.keyCode, modifierFlags: mods) {
+            if !sendKey(event: event, action: GHOSTTY_ACTION_PRESS, surface: surface),
+               let bytes = Self.handWrittenEscapeSequence(forKeyCode: event.keyCode, modifierFlags: mods) {
+                sendInputBytes(bytes, to: surface)
+            }
+            return
+        }
+
+        // Kooky-specific functional keys with explicit byte behavior. Skipped
+        // while IME is composing so Enter / Esc / arrows can dismiss / accept
+        // the candidate window without leaking through to the PTY.
+        if !hasMarkedText(),
+           let bytes = Self.handWrittenEscapeSequence(forKeyCode: event.keyCode, modifierFlags: mods) {
             sendInputBytes(bytes, to: surface)
             return
         }
@@ -717,12 +733,29 @@ final class GhosttySurfaceView: NSView {
         sendInputBytes(text, to: surface)
     }
 
-    /// Map an NSEvent to the byte sequence a TUI expects on the PTY. Returns
-    /// `nil` for anything that's just plain typed text (handled by the caller
-    /// via `event.characters`).
-    private static func escapeSequence(for event: NSEvent) -> String? {
-        let code = event.keyCode
-        let mods = event.modifierFlags
+    /// Physical keys whose output depends on libghostty's terminal mode state.
+    /// Keep these out of `handWrittenEscapeSequence`: hard-coded CSI cursor
+    /// bytes break applications that requested application cursor keys.
+    nonisolated static func shouldForwardModeAwareKeyToLibghostty(
+        keyCode: UInt16,
+        modifierFlags: NSEvent.ModifierFlags
+    ) -> Bool {
+        guard modifierFlags.intersection([.shift, .control, .option, .command]).isEmpty else {
+            return false
+        }
+        switch keyCode {
+        case 123, 124, 125, 126: return true  // left, right, down, up
+        default: return false
+        }
+    }
+
+    /// Map kooky's own functional-key policy to bytes. Returns `nil` for
+    /// normal text and mode-aware physical keys that must go through
+    /// `ghostty_surface_key`.
+    nonisolated static func handWrittenEscapeSequence(
+        forKeyCode code: UInt16,
+        modifierFlags mods: NSEvent.ModifierFlags
+    ) -> String? {
         let modDigit = csiModifierDigit(shift: mods.contains(.shift),
                                         alt: mods.contains(.option),
                                         ctrl: mods.contains(.control))
@@ -738,7 +771,10 @@ final class GhosttySurfaceView: NSView {
         case 51:  return "\u{7F}"                          // Backspace (DEL)
         case 53:  return "\u{1B}"                          // Escape
 
-        // Arrows
+        // Modified arrows (`ESC [ 1;m x`) resolve here. Unmodified arrows are
+        // routed through `ghostty_surface_key` in `keyDown` so libghostty
+        // picks CSI vs SS3 per DECCKM; these `csiArrow` forms are also that
+        // path's fallback if libghostty declines the key.
         case 123: return csiArrow("D", modDigit: modDigit)
         case 124: return csiArrow("C", modDigit: modDigit)
         case 125: return csiArrow("B", modDigit: modDigit)
@@ -772,22 +808,22 @@ final class GhosttySurfaceView: NSView {
 
     /// CSI modifier digit: 2 = Shift, 3 = Alt, 4 = Shift+Alt, 5 = Ctrl, … 8.
     /// Returns nil when no modifier is set so the unmodified sequence is used.
-    private static func csiModifierDigit(shift: Bool, alt: Bool, ctrl: Bool) -> Int? {
+    nonisolated private static func csiModifierDigit(shift: Bool, alt: Bool, ctrl: Bool) -> Int? {
         let mask = (shift ? 1 : 0) + (alt ? 2 : 0) + (ctrl ? 4 : 0)
         return mask == 0 ? nil : mask + 1
     }
 
-    private static func csiArrow(_ final: String, modDigit: Int?) -> String {
+    nonisolated private static func csiArrow(_ final: String, modDigit: Int?) -> String {
         if let m = modDigit { return "\u{1B}[1;\(m)\(final)" }
         return "\u{1B}[\(final)"
     }
 
-    private static func csiTilde(_ number: String, modDigit: Int?) -> String {
+    nonisolated private static func csiTilde(_ number: String, modDigit: Int?) -> String {
         if let m = modDigit { return "\u{1B}[\(number);\(m)~" }
         return "\u{1B}[\(number)~"
     }
 
-    private static func ssFnKey(_ final: String, modDigit: Int?) -> String {
+    nonisolated private static func ssFnKey(_ final: String, modDigit: Int?) -> String {
         if let m = modDigit { return "\u{1B}[1;\(m)\(final)" }
         return "\u{1B}O\(final)"
     }
@@ -920,12 +956,9 @@ final class GhosttySurfaceView: NSView {
         }
     }
 
-    private func sendKey(event: NSEvent, action: ghostty_input_action_e, surface: ghostty_surface_t) {
+    @discardableResult
+    private func sendKey(event: NSEvent, action: ghostty_input_action_e, surface: ghostty_surface_t) -> Bool {
         let mods = Self.mapModifiers(event.modifierFlags)
-        // libghostty's `keycode` is a W3C UIEvents code (its own enum), not
-        // Apple's keyCode. Without translation, special keys (arrows, function
-        // keys, home/end/…) are silently dropped.
-        let translated = Self.mapAppleKeyCode(event.keyCode)
         let chars = event.characters ?? ""
         // NSEvent gives function/arrow keys a Private-Use-Area "character"
         // (e.g. NSUpArrowFunctionKey = 0xF700). Those aren't real text — strip
@@ -934,149 +967,16 @@ final class GhosttySurfaceView: NSView {
         let firstScalar = chars.unicodeScalars.first?.value ?? 0
         let textToSend = (firstScalar >= 0xE000 && firstScalar <= 0xF8FF) ? "" : chars
 
-        textToSend.withCString { cstr in
+        return textToSend.withCString { cstr in
             var key = ghostty_input_key_s()
             key.action = action
             key.mods = mods
             key.consumed_mods = ghostty_input_mods_e(rawValue: 0)
-            key.keycode = UInt32(translated.rawValue)
+            key.keycode = UInt32(event.keyCode)
             key.text = textToSend.isEmpty ? nil : cstr
             key.unshifted_codepoint = 0
             key.composing = false
-            _ = ghostty_surface_key(surface, key)
-        }
-    }
-
-    private static func mapAppleKeyCode(_ apple: UInt16) -> ghostty_input_key_e {
-        switch apple {
-        // Letters (Apple QWERTY layout)
-        case 0:  return GHOSTTY_KEY_A
-        case 11: return GHOSTTY_KEY_B
-        case 8:  return GHOSTTY_KEY_C
-        case 2:  return GHOSTTY_KEY_D
-        case 14: return GHOSTTY_KEY_E
-        case 3:  return GHOSTTY_KEY_F
-        case 5:  return GHOSTTY_KEY_G
-        case 4:  return GHOSTTY_KEY_H
-        case 34: return GHOSTTY_KEY_I
-        case 38: return GHOSTTY_KEY_J
-        case 40: return GHOSTTY_KEY_K
-        case 37: return GHOSTTY_KEY_L
-        case 46: return GHOSTTY_KEY_M
-        case 45: return GHOSTTY_KEY_N
-        case 31: return GHOSTTY_KEY_O
-        case 35: return GHOSTTY_KEY_P
-        case 12: return GHOSTTY_KEY_Q
-        case 15: return GHOSTTY_KEY_R
-        case 1:  return GHOSTTY_KEY_S
-        case 17: return GHOSTTY_KEY_T
-        case 32: return GHOSTTY_KEY_U
-        case 9:  return GHOSTTY_KEY_V
-        case 13: return GHOSTTY_KEY_W
-        case 7:  return GHOSTTY_KEY_X
-        case 16: return GHOSTTY_KEY_Y
-        case 6:  return GHOSTTY_KEY_Z
-
-        // Digits (top row)
-        case 29: return GHOSTTY_KEY_DIGIT_0
-        case 18: return GHOSTTY_KEY_DIGIT_1
-        case 19: return GHOSTTY_KEY_DIGIT_2
-        case 20: return GHOSTTY_KEY_DIGIT_3
-        case 21: return GHOSTTY_KEY_DIGIT_4
-        case 23: return GHOSTTY_KEY_DIGIT_5
-        case 22: return GHOSTTY_KEY_DIGIT_6
-        case 26: return GHOSTTY_KEY_DIGIT_7
-        case 28: return GHOSTTY_KEY_DIGIT_8
-        case 25: return GHOSTTY_KEY_DIGIT_9
-
-        // Punctuation
-        case 50: return GHOSTTY_KEY_BACKQUOTE
-        case 27: return GHOSTTY_KEY_MINUS
-        case 24: return GHOSTTY_KEY_EQUAL
-        case 33: return GHOSTTY_KEY_BRACKET_LEFT
-        case 30: return GHOSTTY_KEY_BRACKET_RIGHT
-        case 42: return GHOSTTY_KEY_BACKSLASH
-        case 41: return GHOSTTY_KEY_SEMICOLON
-        case 39: return GHOSTTY_KEY_QUOTE
-        case 43: return GHOSTTY_KEY_COMMA
-        case 47: return GHOSTTY_KEY_PERIOD
-        case 44: return GHOSTTY_KEY_SLASH
-
-        // Functional
-        case 36: return GHOSTTY_KEY_ENTER
-        case 48: return GHOSTTY_KEY_TAB
-        case 49: return GHOSTTY_KEY_SPACE
-        case 51: return GHOSTTY_KEY_BACKSPACE
-        case 53: return GHOSTTY_KEY_ESCAPE
-
-        // Modifiers
-        case 54: return GHOSTTY_KEY_META_RIGHT
-        case 55: return GHOSTTY_KEY_META_LEFT
-        case 56: return GHOSTTY_KEY_SHIFT_LEFT
-        case 57: return GHOSTTY_KEY_CAPS_LOCK
-        case 58: return GHOSTTY_KEY_ALT_LEFT
-        case 59: return GHOSTTY_KEY_CONTROL_LEFT
-        case 60: return GHOSTTY_KEY_SHIFT_RIGHT
-        case 61: return GHOSTTY_KEY_ALT_RIGHT
-        case 62: return GHOSTTY_KEY_CONTROL_RIGHT
-        case 63: return GHOSTTY_KEY_FN
-
-        // Control pad
-        case 114: return GHOSTTY_KEY_HELP
-        case 115: return GHOSTTY_KEY_HOME
-        case 116: return GHOSTTY_KEY_PAGE_UP
-        case 117: return GHOSTTY_KEY_DELETE
-        case 119: return GHOSTTY_KEY_END
-        case 121: return GHOSTTY_KEY_PAGE_DOWN
-
-        // Arrows
-        case 123: return GHOSTTY_KEY_ARROW_LEFT
-        case 124: return GHOSTTY_KEY_ARROW_RIGHT
-        case 125: return GHOSTTY_KEY_ARROW_DOWN
-        case 126: return GHOSTTY_KEY_ARROW_UP
-
-        // Function keys
-        case 122: return GHOSTTY_KEY_F1
-        case 120: return GHOSTTY_KEY_F2
-        case 99:  return GHOSTTY_KEY_F3
-        case 118: return GHOSTTY_KEY_F4
-        case 96:  return GHOSTTY_KEY_F5
-        case 97:  return GHOSTTY_KEY_F6
-        case 98:  return GHOSTTY_KEY_F7
-        case 100: return GHOSTTY_KEY_F8
-        case 101: return GHOSTTY_KEY_F9
-        case 109: return GHOSTTY_KEY_F10
-        case 103: return GHOSTTY_KEY_F11
-        case 111: return GHOSTTY_KEY_F12
-        case 105: return GHOSTTY_KEY_F13
-        case 107: return GHOSTTY_KEY_F14
-        case 113: return GHOSTTY_KEY_F15
-        case 106: return GHOSTTY_KEY_F16
-        case 64:  return GHOSTTY_KEY_F17
-        case 79:  return GHOSTTY_KEY_F18
-        case 80:  return GHOSTTY_KEY_F19
-
-        // Numpad
-        case 82: return GHOSTTY_KEY_NUMPAD_0
-        case 83: return GHOSTTY_KEY_NUMPAD_1
-        case 84: return GHOSTTY_KEY_NUMPAD_2
-        case 85: return GHOSTTY_KEY_NUMPAD_3
-        case 86: return GHOSTTY_KEY_NUMPAD_4
-        case 87: return GHOSTTY_KEY_NUMPAD_5
-        case 88: return GHOSTTY_KEY_NUMPAD_6
-        case 89: return GHOSTTY_KEY_NUMPAD_7
-        case 91: return GHOSTTY_KEY_NUMPAD_8
-        case 92: return GHOSTTY_KEY_NUMPAD_9
-        case 65: return GHOSTTY_KEY_NUMPAD_DECIMAL
-        case 67: return GHOSTTY_KEY_NUMPAD_MULTIPLY
-        case 69: return GHOSTTY_KEY_NUMPAD_ADD
-        case 71: return GHOSTTY_KEY_NUMPAD_CLEAR
-        case 75: return GHOSTTY_KEY_NUMPAD_DIVIDE
-        case 76: return GHOSTTY_KEY_NUMPAD_ENTER
-        case 78: return GHOSTTY_KEY_NUMPAD_SUBTRACT
-        case 81: return GHOSTTY_KEY_NUMPAD_EQUAL
-
-        default: return GHOSTTY_KEY_UNIDENTIFIED
+            return ghostty_surface_key(surface, key)
         }
     }
 

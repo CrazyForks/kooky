@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.12.4 — 2026-05-21
+
+- Fixed: arrow keys in `vim` (and other full-screen programs) now work over SSH to older remote machines.
+
 ## v0.12.3 — 2026-05-21
 
 - The tab and sidebar name now follow the terminal title — `ssh` into a remote host and the tab shows its `user@host` instead of the local folder, then reverts when you exit.
