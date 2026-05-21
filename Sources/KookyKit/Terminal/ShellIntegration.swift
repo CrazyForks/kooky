@@ -533,9 +533,12 @@ enum KookyShellIntegration {
         [[ -n "$KOOKY_BIN_DIR" ]] && export PATH="$KOOKY_BIN_DIR:$PATH"
 
         _kooky_osc7_pwd() { printf '\\e]7;file://%s%s\\e\\\\' "$HOSTNAME" "$PWD"; }
+        # Re-assert the cwd as the OSC title each prompt (see zsh wrapper) —
+        # prepended so it runs before the user's PROMPT_COMMAND title hook.
+        _kooky_title_pwd() { printf '\\e]2;%s\\a' "$PWD"; }
         \(envStatusBlock)
 
-        PROMPT_COMMAND="_kooky_osc7_pwd;_kooky_env_status${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+        PROMPT_COMMAND="_kooky_title_pwd;_kooky_osc7_pwd;_kooky_env_status${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
         _kooky_osc7_pwd
         _kooky_env_status
 
@@ -592,6 +595,15 @@ enum KookyShellIntegration {
         # HISTFILE override in any of the three files below still wins.
         export HISTFILE="$HOME/.zsh_history"
 
+        # Re-assert the cwd as the OSC title each prompt — registered before
+        # the user rc so it runs first in precmd_functions. Drops a stale
+        # ssh / TUI title; a title the user's theme sets later this prompt
+        # still wins (it runs after). kooky maps a cwd-shaped title to the
+        # bare basename. `return $_s` keeps $? intact for the user hooks.
+        autoload -Uz add-zsh-hook
+        _kooky_title_pwd() { local _s=$?; printf '\\e]2;%s\\a' "$PWD"; return $_s }
+        add-zsh-hook precmd _kooky_title_pwd
+
         # Replay the rc files zsh would have run if ZDOTDIR had pointed at the
         # user's real dir. Resolve via `${ZDOTDIR:-$HOME}` after each source —
         # so users who park their zsh config in a custom dir (e.g.
@@ -606,7 +618,6 @@ enum KookyShellIntegration {
         # `claude` etc. resolve to our shims first.
         [[ -n "$KOOKY_BIN_DIR" ]] && export PATH="$KOOKY_BIN_DIR:$PATH"
 
-        autoload -Uz add-zsh-hook
         _kooky_osc7_pwd() { printf '\\e]7;file://%s%s\\e\\\\' "$HOST" "$PWD" }
         add-zsh-hook chpwd _kooky_osc7_pwd
         _kooky_osc7_pwd

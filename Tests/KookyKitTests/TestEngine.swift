@@ -8,6 +8,7 @@ final class TestEngine: TerminalEngine {
     let view: NSView = NSView()
     var backgroundColor: NSColor { .black }
     var onPwdChange: ((String) -> Void)?
+    var onTitleChange: ((String) -> Void)?
     var onFocus: (() -> Void)?
     var onCommandFinished: ((Int?, TimeInterval) -> Void)?
     var onProcessExitedCleanly: (() -> Void)?
@@ -56,5 +57,9 @@ final class TestEngine: TerminalEngine {
 
     func emitCommandFinished(exit: Int?, duration: TimeInterval) {
         onCommandFinished?(exit, duration)
+    }
+
+    func emitTitle(_ title: String) {
+        onTitleChange?(title)
     }
 }

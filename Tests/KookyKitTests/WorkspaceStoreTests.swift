@@ -100,6 +100,75 @@ final class WorkspaceStoreTests: XCTestCase {
         XCTAssertEqual(session.lastCommandExit, 0)
     }
 
+    func testTerminalTitleReportUpdatesTabAndWorkspaceName() {
+        let store = makeStore()
+        let ws = store.addWorkspace(workingDirectory: projectA)
+        let session = firstPane(ws).tabs[0]
+
+        // An `ssh` remote shell emits its own OSC 0/2 title.
+        engine(session).emitTitle("corey@web-prod: ~/srv")
+
+        XCTAssertEqual(session.title, "corey@web-prod: ~/srv")
+        XCTAssertEqual(ws.title, "corey@web-prod: ~/srv")
+    }
+
+    func testCustomTitleWinsOverTerminalTitle() {
+        let store = makeStore()
+        let ws = store.addWorkspace(workingDirectory: projectA)
+        let session = firstPane(ws).tabs[0]
+
+        engine(session).emitTitle("corey@web-prod")
+        store.renameTab(session, to: "deploy")
+
+        XCTAssertEqual(session.title, "deploy")
+    }
+
+    func testCommandFinishedKeepsTerminalTitle() {
+        // P2 regression: a shell theme's `precmd` title hook sets the title
+        // just before kooky's OSC 133;D fires (kooky's 133 hook runs last in
+        // `precmd_functions`). Clearing on command-finished would wipe that
+        // fresh title — so `onCommandFinished` must leave `terminalTitle`
+        // alone. Stale titles are reset by the wrapper's per-prompt
+        // `_kooky_title_pwd`, not here.
+        let store = makeStore()
+        let ws = store.addWorkspace(workingDirectory: projectA)
+        let session = firstPane(ws).tabs[0]
+
+        engine(session).emitTitle("corey@web-prod")
+        engine(session).emitCommandFinished(exit: 0, duration: 0.1)
+
+        XCTAssertEqual(session.terminalTitle, "corey@web-prod")
+        XCTAssertEqual(session.title, "corey@web-prod")
+    }
+
+    func testEmptyTerminalTitleReportFallsBackToCwd() {
+        let store = makeStore()
+        let ws = store.addWorkspace(workingDirectory: projectA)
+        let session = firstPane(ws).tabs[0]
+
+        engine(session).emitTitle("   ")
+
+        XCTAssertNil(session.terminalTitle)
+        XCTAssertEqual(session.title, "projectA")
+    }
+
+    func testBareCwdPathTitleIsIgnoredSoTabKeepsBasename() {
+        let store = makeStore()
+        let ws = store.addWorkspace(workingDirectory: projectA)
+        let session = firstPane(ws).tabs[0]
+
+        // libghostty derives a SET_TITLE that's just the absolute cwd path.
+        // The tab must keep showing the basename, not `/tmp/projectA`.
+        engine(session).emitTitle("/tmp/projectA")
+        XCTAssertNil(session.terminalTitle)
+        XCTAssertEqual(session.title, "projectA")
+
+        // A `~`-abbreviated path is the same noise.
+        engine(session).emitTitle("~/tmp/projectA")
+        XCTAssertNil(session.terminalTitle)
+        XCTAssertEqual(session.title, "projectA")
+    }
+
     func testShellEnvironmentReportUpdatesSessionEnvironment() {
         let store = makeStore()
         let ws = store.addWorkspace(workingDirectory: projectA)

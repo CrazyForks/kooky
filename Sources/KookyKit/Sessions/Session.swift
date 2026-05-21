@@ -28,6 +28,13 @@ final class Session: Identifiable {
     /// Empty / whitespace input via `renameTab` clears this back to `nil` so
     /// the tab title resumes tracking the cwd.
     var customTitle: String?
+    /// Title the running program set via `OSC 0` / `OSC 2` (libghostty's
+    /// `GHOSTTY_ACTION_SET_TITLE`) — e.g. the `user@host:dir` an `ssh` remote
+    /// shell emits. Runtime-only, never persisted. The shell wrapper re-emits
+    /// the cwd as the title each prompt (`_kooky_title_pwd`), which the path
+    /// filter in `onTitleChange` maps back to `nil` — so a leftover `ssh` /
+    /// TUI title can't outlive the program once control returns to the prompt.
+    var terminalTitle: String?
     /// Last conversation id this tab's agent reported (currently only Claude
     /// — its SessionStart / Stop / SessionEnd hook JSON input carries
     /// `session_id`). Persisted via `PersistedTab.conversationId` so that the
@@ -71,11 +78,14 @@ final class Session: Identifiable {
     /// running shell, so this takes priority when present.
     var shellEnvironment: [String: String] = [:]
 
-    /// `lastPathComponent` of the cwd, with `~` for $HOME — unless `customTitle`
-    /// is set, which always wins. Empty cwd path falls back to the agent name
-    /// so a degenerate URL doesn't render as blank.
+    /// Tab-pill name. Precedence: `customTitle` (manual rename) wins, then
+    /// `terminalTitle` (OSC title from the running program, e.g. an `ssh`
+    /// remote), then `lastPathComponent` of the cwd (`~` for $HOME). An empty
+    /// cwd path falls back to the agent name so a degenerate URL doesn't
+    /// render as blank.
     var title: String {
         if let custom = customTitle, !custom.isEmpty { return custom }
+        if let reported = terminalTitle, !reported.isEmpty { return reported }
         if currentDirectory.standardizedFileURL.path == NSHomeDirectory() { return "~" }
         let last = currentDirectory.lastPathComponent
         return last.isEmpty ? agent.title : last

@@ -20,6 +20,9 @@ final class Workspace: Identifiable {
 
     var title: String {
         if let custom = customTitle, !custom.isEmpty { return custom }
+        // Mirror the active tab's OSC title so an `ssh` session shows the
+        // remote host in the sidebar, not the stale local directory.
+        if let reported = activeSession?.terminalTitle, !reported.isEmpty { return reported }
         if workingDirectory.path == NSHomeDirectory() { return "Home" }
         let last = workingDirectory.lastPathComponent
         return last.isEmpty ? workingDirectory.path : last

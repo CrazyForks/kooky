@@ -25,6 +25,14 @@ func resolvedSpawnCwd(_ path: String) -> URL {
     return URL(fileURLWithPath: NSHomeDirectory())
 }
 
+/// Trims a title string; blank or whitespace-only input collapses to `nil`.
+/// Shared by the manual-rename paths and the OSC-title observer so "empty
+/// means no title" stays one rule.
+func normalizedTitle(_ raw: String) -> String? {
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+}
+
 /// Three-state sidebar visibility. `next` cycles full → compact → hidden →
 /// full so each toggle hides more and eventually wraps around.
 enum SidebarMode: String, Codable, Equatable, Sendable {
@@ -175,8 +183,7 @@ final class WorkspaceStore {
     /// Set or clear a user-provided workspace title. Empty / whitespace input
     /// clears the override so the sidebar label resumes tracking the cwd.
     func renameWorkspace(_ workspace: Workspace, to newTitle: String) {
-        let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        let next: String? = trimmed.isEmpty ? nil : trimmed
+        let next = normalizedTitle(newTitle)
         guard workspace.customTitle != next else { return }
         workspace.customTitle = next
         scheduleSave()
@@ -233,8 +240,7 @@ final class WorkspaceStore {
     /// Set or clear a user-provided tab title. Empty / whitespace input clears
     /// the override so the title resumes tracking the working directory.
     func renameTab(_ session: Session, to newTitle: String) {
-        let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        let next: String? = trimmed.isEmpty ? nil : trimmed
+        let next = normalizedTitle(newTitle)
         guard session.customTitle != next else { return }
         session.customTitle = next
         scheduleSave()
@@ -663,6 +669,17 @@ final class WorkspaceStore {
             self?.refreshEnvironment(for: session)
             self?.gitWatchers[session.id]?.watch(cwd: session.currentDirectory)
             self?.scheduleSave()
+        }
+        engine.onTitleChange = { [weak session] title in
+            guard let session else { return }
+            // A path-shaped SET_TITLE is noise: libghostty synthesises one
+            // from OSC 7, and the wrapper re-emits the cwd each prompt — both
+            // are things `Session.title` already renders. Keep only what the
+            // cwd can't say (`ssh`'s `user@host:dir`, a TUI's filename).
+            let next = normalizedTitle(title).flatMap {
+                ($0.hasPrefix("/") || $0.hasPrefix("~")) ? nil : $0
+            }
+            if session.terminalTitle != next { session.terminalTitle = next }
         }
         engine.onFocus = { [weak self, weak session, weak workspace] in
             guard let self, let session, let workspace else { return }

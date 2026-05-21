@@ -106,6 +106,17 @@ private let kookyActionCb: ghostty_runtime_action_cb = { _, target, action in
         let pwd = String(cString: cstr)
         dispatchToView(userdata) { $0.onPwdChange?(pwd) }
         return true
+    case GHOSTTY_ACTION_SET_TITLE, GHOSTTY_ACTION_SET_TAB_TITLE:
+        // OSC 0 / OSC 2 (and ghostty's tab-title variant). An `ssh` session's
+        // remote shell emits its own `user@host:dir` title — surfacing it
+        // keeps the tab + workspace name honest about where the shell is.
+        let titleAction = action.tag == GHOSTTY_ACTION_SET_TITLE
+            ? action.action.set_title
+            : action.action.set_tab_title
+        guard let cstr = titleAction.title else { return true }
+        let title = String(cString: cstr)
+        dispatchToView(userdata) { $0.onTitleChange?(title) }
+        return true
     case GHOSTTY_ACTION_OPEN_URL:
         // libghostty resolves ⌘+click hits and hands us the URL string. We
         // route it to the default browser, but return `false` when we can't
@@ -208,6 +219,10 @@ final class LibghosttyEngine: TerminalEngine {
         get { surfaceView.onPwdChange }
         set { surfaceView.onPwdChange = newValue }
     }
+    var onTitleChange: ((String) -> Void)? {
+        get { surfaceView.onTitleChange }
+        set { surfaceView.onTitleChange = newValue }
+    }
     var onFocus: (() -> Void)? {
         get { surfaceView.onFocus }
         set { surfaceView.onFocus = newValue }
@@ -294,6 +309,7 @@ final class GhosttySurfaceView: NSView {
 
     var pendingConfig: TerminalSessionConfig?
     var onPwdChange: ((String) -> Void)?
+    var onTitleChange: ((String) -> Void)?
     var onFocus: (() -> Void)?
     var onCommandFinished: ((Int?, TimeInterval) -> Void)?
     var onProcessExitedCleanly: (() -> Void)?

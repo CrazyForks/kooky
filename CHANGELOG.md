@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.12.3 — 2026-05-21
+
+- The tab and sidebar name now follow the terminal title — `ssh` into a remote host and the tab shows its `user@host` instead of the local folder, then reverts when you exit.
+
 ## v0.12.2 — 2026-05-20
 
 - Antigravity CLI joins the agent menu — Google's Go-based successor to Gemini CLI.

@@ -32,6 +32,11 @@ protocol TerminalEngine: AnyObject {
     /// `GHOSTTY_ACTION_PWD`, fired when the shell emits OSC 7). Lets the
     /// workspace track the active tab's cwd so new tabs inherit the latest path.
     var onPwdChange: ((String) -> Void)? { get set }
+    /// Called when the running program sets the terminal title via an `OSC 0`
+    /// / `OSC 2` escape sequence (libghostty's `GHOSTTY_ACTION_SET_TITLE`).
+    /// Drives the tab + workspace name so an `ssh` into a remote host — whose
+    /// shell emits its own `user@host:dir` title — shows in kooky's chrome.
+    var onTitleChange: ((String) -> Void)? { get set }
     /// Called when this engine's surface becomes the window's first responder
     /// (i.e. the user clicked into it). Lets the workspace mark the matching
     /// leaf as focused so split-aware operations (cwd tracking, ⌘D inheritance)
