@@ -41,6 +41,12 @@ struct AgentTemplate: Identifiable, Hashable {
     /// this agent yet). Claude Code = `--resume`; Grok = `--session`. Drives
     /// `makeSessionConfig(resumeId:)` and `supportsResume`.
     let resumeFlag: String?
+    /// Environment the agent launches with — populated only for custom
+    /// agents (`parseEnv(CustomAgentData.env)` in `fromCustom`); builtins
+    /// are `[:]`. Snapshot-frozen at `fromCustom` like `baseAgentId`. v1
+    /// consumes it for Claude-Code-based customs — `spawnSession` writes
+    /// it into a per-agent Claude settings file.
+    let extraEnv: [String: String]
 
     init(
         id: String,
@@ -51,7 +57,8 @@ struct AgentTemplate: Identifiable, Hashable {
         initialCommand: String?,
         baseAgentId: String? = nil,
         promptLaunchFlag: String? = nil,
-        resumeFlag: String? = nil
+        resumeFlag: String? = nil,
+        extraEnv: [String: String] = [:]
     ) {
         self.id = id
         self.title = title
@@ -62,6 +69,7 @@ struct AgentTemplate: Identifiable, Hashable {
         self.baseAgentId = baseAgentId
         self.promptLaunchFlag = promptLaunchFlag
         self.resumeFlag = resumeFlag
+        self.extraEnv = extraEnv
     }
 
     var tint: Color? {
@@ -144,9 +152,53 @@ struct AgentTemplate: Identifiable, Hashable {
     var supportsResume: Bool {
         resumeFlag != nil
     }
+
+    /// Parses a `.env`-style block — one `KEY=VALUE` per line — into a
+    /// dictionary. Blank lines and `#` comment lines are skipped, a leading
+    /// `export` keyword is dropped (so a block pasted from `.zshrc` works),
+    /// and the split is on the *first* `=` so values may contain `=`. A value
+    /// wrapped in one matching pair of quotes is unwrapped. Keys that aren't
+    /// valid shell identifiers are dropped, as are `KOOKY_`-prefixed keys —
+    /// letting a custom agent set `KOOKY_SURFACE_ID` would misroute hook pings.
+    static func parseEnv(_ raw: String) -> [String: String] {
+        var result: [String: String] = [:]
+        // `\.isNewline` splits LF / CR / CRLF alike — `split(separator: "\n")`
+        // misses the `\n` inside the `\r\n` grapheme cluster and would
+        // collapse a CRLF block (Windows editor, web copy) into one bad value.
+        for line in raw.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline) {
+            var trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
+            if trimmed.hasPrefix("export"),
+               let separator = trimmed.dropFirst("export".count).first, separator.isWhitespace {
+                trimmed = String(trimmed.dropFirst("export".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            guard let eq = trimmed.firstIndex(of: "=") else { continue }
+            let key = trimmed[..<eq].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard isValidEnvKey(key) else { continue }
+            var value = trimmed[trimmed.index(after: eq)...].trimmingCharacters(in: .whitespacesAndNewlines)
+            if value.count >= 2, let first = value.first, value.last == first,
+               first == "\"" || first == "'" {
+                value = String(value.dropFirst().dropLast())
+            }
+            result[key] = value
+        }
+        return result
+    }
+
+    /// `^[A-Za-z_][A-Za-z0-9_]*$`, and not kooky-internal (`KOOKY_` prefix).
+    private static func isValidEnvKey(_ key: String) -> Bool {
+        guard let first = key.first, !key.hasPrefix("KOOKY_") else { return false }
+        guard first == "_" || (first.isASCII && first.isLetter) else { return false }
+        return key.allSatisfy { $0 == "_" || ($0.isASCII && ($0.isLetter || $0.isNumber)) }
+    }
 }
 
 extension AgentTemplate {
+    /// The builtin Claude Code agent id. Call sites that gate Claude-
+    /// specific behaviour (the custom-agent env block) compare against this
+    /// rather than a bare `"claude-code"` literal.
+    static let claudeCodeID = "claude-code"
+
     static let terminal = AgentTemplate(
         id: "terminal",
         title: "Terminal",
@@ -157,7 +209,7 @@ extension AgentTemplate {
     )
 
     static let claudeCode = AgentTemplate(
-        id: "claude-code",
+        id: claudeCodeID,
         title: "Claude Code",
         symbol: "sparkle",
         iconAsset: "claudecode",
@@ -355,7 +407,8 @@ extension AgentTemplate {
             initialCommand: data.command.isEmpty ? base?.initialCommand : data.command,
             baseAgentId: data.baseAgentId.isEmpty ? nil : data.baseAgentId,
             promptLaunchFlag: base?.promptLaunchFlag,
-            resumeFlag: base?.resumeFlag
+            resumeFlag: base?.resumeFlag,
+            extraEnv: parseEnv(data.env)
         )
     }
 }
@@ -387,6 +440,12 @@ struct CustomAgentData: Hashable, Identifiable {
     /// sRGB hex (no `#`) for the sidebar pip tint. Power-user; UI hides
     /// this. Empty falls back to base's tintHex, then nil.
     var tintHex: String
+    /// Extra environment variables for the agent, in `.env` syntax (one
+    /// `KEY=VALUE` per line). Parsed into `AgentTemplate.extraEnv` by
+    /// `AgentTemplate.parseEnv` at `fromCustom` time. v1 only takes effect
+    /// for Claude-Code-based customs — written into a per-agent Claude
+    /// settings file (`--settings`), never exported to the shell.
+    var env: String
 
     init(
         id: String,
@@ -395,7 +454,8 @@ struct CustomAgentData: Hashable, Identifiable {
         baseAgentId: String = "",
         iconAsset: String = "",
         symbol: String = "",
-        tintHex: String = ""
+        tintHex: String = "",
+        env: String = ""
     ) {
         self.id = id
         self.title = title
@@ -404,5 +464,6 @@ struct CustomAgentData: Hashable, Identifiable {
         self.iconAsset = iconAsset
         self.symbol = symbol
         self.tintHex = tintHex
+        self.env = env
     }
 }

@@ -124,11 +124,18 @@ enum KookyShellIntegration {
     /// Per-session env vars our wrappers + hook helper read. Caller supplies
     /// the surface UUID; everything else is process-wide. PATH prepends
     /// `kookyBinDirectory` so wrapper shims resolve before the real binaries.
-    static func kookyEnvironment(for sessionId: UUID) -> [String: String] {
+    /// `claudeCustomSettingsAgentId`, when set, routes `KOOKY_HOOKS_PATH` to
+    /// that custom agent's per-agent Claude settings file (endpoint / key)
+    /// instead of the shared `claude.json`.
+    static func kookyEnvironment(
+        for sessionId: UUID,
+        claudeCustomSettingsAgentId: String? = nil
+    ) -> [String: String] {
         let parentPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/local/bin:/usr/bin:/bin"
+        let hooksPath = claudeCustomSettingsAgentId.map(claudeCustomSettingsPath(agentId:)) ?? claudeHooksPath
         var env: [String: String] = [
             "KOOKY_SURFACE_ID": sessionId.uuidString,
-            "KOOKY_HOOKS_PATH": claudeHooksPath,
+            "KOOKY_HOOKS_PATH": hooksPath,
             "KOOKY_BIN_DIR": kookyBinDirectory,
             "KOOKY_HOOK_BIN": kookyHookBinaryPath,
             "PATH": "\(kookyBinDirectory):\(parentPath)",
@@ -205,6 +212,53 @@ enum KookyShellIntegration {
             "Notification":      .attention,
             "SessionEnd":        .ended,
         ])
+    }
+
+    /// Path to a per-custom-agent Claude settings file. Same directory as
+    /// `claudeHooksPath`; named `claude-<agentId>.json` (id sanitised so a
+    /// hand-edited settings.json can't escape the directory). Written by
+    /// `refreshClaudeCustomSettings` and passed to `claude` via `--settings`
+    /// for that agent's sessions, overriding `KOOKY_HOOKS_PATH`.
+    static func claudeCustomSettingsPath(agentId: String) -> String {
+        let safe = String(agentId.map {
+            ($0.isASCII && ($0.isLetter || $0.isNumber)) || $0 == "-" || $0 == "_" ? $0 : "_"
+        })
+        return hooksDirectory.appendingPathComponent("claude-\(safe).json").path
+    }
+
+    /// A Claude `settings.json` fragment for a custom agent: the hooks
+    /// `claudeHooksObject` produces, plus an `env` block carrying the
+    /// agent's custom environment (endpoint / key / …). Passed to `claude`
+    /// via `--settings`, so the variables apply to that Claude process
+    /// only — kooky never exports them to the shell.
+    static func claudeCustomSettingsObject(env: [String: String], hookCmd: String) -> [String: Any] {
+        var object = claudeHooksObject(hookCmd: hookCmd)
+        object["env"] = env
+        return object
+    }
+
+    /// Materialises a per-agent Claude settings file for every Claude-Code-
+    /// based custom agent that carries an env block, and deletes any stale
+    /// `claude-<id>.json` no longer matching one (a since-deleted agent, or
+    /// an env block the user cleared — the file can hold an API token).
+    /// Called at launch and after every Settings save, so the on-disk files
+    /// always track the current custom-agent set.
+    static func refreshClaudeCustomSettings(customAgents: [CustomAgentData]) {
+        let hookCmd = kookyHookBinaryPath
+        var liveFiles: Set<String> = []
+        for agent in customAgents where agent.baseAgentId == AgentTemplate.claudeCodeID {
+            let env = AgentTemplate.parseEnv(agent.env)
+            guard !env.isEmpty else { continue }
+            let path = claudeCustomSettingsPath(agentId: agent.id)
+            writeJSON(at: path, object: claudeCustomSettingsObject(env: env, hookCmd: hookCmd))
+            liveFiles.insert((path as NSString).lastPathComponent)
+        }
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: hooksDirectory.path)
+        else { return }
+        for name in names
+        where name.hasPrefix("claude-") && name.hasSuffix(".json") && !liveFiles.contains(name) {
+            try? FileManager.default.removeItem(at: hooksDirectory.appendingPathComponent(name))
+        }
     }
 
     /// Gemini's hook event names diverge from Claude's (BeforeAgent / AfterAgent

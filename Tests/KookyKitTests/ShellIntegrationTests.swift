@@ -157,6 +157,23 @@ final class ShellIntegrationTests: XCTestCase {
         XCTAssertEqual(KookyShellIntegration.backslashEscape("/tmp/项目/🚀.md"), "/tmp/项目/🚀.md")
     }
 
+    func testClaudeCustomSettingsObjectCarriesHooksAndEnv() throws {
+        let object = KookyShellIntegration.claudeCustomSettingsObject(
+            env: ["ANTHROPIC_BASE_URL": "https://mirror.example.com"],
+            hookCmd: Self.stubHook
+        )
+        // The env block Claude reads natively for the custom endpoint / key.
+        let env = try XCTUnwrap(object["env"] as? [String: String])
+        XCTAssertEqual(env["ANTHROPIC_BASE_URL"], "https://mirror.example.com")
+        // Hooks must ride along — the per-agent file is the only settings
+        // file passed to that session, so kooky's activity hooks have to be
+        // in it too, not just the env block.
+        let hooks = try XCTUnwrap(object["hooks"] as? [String: Any])
+        let entries = try XCTUnwrap(hooks["UserPromptSubmit"] as? [[String: Any]])
+        let inner = try XCTUnwrap((entries.first?["hooks"] as? [[String: Any]])?.first)
+        XCTAssertEqual(inner["command"] as? String, "'\(Self.stubHook)' claude running")
+    }
+
     func testBackslashEscapeFallsBackToQuoteOnNewlineToAvoidLineContinuation() {
         // POSIX: `\<newline>` is line continuation and gets dropped — so a
         // legitimate macOS filename containing `\n` would be silently

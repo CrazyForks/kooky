@@ -638,7 +638,15 @@ final class WorkspaceStore {
             initialPrompt: initialPrompt
         )
         config.workingDirectory = initialCwd.path
-        config.environment.merge(KookyShellIntegration.kookyEnvironment(for: sessionId)) { _, new in new }
+        // A Claude-Code-based custom agent with an env block hands `claude`
+        // its endpoint / key via a per-agent Claude settings file (written by
+        // `refreshClaudeCustomSettings`); `kookyEnvironment` routes this
+        // session's KOOKY_HOOKS_PATH there.
+        let claudeCustomId = template.baseAgentId == AgentTemplate.claudeCodeID && !template.extraEnv.isEmpty
+            ? template.id : nil
+        config.environment.merge(
+            KookyShellIntegration.kookyEnvironment(for: sessionId, claudeCustomSettingsAgentId: claudeCustomId)
+        ) { _, new in new }
         engine.start(config: config)
         return Session(
             id: sessionId,

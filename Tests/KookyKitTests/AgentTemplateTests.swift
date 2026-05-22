@@ -188,4 +188,107 @@ final class AgentTemplateTests: XCTestCase {
         let config = AgentTemplate.codex.makeSessionConfig(initialPrompt: "-rw-r--r--@  1 corey staff  44")
         XCTAssertEqual(config.environment["KOOKY_AGENT"], "codex -- '-rw-r--r--@  1 corey staff  44'")
     }
+
+    // MARK: - parseEnv (custom-agent environment block)
+
+    func testParseEnvBasicPair() {
+        XCTAssertEqual(
+            AgentTemplate.parseEnv("ANTHROPIC_BASE_URL=https://api.example.com"),
+            ["ANTHROPIC_BASE_URL": "https://api.example.com"]
+        )
+    }
+
+    func testParseEnvMultipleLines() {
+        XCTAssertEqual(
+            AgentTemplate.parseEnv("ANTHROPIC_BASE_URL=https://api.example.com\nANTHROPIC_AUTH_TOKEN=sk-abc123"),
+            ["ANTHROPIC_BASE_URL": "https://api.example.com", "ANTHROPIC_AUTH_TOKEN": "sk-abc123"]
+        )
+    }
+
+    func testParseEnvSkipsBlankAndCommentLines() {
+        XCTAssertEqual(
+            AgentTemplate.parseEnv("# a comment\nFOO=bar\n\n   # indented comment\nBAZ=qux"),
+            ["FOO": "bar", "BAZ": "qux"]
+        )
+    }
+
+    func testParseEnvStripsExportPrefix() {
+        XCTAssertEqual(AgentTemplate.parseEnv("export FOO=bar"), ["FOO": "bar"])
+    }
+
+    func testParseEnvStripsExportWithTab() {
+        XCTAssertEqual(AgentTemplate.parseEnv("export\tFOO=bar"), ["FOO": "bar"])
+    }
+
+    func testParseEnvHandlesCRLFLineEndings() {
+        // A block pasted from a Windows editor / web copy uses \r\n — the
+        // parser must split it into separate pairs, not collapse the whole
+        // block into the first key's value.
+        XCTAssertEqual(
+            AgentTemplate.parseEnv("FOO=bar\r\nBAZ=qux\rZIP=zap"),
+            ["FOO": "bar", "BAZ": "qux", "ZIP": "zap"]
+        )
+    }
+
+    func testParseEnvSplitsOnFirstEquals() {
+        // A value containing `=` (URL query string) must survive intact.
+        XCTAssertEqual(
+            AgentTemplate.parseEnv("URL=https://x.com/path?a=1&b=2"),
+            ["URL": "https://x.com/path?a=1&b=2"]
+        )
+    }
+
+    func testParseEnvUnwrapsSurroundingQuotes() {
+        XCTAssertEqual(AgentTemplate.parseEnv(#"FOO="hello world""#), ["FOO": "hello world"])
+        XCTAssertEqual(AgentTemplate.parseEnv("FOO='single'"), ["FOO": "single"])
+    }
+
+    func testParseEnvTrimsWhitespace() {
+        XCTAssertEqual(AgentTemplate.parseEnv("  FOO = bar  "), ["FOO": "bar"])
+    }
+
+    func testParseEnvDropsInvalidKeys() {
+        // Leading digit, space in key, empty key, and a line with no `=`
+        // are all dropped — only `GOOD` survives.
+        XCTAssertEqual(
+            AgentTemplate.parseEnv("1FOO=bad\nMY VAR=bad\n=bad\ngarbage line\nGOOD=ok"),
+            ["GOOD": "ok"]
+        )
+    }
+
+    func testParseEnvDropsKookyPrefixedKeys() {
+        // A custom agent must not shadow kooky's own env — KOOKY_SURFACE_ID
+        // in particular routes hook pings to the right tab.
+        XCTAssertEqual(AgentTemplate.parseEnv("KOOKY_SURFACE_ID=evil\nFOO=ok"), ["FOO": "ok"])
+    }
+
+    func testParseEnvLaterLineWinsOnDuplicateKey() {
+        XCTAssertEqual(AgentTemplate.parseEnv("FOO=first\nFOO=second"), ["FOO": "second"])
+    }
+
+    func testParseEnvEmptyBlockYieldsEmptyDict() {
+        XCTAssertTrue(AgentTemplate.parseEnv("").isEmpty)
+        XCTAssertTrue(AgentTemplate.parseEnv("\n\n   \n").isEmpty)
+    }
+
+    // MARK: - extraEnv snapshot
+
+    func testFromCustomParsesEnvIntoExtraEnv() {
+        let custom = CustomAgentData(
+            id: "claude-mirror",
+            baseAgentId: "claude-code",
+            env: "ANTHROPIC_BASE_URL=https://mirror.example.com\nANTHROPIC_AUTH_TOKEN=sk-xyz"
+        )
+        let template = AgentTemplate.fromCustom(custom)
+        XCTAssertEqual(template.extraEnv, [
+            "ANTHROPIC_BASE_URL": "https://mirror.example.com",
+            "ANTHROPIC_AUTH_TOKEN": "sk-xyz",
+        ])
+    }
+
+    func testBuiltinTemplatesHaveEmptyExtraEnv() {
+        for template in AgentTemplate.builtin {
+            XCTAssertTrue(template.extraEnv.isEmpty, "builtin \(template.id) must not carry extraEnv")
+        }
+    }
 }

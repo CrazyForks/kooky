@@ -90,7 +90,8 @@ final class KookySettingsModel {
                 baseAgentId: (dict["baseAgentId"] as? String) ?? "",
                 iconAsset: (dict["iconAsset"] as? String) ?? "",
                 symbol: (dict["symbol"] as? String) ?? "",
-                tintHex: (dict["tintHex"] as? String) ?? ""
+                tintHex: (dict["tintHex"] as? String) ?? "",
+                env: (dict["env"] as? String) ?? ""
             )
         }
     }
@@ -134,6 +135,7 @@ final class KookySettingsModel {
             if !c.iconAsset.isEmpty { dict["iconAsset"] = c.iconAsset }
             if !c.symbol.isEmpty { dict["symbol"] = c.symbol }
             if !c.tintHex.isEmpty { dict["tintHex"] = c.tintHex }
+            if !c.env.isEmpty { dict["env"] = c.env }
             return dict
         }
         let allDefaults = agentOrder.isEmpty
@@ -157,6 +159,7 @@ final class KookySettingsModel {
         }
 
         KookySettings.write(parsed)
+        KookyShellIntegration.refreshClaudeCustomSettings(customAgents: customAgents)
     }
 
     func resetAgentCustomisation() {
@@ -491,6 +494,7 @@ private struct AgentReorderList: View {
                     title: customBinding(id: template.id, \.title),
                     command: customBinding(id: template.id, \.command),
                     baseAgentId: customBinding(id: template.id, \.baseAgentId),
+                    env: customBinding(id: template.id, \.env),
                     onToggleVisible: { toggle(template.id) },
                     onToggleExpanded: {
                         expandedId = expandedId == template.id ? nil : template.id
@@ -628,6 +632,9 @@ private struct AgentRow: View {
     /// `baseAgentId` binding — same scoping rule as `title`/`command`. Empty
     /// string = no base (generic icon + no wrapper inheritance).
     @Binding var baseAgentId: String
+    /// Env-block binding (`.env` syntax) — same scoping rule as `title`;
+    /// additionally only shown for Claude-Code-based customs.
+    @Binding var env: String
     let onToggleVisible: () -> Void
     let onToggleExpanded: () -> Void
     let onBeginDrag: () -> Void
@@ -685,6 +692,14 @@ private struct AgentRow: View {
                 if baseAgentId.isEmpty {
                     editRow(label: "command", placeholder: "aichat --model gpt-4", text: $command)
                 }
+                if baseAgentId == AgentTemplate.claudeCodeID {
+                    editRow(
+                        label: "env",
+                        placeholder: "ANTHROPIC_BASE_URL=https://...\nANTHROPIC_AUTH_TOKEN=sk-...",
+                        text: $env,
+                        axis: .vertical
+                    )
+                }
             }
             editRow(label: "options", placeholder: "--model opus", text: $options)
             if isCustom {
@@ -737,19 +752,32 @@ private struct AgentRow: View {
         .padding(.trailing, 22)
     }
 
-    private func editRow(label: String, placeholder: String, text: Binding<String>) -> some View {
-        HStack(spacing: 10) {
+    private func editRow(
+        label: String,
+        placeholder: String,
+        text: Binding<String>,
+        axis: Axis = .horizontal
+    ) -> some View {
+        HStack(alignment: axis == .vertical ? .top : .center, spacing: 10) {
             Text(label)
                 .font(Theme.mono(11))
                 .foregroundStyle(Theme.chromeMuted)
                 .frame(width: 50, alignment: .leading)
-            TextField(placeholder, text: text)
-                .textFieldStyle(.plain)
-                .font(Theme.mono(12))
-                .foregroundStyle(Theme.chromeForeground)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .bracketBorder()
+                // drop the label to the multi-line field's first text line
+                .padding(.top, axis == .vertical ? 6 : 0)
+            Group {
+                if axis == .vertical {
+                    TextField(placeholder, text: text, axis: .vertical).lineLimit(3...12)
+                } else {
+                    TextField(placeholder, text: text)
+                }
+            }
+            .textFieldStyle(.plain)
+            .font(Theme.mono(12))
+            .foregroundStyle(Theme.chromeForeground)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .bracketBorder()
         }
         .padding(.leading, Self.optionsRowIndent)
         .padding(.trailing, 22)

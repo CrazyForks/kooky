@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.13.0 — 2026-05-22
+
+- Custom agents based on Claude Code can now carry their own environment variables — set `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` in a custom agent's new `env` field (Settings → Agents) to point it at a Claude-compatible mirror or proxy.
+
 ## v0.12.4 — 2026-05-21
 
 - Fixed: arrow keys in `vim` (and other full-screen programs) now work over SSH to older remote machines.

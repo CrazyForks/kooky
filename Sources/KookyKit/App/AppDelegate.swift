@@ -40,6 +40,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         // at process init when the first surface is created.
         KookyOnboarding.runIfNeeded()
         KookyShellIntegration.installAgentHooks()
+        KookyShellIntegration.refreshClaudeCustomSettings(customAgents: KookySettingsModel.shared.customAgents)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1100, height: 720),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
