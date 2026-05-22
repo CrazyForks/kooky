@@ -16,7 +16,7 @@ A minimal modern terminal built for AI coding. Sidebar workspaces; horizontal / 
 
 **Vertical tabs & split panes.** Sidebar workspaces with three-state collapse (`⌘⌃S`). Each pane owns its own tab strip and active tab. Drag tabs to reorder, or across panes to move sessions whole. State persists across launches.
 
-**One-click AI agent sessions.** Claude Code · Codex · Gemini CLI · OpenCode · Amp · Cursor CLI · Copilot CLI. Pick one from the `+` menu; the agent boots before your first prompt prints. Claude conversations also auto-resume across kooky restarts so closing and reopening a tab picks up where you left off.
+**One-click AI agent sessions.** Claude Code · Codex · Gemini CLI · OpenCode · Amp · Cursor CLI · Copilot CLI · Grok Build · Antigravity CLI. Pick one from the `+` menu; the agent boots before your first prompt prints. Claude conversations also auto-resume across kooky restarts so closing and reopening a tab picks up where you left off.
 
 **Right-click a selection → "Ask <agent>".** Select an error / log line / file path, right-click, pick any agent — a new tab spawns with the selection already submitted as the first prompt. Zero ⌘C / ⌘V to go from "what is this" to an actual answer.
 
@@ -28,7 +28,7 @@ A minimal modern terminal built for AI coding. Sidebar workspaces; horizontal / 
 
 **SwiftUI-native, minimal chrome.** Onest + JetBrains Mono. Custom About panel, native menus with shortcut hints, full IME support.
 
-**Configurable.** Settings (`⌘,`) with a sidebar layout: **Terminal** (font / cursor / size), **Agents** (drag to reorder, toggle visibility, set per-agent launch options like `--model opus`, pick a default that `+` and `⌘T` open without a popover, define your own custom agents), **Advanced** (open raw JSON). All overrides live in `~/.kooky/settings.json` — ghostty's own `~/.config/ghostty/config` is read first and your overrides layer on top; first-launch offers to import an existing ghostty setup.
+**Configurable.** Settings (`⌘,`) with a sidebar layout: **Terminal** (font / cursor / size), **Agents** (drag to reorder, toggle visibility, set per-agent launch options like `--model opus`, pick a default that `+` and `⌘T` open without a popover, define your own custom agents — point a Claude Code-based one at a mirror or proxy with its own endpoint and API key), **Advanced** (open raw JSON). All overrides live in `~/.kooky/settings.json` — ghostty's own `~/.config/ghostty/config` is read first and your overrides layer on top; first-launch offers to import an existing ghostty setup.
 
 **Local by default.** No accounts, no telemetry, no cloud sync. Kooky keeps its own state on your device.
 
@@ -82,7 +82,7 @@ Requires Xcode 26+ and macOS 14+ (Sonoma — `@Observable` is the floor).
 ./scripts/setup-libghostty.sh        # one-time: fetch the libghostty xcframework
 swift build
 swift run                            # dev mode
-swift test                           # 113 unit tests
+swift test                           # 146 unit tests
 
 ./scripts/build-app.sh               # writes dist/Kooky.app
 ./scripts/build-dmg.sh --build       # writes dist/Kooky-vX.Y.Z.dmg
