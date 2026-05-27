@@ -453,6 +453,20 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             target.window?.makeKeyAndOrderFront(nil)
             target.store.activateWorkspace(ws)
             target.store.activateTab(session, in: ws)
+        case .createWorktree(let wsId, let winId):
+            guard let target = windowControllers.first(where: { $0.windowId == winId }),
+                  let ws = target.store.workspaces.first(where: { $0.id == wsId }) else { return }
+            target.window?.makeKeyAndOrderFront(nil)
+            target.store.activateWorkspace(ws)
+            target.store.pendingCreateWorktreeRequest = ws
+            if target.store.sidebarMode == .hidden {
+                // Matches ContentView / View menu's reveal behaviour — without
+                // the animation wrap the sidebar snaps from 0 to 220pt the moment
+                // the palette routes a worktree-create request through.
+                withAnimation(Theme.chromeTransition) {
+                    target.store.setSidebarMode(.full)
+                }
+            }
         case .agent(let templateId):
             guard let store = activeStore, let ws = store.active else { return }
             let template = AgentTemplate.visibleOrdered(model: KookySettingsModel.shared)

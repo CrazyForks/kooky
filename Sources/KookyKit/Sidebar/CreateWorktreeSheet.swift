@@ -32,15 +32,22 @@ struct CreateWorktreeSheet: View {
     let dismiss: () -> Void
 
     private enum BranchModeUI: Hashable { case newBranch, existing }
+    private enum StartFromChoice: Hashable {
+        case head
+        case branch(String)
+        case custom
+    }
 
     @State private var branchMode: BranchModeUI = .newBranch
     @State private var newBranchName: String = ""
-    @State private var newBranchBase: String = ""
+    @State private var startFromChoice: StartFromChoice = .head
+    @State private var customStartRef: String = ""
     @State private var existingBranch: String = ""
     /// Loaded off-thread via `.task` on first sheet appear so the main
     /// thread doesn't block on `git for-each-ref` while the user is
     /// typing. Empty until the subprocess returns.
     @State private var availableBranches: [String] = []
+    @State private var checkedOutBranches: Set<String> = []
     @State private var branchesLoaded: Bool = false
     /// Stable git root for the source workspace. `Workspace.workingDirectory`
     /// follows the active shell cwd, so it may be a nested folder by the time
@@ -48,10 +55,10 @@ struct CreateWorktreeSheet: View {
     @State private var sourceRoot: URL?
     /// User override for the auto-computed `<repo>-<branch>` sibling path.
     /// Empty = use the computed default at submit time. Lives only in
-    /// the advanced section.
+    /// the options section.
     @State private var worktreePathOverride: String = ""
     @State private var selectedTemplate: AgentTemplate?
-    @State private var isAdvancedExpanded: Bool = false
+    @State private var isOptionsExpanded: Bool = false
     @State private var isWorking: Bool = false
     @State private var errorMessage: String?
 
@@ -84,7 +91,7 @@ struct CreateWorktreeSheet: View {
                 BracketButton("cancel") { dismiss() }
                     .disabled(isWorking)
                     .opacity(isWorking ? 0.4 : 1)
-                BracketButton(isWorking ? "creating…" : "create") {
+                BracketButton(isWorking ? "creating…" : "create worktree") {
                     submit()
                 }
                 .disabled(isWorking || !canSubmit)
@@ -105,17 +112,40 @@ struct CreateWorktreeSheet: View {
             // wait on this.
             guard !branchesLoaded else { return }
             let cwd = source.workingDirectory
+            // `repoRoot` is the gate; `list` and `localBranches` are
+            // independent once it resolves, so kick them off in parallel
+            // child tasks. Cuts sheet-open time from ~150-450ms to the
+            // max of the two (~100-300ms) on a cold git cache.
             let loaded = await Task.detached(priority: .userInitiated) {
-                (
-                    root: WorktreeManager.repoRoot(near: cwd),
-                    branches: GitBranchInventory.localBranches(cwd: cwd)
+                let root = WorktreeManager.repoRoot(near: cwd)
+                let queryCwd = root ?? cwd
+                async let checkedOut: Set<String> = {
+                    guard let root,
+                          case .success(let infos) = WorktreeManager.list(repoPath: root)
+                    else { return [] }
+                    return WorktreeManager.checkedOutBranches(in: infos)
+                }()
+                async let branches = GitBranchInventory.localBranches(cwd: queryCwd)
+                return (
+                    root: root,
+                    branches: await branches,
+                    checkedOut: await checkedOut
                 )
             }.value
             sourceRoot = loaded.root
             let branches = loaded.branches
             availableBranches = branches
-            if existingBranch.isEmpty { existingBranch = branches.first ?? "" }
+            checkedOutBranches = loaded.checkedOut
+            if existingBranch.isEmpty || loaded.checkedOut.contains(existingBranch) {
+                existingBranch = branches.first { !loaded.checkedOut.contains($0) } ?? ""
+            }
             branchesLoaded = true
+            // No usable existing-branch target → fall back to new branch
+            // (mode picker hides itself in this state; leaving branchMode
+            // on `.existing` would strand the form on an empty picker).
+            if existingBranch.isEmpty, branchMode == .existing {
+                branchMode = .newBranch
+            }
         }
     }
 
@@ -142,57 +172,19 @@ struct CreateWorktreeSheet: View {
 
     private var form: some View {
         VStack(alignment: .leading, spacing: 18) {
-            // Main field — Conductor-style single input. 90% of "new
-            // worktree" flows are "branch off HEAD, launch default agent";
-            // anything else is one disclosure away.
-            VStack(alignment: .leading, spacing: 6) {
-                fieldLabel(branchMode == .newBranch ? "branch-name" : "branch")
-                switch branchMode {
-                case .newBranch:
-                    TextField("feat-x", text: $newBranchName)
-                        .textFieldStyle(.plain)
-                        .font(Theme.mono(12))
-                        .foregroundStyle(Theme.chromeForeground)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
-                        .bracketBorder()
-                case .existing:
-                    if !branchesLoaded {
-                        Text("loading branches…")
-                            .font(Theme.mono(11.5))
-                            .foregroundStyle(Theme.chromeMuted)
-                    } else if availableBranches.isEmpty {
-                        Text("no local branches found")
-                            .font(Theme.mono(11.5))
-                            .foregroundStyle(Theme.chromeMuted)
-                    } else {
-                        Picker("", selection: $existingBranch) {
-                            ForEach(availableBranches, id: \.self) { b in
-                                Text(b).tag(b)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .labelsHidden()
-                    }
-                }
+            modePicker
+            branchField
+            if !isOptionsExpanded {
+                pathPreview
             }
 
-            advancedToggle
+            optionsToggle
 
-            if isAdvancedExpanded {
+            if isOptionsExpanded {
                 VStack(alignment: .leading, spacing: 14) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        fieldLabel("mode")
-                        Picker("", selection: $branchMode) {
-                            Text("new").tag(BranchModeUI.newBranch)
-                            Text("existing").tag(BranchModeUI.existing)
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                    }
                     editRow(label: "worktree-path", text: $worktreePathOverride, placeholder: defaultPath)
                     if branchMode == .newBranch {
-                        editRow(label: "base (defaults to HEAD)", text: $newBranchBase, placeholder: "main")
+                        startFromControl
                     }
                     VStack(alignment: .leading, spacing: 6) {
                         fieldLabel("launch")
@@ -212,17 +204,143 @@ struct CreateWorktreeSheet: View {
         }
     }
 
-    private var advancedToggle: some View {
+    @ViewBuilder
+    private var modePicker: some View {
+        // Stay hidden until branches finish loading so the picker doesn't
+        // flash in then disappear when we learn there's no selectable
+        // existing branch. After loading: show only when there's something
+        // to pick — a toggle whose only branch is "new" reads as broken.
+        // Loading typically resolves in well under the sheet's open
+        // animation, so users don't perceive the gap.
+        if branchesLoaded && !selectableExistingBranches.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                fieldLabel("mode")
+                Picker("", selection: $branchMode) {
+                    Text("new").tag(BranchModeUI.newBranch)
+                    Text("existing").tag(BranchModeUI.existing)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var branchField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            fieldLabel(branchMode == .newBranch ? "new-branch" : "existing-branch")
+            switch branchMode {
+            case .newBranch:
+                TextField("feat-x", text: $newBranchName)
+                    .textFieldStyle(.plain)
+                    .font(Theme.mono(12))
+                    .foregroundStyle(Theme.chromeForeground)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .bracketBorder()
+                if newBranchAlreadyExists {
+                    newBranchConflictRow
+                }
+            case .existing:
+                existingBranchMenu
+            }
+        }
+    }
+
+    private var newBranchConflictRow: some View {
+        HStack(spacing: 8) {
+            inlineStatus(newBranchConflictMessage, color: Theme.activityFailure.opacity(0.85))
+            if !newBranchIsCheckedOut {
+                Button("use existing") {
+                    existingBranch = normalizedNewBranchName
+                    branchMode = .existing
+                }
+                .buttonStyle(.plain)
+                .font(Theme.mono(11.5))
+                .foregroundStyle(Theme.chromeForeground)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var existingBranchMenu: some View {
+        if !branchesLoaded {
+            inlineStatus("loading branches…")
+        } else if availableBranches.isEmpty {
+            inlineStatus("no local branches found")
+        } else if selectableExistingBranches.isEmpty {
+            inlineStatus("all local branches are already checked out")
+        } else {
+            Picker("", selection: $existingBranch) {
+                ForEach(selectableExistingBranches, id: \.self) { branch in
+                    Text(branch).tag(branch)
+                }
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+        }
+    }
+
+    private var startFromControl: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            fieldLabel("start-from")
+            Picker("", selection: $startFromChoice) {
+                Text("HEAD").tag(StartFromChoice.head)
+                ForEach(availableBranches, id: \.self) { branch in
+                    Text(branch).tag(StartFromChoice.branch(branch))
+                }
+                Text("custom ref…").tag(StartFromChoice.custom)
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+
+            if startFromChoice == .custom {
+                TextField("origin/main, tag, or SHA", text: $customStartRef)
+                    .textFieldStyle(.plain)
+                    .font(Theme.mono(12))
+                    .foregroundStyle(Theme.chromeForeground)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .bracketBorder()
+                if customStartRefIsMissing {
+                    inlineStatus("enter a ref")
+                }
+            }
+        }
+    }
+
+    private var pathPreview: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            fieldLabel("worktree-path")
+            Text(effectivePathDisplay)
+                .font(Theme.mono(12))
+                .foregroundStyle(Theme.chromeMuted)
+                .lineLimit(1)
+                .truncationMode(.head)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .bracketBorder()
+        }
+    }
+
+    private func inlineStatus(_ text: String, color: Color = Theme.chromeMuted) -> some View {
+        Text(text)
+            .font(Theme.mono(11.5))
+            .foregroundStyle(color)
+    }
+
+    private var optionsToggle: some View {
         Button {
             withAnimation(.easeOut(duration: 0.15)) {
-                isAdvancedExpanded.toggle()
+                isOptionsExpanded.toggle()
             }
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 9, weight: .semibold))
-                    .rotationEffect(.degrees(isAdvancedExpanded ? 90 : 0))
-                Text("advanced")
+                    .rotationEffect(.degrees(isOptionsExpanded ? 90 : 0))
+                Text("options")
                     .font(Theme.mono(10, weight: .medium))
                     .tracking(1.2)
             }
@@ -258,11 +376,50 @@ struct CreateWorktreeSheet: View {
     private var canSubmit: Bool {
         switch branchMode {
         case .newBranch:
-            return !newBranchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            return !normalizedNewBranchName.isEmpty
+                && !newBranchAlreadyExists
+                && !customStartRefIsMissing
         case .existing:
             // Block submit until branches finish loading so a quick toggle
             // doesn't fire `create` with `existingBranch = ""`.
-            return branchesLoaded && !availableBranches.isEmpty && !existingBranch.isEmpty
+            return branchesLoaded
+                && !existingBranch.isEmpty
+                && !checkedOutBranches.contains(existingBranch)
+        }
+    }
+
+    private var normalizedNewBranchName: String {
+        newBranchName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var newBranchAlreadyExists: Bool {
+        branchesLoaded && availableBranches.contains(normalizedNewBranchName)
+    }
+
+    private var newBranchIsCheckedOut: Bool {
+        checkedOutBranches.contains(normalizedNewBranchName)
+    }
+
+    private var newBranchConflictMessage: String {
+        newBranchIsCheckedOut
+            ? "branch is already checked out"
+            : "branch exists locally"
+    }
+
+    private var customStartRefIsMissing: Bool {
+        startFromChoice == .custom
+            && customStartRef.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var selectedStartRef: String? {
+        switch startFromChoice {
+        case .head:
+            return nil
+        case .branch(let branch):
+            return branch
+        case .custom:
+            let trimmed = customStartRef.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
         }
     }
 
@@ -277,11 +434,13 @@ struct CreateWorktreeSheet: View {
     /// finished proposal, not a half-filled `<repo>-` stub.
     private var currentBranchName: String {
         switch branchMode {
-        case .newBranch:
-            return newBranchName.trimmingCharacters(in: .whitespacesAndNewlines)
-        case .existing:
-            return existingBranch
+        case .newBranch: return normalizedNewBranchName
+        case .existing: return existingBranch
         }
+    }
+
+    private var selectableExistingBranches: [String] {
+        availableBranches.filter { !checkedOutBranches.contains($0) }
     }
 
     /// Sibling of the source repo: `<parent>/<repo-name>-<branch>`.
@@ -291,9 +450,14 @@ struct CreateWorktreeSheet: View {
         let root = sourceRoot ?? source.workingDirectory
         let parentDir = root.deletingLastPathComponent()
         let base = root.lastPathComponent
-        let suffix = currentBranchName.isEmpty ? "" : currentBranchName
-        let candidate = parentDir.appendingPathComponent("\(base)-\(suffix)").path
+        let name = WorktreeManager.defaultDirectoryName(sourceName: base, branch: currentBranchName)
+        let candidate = parentDir.appendingPathComponent(name).path
         return (candidate as NSString).abbreviatingWithTildeInPath
+    }
+
+    private var effectivePathDisplay: String {
+        let override = worktreePathOverride.trimmingCharacters(in: .whitespacesAndNewlines)
+        return override.isEmpty ? defaultPath : (override as NSString).abbreviatingWithTildeInPath
     }
 
     private var sourcePathForDisplay: URL {
@@ -302,7 +466,7 @@ struct CreateWorktreeSheet: View {
 
     private func submit() {
         // worktree-path falls back to the auto-computed default when the
-        // user didn't expand advanced (or left it blank). The override
+        // user didn't expand options (or left it blank). The override
         // wins only when non-empty.
         let override = worktreePathOverride.trimmingCharacters(in: .whitespacesAndNewlines)
         let effectivePath = override.isEmpty ? defaultPath : override
@@ -313,9 +477,8 @@ struct CreateWorktreeSheet: View {
         let branchForDisplay: String
         switch branchMode {
         case .newBranch:
-            let name = newBranchName.trimmingCharacters(in: .whitespacesAndNewlines)
-            let base = newBranchBase.trimmingCharacters(in: .whitespacesAndNewlines)
-            mode = .newBranch(name: name, base: base.isEmpty ? nil : base)
+            let name = normalizedNewBranchName
+            mode = .newBranch(name: name, base: selectedStartRef)
             branchForDisplay = name
         case .existing:
             mode = .existing(branch: existingBranch)

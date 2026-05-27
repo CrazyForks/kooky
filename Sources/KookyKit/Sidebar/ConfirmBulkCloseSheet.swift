@@ -94,13 +94,20 @@ struct ConfirmBulkCloseSheet: View {
     private var worktreeList: some View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(worktreesAmong) { worktree in
-                HStack(spacing: 8) {
+                HStack(alignment: .top, spacing: 8) {
                     Text("•")
                         .font(Theme.mono(11.5))
                         .foregroundStyle(Theme.chromeMuted)
-                    Text(worktree.title)
-                        .font(Theme.mono(11.5))
-                        .foregroundStyle(Theme.chromeForeground)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(worktree.title)
+                            .font(Theme.mono(11.5))
+                            .foregroundStyle(Theme.chromeForeground)
+                        Text((worktreePath(for: worktree).path as NSString).abbreviatingWithTildeInPath)
+                            .font(Theme.mono(10.5))
+                            .foregroundStyle(Theme.chromeMuted)
+                            .lineLimit(1)
+                            .truncationMode(.head)
+                    }
                 }
             }
         }
@@ -109,13 +116,15 @@ struct ConfirmBulkCloseSheet: View {
     private var warningRow: some View {
         let count = worktreesAmong.count
         let text = count == 1
-            ? "The worktree directory will be deleted. Uncommitted changes will be lost."
-            : "The \(count) worktree directories will be deleted. Uncommitted changes will be lost."
+            ? "The listed worktree directory will be deleted from disk, along with its branch if the commits are merged. Uncommitted changes will be lost."
+            : "The \(count) listed worktree directories will be deleted from disk, along with their branches if the commits are merged. Uncommitted changes will be lost."
         return Text(text)
             .font(Theme.mono(11.5))
             .foregroundStyle(Theme.chromeMuted)
             .fixedSize(horizontal: false, vertical: true)
     }
+
+    private func worktreePath(for workspace: Workspace) -> URL { workspace.diskPath }
 
     private func submit() {
         isWorking = true

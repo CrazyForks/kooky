@@ -52,6 +52,7 @@ enum FuzzyMatcher {
 enum PaletteItemKind: Hashable, Sendable {
     case workspace(workspaceId: UUID, windowId: UUID)
     case tab(sessionId: UUID, workspaceId: UUID, windowId: UUID)
+    case createWorktree(workspaceId: UUID, windowId: UUID)
     /// Spawn a new tab with this agent / preset in the active workspace.
     case agent(templateId: String)
 }
@@ -84,6 +85,16 @@ enum PaletteIndex {
                     symbol: "folder",
                     iconAsset: nil
                 ))
+                if ws.worktreeParentId == nil, GitWatcher.findGitDir(near: ws.workingDirectory) != nil {
+                    items.append(PaletteItem(
+                        id: "create-worktree-\(ws.id.uuidString)",
+                        title: "Create Worktree for \(ws.title)",
+                        subtitle: "worktree\(winLabel)",
+                        kind: .createWorktree(workspaceId: ws.id, windowId: controller.windowId),
+                        symbol: "arrow.triangle.branch",
+                        iconAsset: nil
+                    ))
+                }
                 for pane in ws.root.allPanes {
                     for tab in pane.tabs {
                         items.append(PaletteItem(
@@ -183,7 +194,7 @@ struct CommandPaletteView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(Theme.chromeMuted)
-            TextField("Search a workspace, tab, agent, or preset…", text: $query)
+            TextField("Search a workspace, tab, worktree, agent, or preset…", text: $query)
                 .textFieldStyle(.plain)
                 .font(Theme.mono(13))
                 .foregroundStyle(Theme.chromeForeground)

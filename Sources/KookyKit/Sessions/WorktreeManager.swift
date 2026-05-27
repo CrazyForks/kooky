@@ -53,12 +53,56 @@ enum WorktreeManager {
         return runGit(args, timeout: 10).map { _ in () }
     }
 
+    /// `git -C <repo> branch -d <branch>` — safe-delete (lowercase d). Git
+    /// itself refuses to drop branches with unmerged / unpushed commits,
+    /// so we can call this unconditionally after `worktree remove` without
+    /// risking data loss. Merged branches go away (next worktree of the
+    /// same name builds cleanly); unmerged ones survive and surface again
+    /// next time the user types that name into Create Worktree.
+    static func deleteBranchIfMerged(repoPath: URL, branch: String) -> Result<Void, GitError> {
+        runGit(["-C", repoPath.path, "branch", "-d", branch], timeout: 5).map { _ in () }
+    }
+
     /// `git -C <repo> worktree list --porcelain` parsed into one `Info`
     /// per record. Used at restore time to drop persisted worktree
     /// workspaces whose dirs the user already removed externally.
     static func list(repoPath: URL) -> Result<[Info], GitError> {
         runGit(["-C", repoPath.path, "worktree", "list", "--porcelain"], timeout: 5)
             .map(parseList)
+    }
+
+    /// Branches that are already checked out by one of the repo's worktrees.
+    /// Git refuses `worktree add <path> <branch>` for these, so the create
+    /// sheet can disable them up-front instead of letting submit bounce.
+    static func checkedOutBranches(in infos: [Info]) -> Set<String> {
+        Set(infos.compactMap(\.branch))
+    }
+
+    /// Directory-safe branch suffix for the default sibling worktree path.
+    /// Keeps the branch readable (`feature/foo` -> `feature-foo`) while
+    /// avoiding path separators in the generated directory name.
+    static func branchDirectorySlug(_ branch: String) -> String {
+        let separators = CharacterSet.whitespacesAndNewlines
+            .union(CharacterSet(charactersIn: "/:\\"))
+        var result = String()
+        var previousWasDash = false
+        for scalar in branch.unicodeScalars {
+            if separators.contains(scalar) {
+                if !result.isEmpty && !previousWasDash {
+                    result.append("-")
+                    previousWasDash = true
+                }
+            } else {
+                result.unicodeScalars.append(scalar)
+                previousWasDash = false
+            }
+        }
+        return result.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+    }
+
+    static func defaultDirectoryName(sourceName: String, branch: String) -> String {
+        let slug = branchDirectorySlug(branch)
+        return slug.isEmpty ? "\(sourceName)-" : "\(sourceName)-\(slug)"
     }
 
     /// Stable working-tree root for a cwd inside a repo. Distinct from the

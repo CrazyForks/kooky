@@ -22,9 +22,6 @@ private enum SidebarSheet: Identifiable {
 struct SidebarView: View {
     static let fullWidth: CGFloat = 220
     static let compactWidth: CGFloat = 52
-    /// Indent for worktree rows under their source workspace.
-    static let worktreeIndent: CGFloat = 16
-
     @Bindable var store: WorkspaceStore
     /// Id of the workspace currently being dragged. Set by `.onDrag`, cleared
     /// on drop. Lets each row compute whether the drag origin is above or
@@ -39,7 +36,7 @@ struct SidebarView: View {
     /// land here. Ephemeral by design: a kooky relaunch always shows every
     /// worktree on first paint so nothing is hidden by stale state.
     @State private var collapsedParents: Set<UUID> = []
-    /// Active modal sheet (create worktree / confirm-remove worktree).
+    /// Active modal sheet (create worktree / confirm-delete worktree).
     /// Nil = no sheet. Set by row callbacks and an onChange observer that
     /// watches `store.pendingRemovalRequest` for ⌘⇧W routed via AppDelegate.
     @State private var sheet: SidebarSheet?
@@ -91,7 +88,10 @@ struct SidebarView: View {
                     create: { request in
                         await store.createWorktree(source: source, request: request)
                     },
-                    dismiss: { sheet = nil }
+                    dismiss: {
+                        store.pendingCreateWorktreeRequest = nil
+                        sheet = nil
+                    }
                 )
             case .confirmRemoveWorktree(let workspace):
                 ConfirmRemoveWorktreeSheet(
@@ -118,8 +118,8 @@ struct SidebarView: View {
                         worktreeCount: request.worktreeOthers.count
                     ),
                     worktreesAmong: request.worktreeOthers,
-                    confirmButtonTitle: "close",
-                    workingButtonTitle: "closing…",
+                    confirmButtonTitle: "delete worktree",
+                    workingButtonTitle: "deleting…",
                     confirm: {
                         if let message = await store.performCloseOthers(request) {
                             return .failure(message)
@@ -140,8 +140,8 @@ struct SidebarView: View {
                         worktreeCount: request.worktrees.count
                     ),
                     worktreesAmong: request.worktrees,
-                    confirmButtonTitle: "close",
-                    workingButtonTitle: "closing…",
+                    confirmButtonTitle: "delete worktree",
+                    workingButtonTitle: "deleting…",
                     confirm: {
                         if let message = await store.performCloseSource(request) {
                             return .failure(message)
@@ -162,6 +162,19 @@ struct SidebarView: View {
         .onChange(of: store.pendingRemovalRequest?.id) { _, _ in
             if let workspace = store.pendingRemovalRequest {
                 sheet = .confirmRemoveWorktree(workspace)
+            }
+        }
+        // Global create requests (currently the command palette). When the
+        // sidebar was hidden, `onAppear` below catches the already-parked
+        // request after AppDelegate makes the sidebar visible.
+        .onChange(of: store.pendingCreateWorktreeRequest?.id) { _, _ in
+            if let workspace = store.pendingCreateWorktreeRequest {
+                sheet = .createWorktree(workspace)
+            }
+        }
+        .onAppear {
+            if let workspace = store.pendingCreateWorktreeRequest {
+                sheet = .createWorktree(workspace)
             }
         }
         // Bulk close-others request — keyed off keeping.id since the
@@ -245,15 +258,22 @@ struct SidebarView: View {
                     // after their source by virtue of being appended at
                     // creation time.
                     ForEach(Array(store.workspaces.enumerated()), id: \.element.id) { index, workspace in
+                        // canCreateWorktree walks the fs (`findGitDir`) —
+                        // hoist once per workspace so the two row callbacks
+                        // don't each stat the same ancestor chain.
+                        let canCreate = canCreateWorktree(from: workspace)
+                        let goToSource: (() -> Void)? = workspace.worktreeParentId
+                            .flatMap { id in store.workspaces.first { $0.id == id } }
+                            .map { parent in { store.activateWorkspace(parent) } }
                         DraggableWorkspaceRow(
                             workspace: workspace,
                             store: store,
                             myIndex: index,
                             isCompact: isCompact,
                             draggingId: $draggingWorkspaceId,
-                            onCreateWorktree: canCreateWorktree(from: workspace)
-                                ? { sheet = .createWorktree(workspace) }
-                                : nil
+                            onCreateWorktree: canCreate ? { presentCreateWorktree(workspace) } : nil,
+                            onRefreshWorktrees: canCreate ? { Task { await store.reconcileWorktrees() } } : nil,
+                            onGoToSource: goToSource
                         )
                     }
                 } else {
@@ -283,6 +303,9 @@ struct SidebarView: View {
         let hasWorktrees = !worktrees.isEmpty
         let isCollapsed = collapsedParents.contains(parent.id)
 
+        // canCreateWorktree walks the fs (`findGitDir`) — hoist once so
+        // the two callbacks don't each stat the same ancestor chain.
+        let canCreate = canCreateWorktree(from: parent)
         DraggableWorkspaceRow(
             workspace: parent,
             store: store,
@@ -295,9 +318,8 @@ struct SidebarView: View {
                     toggle: { toggleCollapsed(parent.id) }
                 )
                 : nil,
-            onCreateWorktree: canCreateWorktree(from: parent)
-                ? { sheet = .createWorktree(parent) }
-                : nil
+            onCreateWorktree: canCreate ? { presentCreateWorktree(parent) } : nil,
+            onRefreshWorktrees: canCreate ? { Task { await store.reconcileWorktrees() } } : nil
         )
 
         if hasWorktrees && !isCollapsed {
@@ -311,9 +333,9 @@ struct SidebarView: View {
                     onClose: { store.requestCloseWorkspace(worktree) },
                     onCloseOthers: { store.closeOtherWorkspaces(keeping: worktree) },
                     onDuplicate: { store.duplicateWorkspace(worktree) },
-                    onRename: { store.renameWorkspace(worktree, to: $0) }
+                    onRename: { store.renameWorkspace(worktree, to: $0) },
+                    onGoToSource: { store.activateWorkspace(parent) }
                 )
-                .padding(.leading, Self.worktreeIndent)
             }
         }
     }
@@ -326,6 +348,14 @@ struct SidebarView: View {
                 collapsedParents.insert(id)
             }
         }
+    }
+
+    private func presentCreateWorktree(_ workspace: Workspace) {
+        // Single channel: parking on the store triggers the `.onChange`
+        // observer that sets `sheet`. Direct row clicks and command-palette
+        // / AppDelegate routes all go through here, so this stays the one
+        // mechanism that opens the create sheet.
+        store.pendingCreateWorktreeRequest = workspace
     }
 }
 
@@ -343,6 +373,8 @@ private struct DraggableWorkspaceRow: View {
     /// without this wrapper, so they don't pick up drag/drop handlers.
     var disclosure: SidebarWorkspaceRow.WorktreeDisclosure? = nil
     var onCreateWorktree: (() -> Void)? = nil
+    var onRefreshWorktrees: (() -> Void)? = nil
+    var onGoToSource: (() -> Void)? = nil
 
     @State private var isTargeted = false
 
@@ -366,7 +398,9 @@ private struct DraggableWorkspaceRow: View {
             onDuplicate: { store.duplicateWorkspace(workspace) },
             onRename: { store.renameWorkspace(workspace, to: $0) },
             disclosure: disclosure,
-            onCreateWorktree: onCreateWorktree
+            onCreateWorktree: onCreateWorktree,
+            onRefreshWorktrees: onRefreshWorktrees,
+            onGoToSource: onGoToSource
         )
         .dropIndicator(active: isTargeted && !isSelfDrag, on: edge)
         .onDrag {

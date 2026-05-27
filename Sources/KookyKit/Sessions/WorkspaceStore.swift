@@ -246,6 +246,12 @@ final class WorkspaceStore {
     /// cleared by the sheet on dismiss / confirm.
     var pendingRemovalRequest: Workspace?
 
+    /// Cross-view create request. Sidebar rows open the sheet directly, but
+    /// global entry points such as the command palette need to ask the
+    /// sidebar to host the sheet, especially when the sidebar was hidden and
+    /// has to be shown first.
+    var pendingCreateWorktreeRequest: Workspace?
+
     /// Payload for the "close source workspace, take its worktrees with
     /// it" confirm sheet. A source can't simply close on its own — its
     /// worktrees would either show as orphan rows (the sidebar fallback)
@@ -353,7 +359,7 @@ final class WorkspaceStore {
         // a sidebar row whose user cd'd to ~/Downloads still matches its
         // disk root via worktreePath.
         let pathFor: (Workspace) -> String = { wt in
-            (wt.worktreePath ?? wt.workingDirectory).standardizedFileURL.path
+            wt.diskPath.standardizedFileURL.path
         }
 
         for wt in sidebar where !satellites.contains(where: {
@@ -365,7 +371,11 @@ final class WorkspaceStore {
         // Dedup against the whole workspace list — if the user has the
         // same repo opened as two top-level workspaces (⌘O twice), each
         // reconcile pass would otherwise re-adopt worktrees its twin has
-        // already attached.
+        // already attached. Match `+` / ⌘T / Create Worktree behaviour —
+        // use the user's configured default agent. Hoisted outside the
+        // loop because `visibleOrdered(model:)` rebuilds its array each
+        // call and N orphan adopts otherwise pay that cost N times.
+        let adoptTemplate = AgentTemplate.defaultLaunchTemplate(model: KookySettingsModel.shared) ?? .terminal
         for diskWt in satellites where !workspaces.contains(where: {
             pathFor($0) == diskWt.path.standardizedFileURL.path
         }) {
@@ -373,6 +383,7 @@ final class WorkspaceStore {
                 workingDirectory: diskWt.path,
                 worktreeParent: source,
                 worktreeBranch: diskWt.branch,
+                template: adoptTemplate,
                 preserveActive: true
             )
         }
@@ -388,11 +399,7 @@ final class WorkspaceStore {
         guard workspace.worktreeParentId != nil else {
             return "workspace is not a worktree"
         }
-        // Pinned disk root, not the wandering OSC-7 cwd. Falls back to
-        // workingDirectory for state.json written by pre-worktreePath
-        // builds so upgraded users don't see "not a working tree" on
-        // their first close.
-        let path = workspace.worktreePath ?? workspace.workingDirectory
+        let path = workspace.diskPath
         let parent = workspace.worktreeParentId.flatMap { parentId in
             workspaces.first(where: { $0.id == parentId })
         }
@@ -406,8 +413,34 @@ final class WorkspaceStore {
             pruneRecentlyClosed(under: workspace)
             return nil
         }
+        let normalizedPath = path.standardizedFileURL.path
         let result = await Task.detached(priority: .userInitiated) {
-            WorktreeManager.remove(repoPath: repoPath, path: path, force: true)
+            // Resolve the worktree's real current branch from `git
+            // worktree list` before removing — the user may have
+            // `git switch`-ed inside the worktree since kooky last
+            // recorded `worktreeBranch`. Falling back to the stored
+            // value would delete an outdated branch and leave the
+            // truly-checked-out one orphaned.
+            let realBranch: String? = {
+                guard case .success(let infos) = WorktreeManager.list(repoPath: repoPath),
+                      let match = infos.first(where: {
+                          $0.path.standardizedFileURL.path == normalizedPath
+                      })
+                else { return nil }
+                return match.branch
+            }()
+            let removed = WorktreeManager.remove(repoPath: repoPath, path: path, force: true)
+            // Safe-delete the branch (only if merged) after the worktree
+            // dir is gone — `git branch -d` would otherwise refuse with
+            // "currently checked out at <path>". Failure on unmerged
+            // branches is expected and intentionally ignored; the next
+            // Create Worktree on the same name surfaces "branch exists
+            // locally" then. No data-loss risk because git refuses to
+            // drop unmerged commits without the upper-case `-D`.
+            if case .success = removed, let realBranch, !realBranch.isEmpty {
+                _ = WorktreeManager.deleteBranchIfMerged(repoPath: repoPath, branch: realBranch)
+            }
+            return removed
         }.value
         if case .failure(let err) = result {
             return err.description
@@ -421,7 +454,7 @@ final class WorkspaceStore {
     /// at a deleted cwd and `resolvedSpawnCwd` would silently route it
     /// to `$HOME`, surfacing a "Terminal at ~" the user never closed.
     private func pruneRecentlyClosed(under workspace: Workspace) {
-        let root = (workspace.worktreePath ?? workspace.workingDirectory).standardizedFileURL.path
+        let root = workspace.diskPath.standardizedFileURL.path
         recentlyClosed.removeAll { entry in
             let cwd = entry.cwd.standardizedFileURL.path
             return entry.workspaceId == workspace.id

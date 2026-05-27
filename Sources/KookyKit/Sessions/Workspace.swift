@@ -50,15 +50,19 @@ final class Workspace: Identifiable {
     /// target the wrong path.
     var worktreePath: URL? = nil
 
+    /// Single source of truth for "where the worktree actually lives on
+    /// disk." For worktree workspaces `worktreePath` wins (pinned at
+    /// create time); upgraded state.json files written before the field
+    /// existed fall through to `workingDirectory` and behave as before.
+    /// Use this everywhere `git worktree remove` / `reconcile` /
+    /// confirm-sheet subtitle needs the disk root.
+    var diskPath: URL { worktreePath ?? workingDirectory }
+
     var title: String {
         if let custom = customTitle, !custom.isEmpty { return custom }
         // Mirror the active tab's OSC title so an `ssh` session shows the
         // remote host in the sidebar, not the stale local directory.
         if let reported = activeSession?.terminalTitle, !reported.isEmpty { return reported }
-        // For a worktree, fall back to its branch before the cwd basename —
-        // `<repo>-<branch>` directory names read as noise; the branch alone
-        // is the worktree's actual identity.
-        if let branch = worktreeBranch, !branch.isEmpty { return branch }
         if workingDirectory.path == NSHomeDirectory() { return "Home" }
         let last = workingDirectory.lastPathComponent
         return last.isEmpty ? workingDirectory.path : last

@@ -1,7 +1,6 @@
 import XCTest
 @testable import KookyKit
 
-@MainActor
 final class WorktreeManagerTests: XCTestCase {
     private var tempRoots: [URL] = []
 
@@ -76,6 +75,34 @@ final class WorktreeManagerTests: XCTestCase {
         let infos = WorktreeManager.parseList(output)
         XCTAssertEqual(infos.count, 1)
         XCTAssertNil(infos[0].branch)
+    }
+
+    func testCheckedOutBranchesDropsDetachedRecords() {
+        let infos = [
+            WorktreeManager.Info(path: URL(fileURLWithPath: "/tmp/repo"), branch: "main"),
+            WorktreeManager.Info(path: URL(fileURLWithPath: "/tmp/repo-feat"), branch: "feature/foo"),
+            WorktreeManager.Info(path: URL(fileURLWithPath: "/tmp/repo-detached"), branch: nil),
+        ]
+
+        XCTAssertEqual(WorktreeManager.checkedOutBranches(in: infos), ["main", "feature/foo"])
+    }
+
+    func testDefaultDirectoryNameSlugsBranchPathSeparators() {
+        XCTAssertEqual(
+            WorktreeManager.defaultDirectoryName(sourceName: "kooky", branch: "feature/worktree ux"),
+            "kooky-feature-worktree-ux"
+        )
+        XCTAssertEqual(
+            WorktreeManager.defaultDirectoryName(sourceName: "kooky", branch: "bugfix\\pane:drag"),
+            "kooky-bugfix-pane-drag"
+        )
+    }
+
+    func testDefaultDirectoryNameKeepsPlaceholderShapeWhenBranchEmpty() {
+        XCTAssertEqual(
+            WorktreeManager.defaultDirectoryName(sourceName: "kooky", branch: ""),
+            "kooky-"
+        )
     }
 
     func testRepoRootResolvesFromNestedDirectory() throws {

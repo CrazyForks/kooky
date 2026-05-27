@@ -2,6 +2,14 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.18.1 — 2026-05-27
+
+- Worktree sidebar polish — worktree rows now show a branch badge in their subtitle, source rows reveal a hover-only chevron for collapsing the worktree group, and the disclosure no longer steals a leading column from the (already narrow) sidebar.
+- Right-click a worktree → "Go to Source Workspace" jumps back to the source repo. Right-click a source → "Refresh Worktrees" picks up worktrees you created in another terminal without restarting kooky.
+- Closing a worktree now also cleans up its branch — `git branch -d` runs after `git worktree remove`. Merged branches go away (next worktree of the same name builds cleanly); unmerged branches stay (git itself refuses, no data loss). Reads the worktree's real current branch from git at delete time, so `git switch`ing inside the worktree no longer leaves the wrong branch behind.
+- "Create Worktree…" sheet opens noticeably faster (git enumeration runs in parallel), and the existing-branch picker hides itself when every local branch is already checked out somewhere.
+- Worktrees you created from the command line now spawn with your default agent (the one you picked in Settings → Agents) instead of a plain Terminal.
+
 ## v0.18.0 — 2026-05-26
 
 - **Git worktrees** — right-click a git workspace → "Create Worktree…" to spin one up on a new branch (or check out an existing one). Each worktree gets its own sidebar entry nested under its source repo, its own tabs, and its own agent — work on a feature branch with Claude without touching what's running on main. Closing a worktree deletes the directory; closing a source repo removes its whole worktree group in one confirm. Worktrees you create from the command line show up automatically next launch.

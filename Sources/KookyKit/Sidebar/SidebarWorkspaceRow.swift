@@ -24,6 +24,15 @@ struct SidebarWorkspaceRow: View {
     /// sidebar wires to a sheet. Nil on worktree rows so worktree
     /// nesting stays disabled.
     var onCreateWorktree: (() -> Void)? = nil
+    /// Optional manual sync for source rows. Reconcile is automatic on app
+    /// launch, but this gives users a direct way to pick up worktrees they
+    /// created in another terminal without restarting kooky.
+    var onRefreshWorktrees: (() -> Void)? = nil
+    /// Non-nil for worktree rows — jumps the active selection back to the
+    /// source workspace this worktree was forked from. Cheap navigation
+    /// shortcut when the user is deep in a worktree and wants the main
+    /// repo's tab back.
+    var onGoToSource: (() -> Void)? = nil
 
     @State private var isHovered = false
     @State private var isContextMenuOpen = false
@@ -48,7 +57,10 @@ struct SidebarWorkspaceRow: View {
         .overlay(RightClickCatcher { _ in isContextMenuOpen = true })
         .popover(isPresented: $isContextMenuOpen, arrowEdge: .trailing) {
             VStack(alignment: .leading, spacing: 0) {
-                KookyMenuRow(title: "Close Workspace", shortcut: "⌘⇧W") {
+                KookyMenuRow(
+                    title: workspace.worktreeParentId == nil ? "Close Workspace" : "Delete Worktree…",
+                    shortcut: workspace.worktreeParentId == nil ? "⌘⇧W" : nil
+                ) {
                     isContextMenuOpen = false
                     onClose()
                 }
@@ -78,6 +90,18 @@ struct SidebarWorkspaceRow: View {
                         DispatchQueue.main.async { onCreateWorktree() }
                     }
                 }
+                if let onRefreshWorktrees {
+                    KookyMenuRow(title: "Refresh Worktrees") {
+                        isContextMenuOpen = false
+                        onRefreshWorktrees()
+                    }
+                }
+                if let onGoToSource {
+                    KookyMenuRow(title: "Go to Source Workspace") {
+                        isContextMenuOpen = false
+                        onGoToSource()
+                    }
+                }
                 KookyMenuDivider()
                 KookyMenuRow(title: "Reveal in Finder") {
                     isContextMenuOpen = false
@@ -99,38 +123,60 @@ struct SidebarWorkspaceRow: View {
 
     private func fullBody(agents: [AgentTemplate], dotColor: Color?) -> some View {
         HStack(spacing: Theme.space2) {
-            disclosureChevron
             agentIcons(agents: agents)
+                .padding(.trailing, 3)
             VStack(alignment: .leading, spacing: 2) {
                 Text(workspace.title)
                     .font(Theme.display(13, weight: .regular))
                     .foregroundStyle(isActive ? Theme.chromeForeground : Theme.chromeForeground.opacity(0.78))
                     .lineLimit(1)
-                Text((workspace.workingDirectory.path as NSString).abbreviatingWithTildeInPath)
-                    .font(Theme.mono(10.5))
-                    .foregroundStyle(Theme.chromeMuted)
-                    .lineLimit(1)
-                    .truncationMode(.head)
+                subtitleRow
             }
             Spacer(minLength: 0)
             // Activity dot lives at the trailing edge — visible at all times
             // when not idle, eats the close-button slot only on hover.
-            ZStack {
-                if let dotColor {
-                    Circle().fill(dotColor).frame(width: 6, height: 6)
-                        .opacity(isHovered ? 0 : 1)
+            HStack(spacing: 2) {
+                if let disclosure {
+                    HoverableIconButton(
+                        systemName: "chevron.right",
+                        fontSize: 9,
+                        size: 20,
+                        help: nil,
+                        action: disclosure.toggle,
+                        rotation: disclosure.isCollapsed ? 0 : 90
+                    )
+                    .opacity(isHovered ? 1 : 0)
+                    .allowsHitTesting(isHovered)
                 }
-                HoverableIconButton(
-                    systemName: "xmark",
-                    fontSize: 9,
-                    size: 20,
-                    help: "Close workspace",
-                    action: onClose
-                )
-                .opacity(isHovered ? 1 : 0)
-                .allowsHitTesting(isHovered)
+                if let onCreateWorktree {
+                    HoverableIconButton(
+                        systemName: "arrow.triangle.branch",
+                        fontSize: 11,
+                        size: 20,
+                        help: "Create worktree",
+                        action: onCreateWorktree
+                    )
+                    .opacity(isHovered ? 1 : 0)
+                    .allowsHitTesting(isHovered)
+                }
+                ZStack {
+                    if let dotColor {
+                        Circle().fill(dotColor).frame(width: 6, height: 6)
+                            .opacity(isHovered ? 0 : 1)
+                    }
+                    HoverableIconButton(
+                        systemName: "xmark",
+                        fontSize: 9,
+                        size: 20,
+                        help: workspace.worktreeParentId == nil ? "Close workspace" : "Delete worktree",
+                        action: onClose
+                    )
+                    .opacity(isHovered ? 1 : 0)
+                    .allowsHitTesting(isHovered)
+                }
+                .frame(width: 20, alignment: .trailing)
             }
-            .frame(minWidth: 20, alignment: .trailing)
+            .frame(minWidth: trailingHoverMinWidth, alignment: .trailing)
         }
         .padding(.horizontal, Theme.space3)
         .padding(.vertical, 11)
@@ -152,26 +198,54 @@ struct SidebarWorkspaceRow: View {
         .padding(.vertical, 9)
     }
 
-    /// Chevron column at the row's leading edge. Renders for source
-    /// workspaces with at least one worktree (caller passes a non-nil
-    /// `disclosure`); otherwise an empty zero-width view so worktree rows
-    /// align via the sidebar's `worktreeIndent` instead. Reuses
-    /// `HoverableIconButton` so hover affordance (bg tint + corner
-    /// radius + size) matches the trailing close (×) button.
+    /// Subtitle below the workspace title. Source workspaces show their
+    /// cwd path (tilde-abbreviated); worktree rows show the branch glyph
+    /// + branch name — more informative than the path (which is usually
+    /// `<repo>-<branch>` and just repeats the title) and the inline glyph
+    /// makes the worktree-vs-source distinction obvious without any
+    /// extra chrome. Cwd path still reaches the user via the row-level
+    /// `.help(...)` tooltip.
     @ViewBuilder
-    private var disclosureChevron: some View {
-        if let disclosure {
-            HoverableIconButton(
-                systemName: "chevron.right",
-                fontSize: 9,
-                size: 20,
-                help: nil,
-                action: disclosure.toggle,
-                rotation: disclosure.isCollapsed ? 0 : 90
-            )
+    private var subtitleRow: some View {
+        if let branch = workspace.worktreeBranch, !branch.isEmpty {
+            // Worktree row's brand mark — a solid-filled rounded square
+            // with the branch glyph reverse-cut in `chromeBackground`.
+            // The solid-fill-over-tint approach reads cleanly against
+            // both light and dark themes (no opacity haze on the glyph)
+            // and gives the worktree row the same visual weight a tab
+            // pill carries — distinct from source rows without needing
+            // an extra column or stripe.
+            let badgeColor = Theme.chromeForeground.opacity(0.82)
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.triangle.branch")
+                    .font(.system(size: 6, weight: .semibold))
+                    .foregroundStyle(Theme.chromeBackground)
+                    .frame(width: 12, height: 12)
+                    .background(badgeColor, in: RoundedRectangle(cornerRadius: 3))
+                Text(branch)
+                    .font(Theme.mono(10.5, weight: .medium))
+                    .foregroundStyle(badgeColor)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
         } else {
-            EmptyView()
+            Text((workspace.workingDirectory.path as NSString).abbreviatingWithTildeInPath)
+                .font(Theme.mono(10.5))
+                .foregroundStyle(Theme.chromeMuted)
+                .lineLimit(1)
+                .truncationMode(.head)
         }
+    }
+
+    /// Trailing hover icon strip min width — accommodates each optional
+    /// hover button (chevron, create-worktree) plus the always-present
+    /// close × slot so the trailing edge doesn't shift when a hover
+    /// icon appears.
+    private var trailingHoverMinWidth: CGFloat {
+        var width: CGFloat = 20
+        if disclosure != nil { width += 22 }
+        if onCreateWorktree != nil { width += 22 }
+        return width
     }
 
     @ViewBuilder
@@ -212,7 +286,24 @@ struct SidebarWorkspaceRow: View {
         return nil
     }
 
-    private var rowBackground: Color {
+    /// Row body's background. Compact-mode worktree rows carry a 1.5pt
+    /// accent stripe along the left edge — Linear / GitHub PR sidebar
+    /// style — because the narrow column has no subtitle to convey
+    /// branch identity. Full mode skips the stripe; the branch glyph in
+    /// `subtitleRow` already carries the same signal.
+    @ViewBuilder
+    private var rowBackground: some View {
+        ZStack(alignment: .leading) {
+            rowFill
+            if isCompact, workspace.worktreeParentId != nil {
+                Rectangle()
+                    .fill(Theme.chromeForeground.opacity(0.4))
+                    .frame(width: 1.5)
+            }
+        }
+    }
+
+    private var rowFill: Color {
         if isActive { return Theme.chromeActive }
         if isHovered { return Theme.chromeHover }
         return .clear

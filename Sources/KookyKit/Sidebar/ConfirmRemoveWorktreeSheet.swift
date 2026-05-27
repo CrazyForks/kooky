@@ -52,7 +52,7 @@ struct ConfirmRemoveWorktreeSheet: View {
                 BracketButton("cancel") { dismiss() }
                     .disabled(isWorking)
                     .opacity(isWorking ? 0.4 : 1)
-                BracketButton(isWorking ? "removing…" : "remove") { submit() }
+                BracketButton(isWorking ? "deleting…" : "delete worktree") { submit() }
                     .disabled(isWorking)
                     .opacity(isWorking ? 0.4 : 1)
             }
@@ -66,7 +66,7 @@ struct ConfirmRemoveWorktreeSheet: View {
     }
 
     private var statusLabel: some View {
-        Text("CLOSE-WORKTREE")
+        Text("DELETE-WORKTREE")
             .font(Theme.mono(10, weight: .medium))
             .tracking(1.6)
             .foregroundStyle(Theme.chromeMuted.opacity(0.85))
@@ -79,17 +79,19 @@ struct ConfirmRemoveWorktreeSheet: View {
     }
 
     private var subtitle: some View {
-        Text((workspace.workingDirectory.path as NSString).abbreviatingWithTildeInPath)
+        Text((worktreePath.path as NSString).abbreviatingWithTildeInPath)
             .font(Theme.mono(11.5))
             .foregroundStyle(Theme.chromeMuted)
     }
 
     private var description: some View {
-        Text("The worktree directory will be deleted. Uncommitted changes will be lost.")
+        Text("The worktree directory above will be deleted from disk, along with its branch if the commits are merged. Uncommitted changes will be lost.")
             .font(Theme.mono(11.5))
             .foregroundStyle(Theme.chromeMuted)
             .fixedSize(horizontal: false, vertical: true)
     }
+
+    private var worktreePath: URL { workspace.diskPath }
 
     private func submit() {
         isWorking = true

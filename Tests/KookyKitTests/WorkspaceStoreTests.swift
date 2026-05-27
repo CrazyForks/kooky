@@ -97,9 +97,10 @@ final class WorkspaceStoreTests: XCTestCase {
         XCTAssertEqual(wt.worktreeBranch, "feat-x")
     }
 
-    func testWorktreeWorkspaceTitleFallsBackToBranch() {
-        // `<repo>-<branch>` directory names read as noise — title should
-        // surface the branch instead so the sidebar reads naturally.
+    func testWorktreeWorkspaceTitleUsesCwdBasename() {
+        // Title falls through to the cwd basename like any other workspace
+        // — branch identity now lives in the sidebar row's subtitle
+        // (`⎇ <branch>`), so the title doesn't need to carry it too.
         let store = makeStore()
         let source = store.workspaces[0]
         let wt = store.addWorkspace(
@@ -107,7 +108,7 @@ final class WorkspaceStoreTests: XCTestCase {
             worktreeParent: source,
             worktreeBranch: "feat-y"
         )
-        XCTAssertEqual(wt.title, "feat-y")
+        XCTAssertEqual(wt.title, "projectA-feat-y")
     }
 
     func testAddWorkspaceWithCustomTemplateSpawnsThatAgent() {
