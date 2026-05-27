@@ -2,6 +2,11 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.18.2 — 2026-05-27
+
+- Paste a file or image — copy a file in Finder (Cmd+C) and Cmd+V into kooky now pastes the full file path instead of just the filename, so Claude / Codex / Cursor can read it as an argument.
+- Paste a screenshot — take a screenshot to the clipboard (Cmd+Ctrl+Shift+4), Cmd+V into kooky, and the image gets saved to `~/Library/Caches/kooky/pastes/` with its path pasted into the terminal. Drop a screenshot straight into a Claude prompt with no save-to-disk detour. (Resolves #15.)
+
 ## v0.18.1 — 2026-05-27
 
 - Worktree sidebar polish — worktree rows now show a branch badge in their subtitle, source rows reveal a hover-only chevron for collapsing the worktree group, and the disclosure no longer steals a leading column from the (already narrow) sidebar.

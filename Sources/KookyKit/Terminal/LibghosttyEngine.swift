@@ -385,8 +385,8 @@ final class GhosttySurfaceView: NSView {
 
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
         guard let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self]) as? [URL],
-              !urls.isEmpty else { return false }
-        let escaped = urls.map { KookyShellIntegration.backslashEscape($0.path) }.joined(separator: " ")
+              let escaped = KookyShellIntegration.backslashEscapedFileURLs(urls)
+        else { return false }
         paste(escaped)
         return true
     }
@@ -631,9 +631,12 @@ final class GhosttySurfaceView: NSView {
         // Cmd+V: read the system pasteboard directly and inject as text via
         // the paste path so bracketed-paste mode wraps it correctly. The
         // right-click Paste menu shares the same path via `paste(_:)`.
+        // `readTerminalPasteText` covers fileURLs (Finder Copy → full
+        // path, not bare filename) and raw image data (screenshots →
+        // spilled to a cache PNG so agents can open it as a path).
         if cmdOnly,
            event.charactersIgnoringModifiers?.lowercased() == "v",
-           let pasted = NSPasteboard.general.string(forType: .string),
+           let pasted = KookyShellIntegration.readTerminalPasteText(from: .general),
            !pasted.isEmpty
         {
             paste(pasted)

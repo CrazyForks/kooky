@@ -66,6 +66,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         NSApp.activate(ignoringOtherApps: true)
         installMainMenu()
         hookServer.start()
+
+        // Sweep paste-image cache off the launch hot path. macOS's
+        // own Caches eviction is unreliable; without this a heavy
+        // Cmd+V-screenshots workflow accumulates GBs over months.
+        Task.detached(priority: .utility) {
+            KookyShellIntegration.prunePastesCache()
+        }
     }
 
     /// Rebuilds every window persisted in `state.json`, or opens one default

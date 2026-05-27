@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 @testable import KookyKit
 
@@ -182,5 +183,157 @@ final class ShellIntegrationTests: XCTestCase {
         // literal newline.
         let escaped = KookyShellIntegration.backslashEscape("/tmp/multi\nline/file.txt")
         XCTAssertEqual(escaped, "'/tmp/multi\nline/file.txt'")
+    }
+
+    // MARK: - readTerminalPasteText / pasteboardHasTerminalPasteContent
+
+    /// Create an isolated pasteboard so tests never touch `.general` or
+    /// each other. `NSPasteboard(name:)` with a unique name returns a
+    /// process-private board that AppKit cleans up on exit.
+    private func makeIsolatedPasteboard() -> NSPasteboard {
+        let unique = "kooky-test-\(UUID().uuidString)"
+        return NSPasteboard(name: NSPasteboard.Name(unique))
+    }
+
+    /// 1×1 transparent PNG — small valid PNG to exercise the image-spill path.
+    private static let oneByOnePNG: Data = Data(base64Encoded:
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkAAIA" +
+        "AAoAAv/lxKUAAAAASUVORK5CYII="
+    )!
+
+    func testReadTerminalPasteTextReturnsRawStringForPlainText() {
+        // String paste is the common case (Cmd+V on a shell command).
+        // No backslash-escaping — `ls -la` must round-trip verbatim.
+        let pb = makeIsolatedPasteboard()
+        pb.declareTypes([.string], owner: nil)
+        pb.setString("ls -la", forType: .string)
+        XCTAssertEqual(KookyShellIntegration.readTerminalPasteText(from: pb), "ls -la")
+    }
+
+    func testReadTerminalPasteTextReturnsEscapedPathForFileURL() {
+        // Finder Copy on a file (including images) gives a fileURL on the
+        // pasteboard. We backslash-escape the full disk path so the
+        // shell / agent receives an addressable argument — not the bare
+        // filename that `.string` would return.
+        let pb = makeIsolatedPasteboard()
+        let url = URL(fileURLWithPath: "/tmp/some folder/image one.png")
+        pb.clearContents()
+        pb.writeObjects([url as NSURL])
+        XCTAssertEqual(
+            KookyShellIntegration.readTerminalPasteText(from: pb),
+            "/tmp/some\\ folder/image\\ one.png"
+        )
+    }
+
+    func testReadTerminalPasteTextJoinsMultipleFileURLsWithSpace() {
+        let pb = makeIsolatedPasteboard()
+        let a = URL(fileURLWithPath: "/tmp/a.png")
+        let b = URL(fileURLWithPath: "/tmp/b.png")
+        pb.clearContents()
+        pb.writeObjects([a as NSURL, b as NSURL])
+        XCTAssertEqual(
+            KookyShellIntegration.readTerminalPasteText(from: pb),
+            "/tmp/a.png /tmp/b.png"
+        )
+    }
+
+    func testReadTerminalPasteTextSpillsPNGImageDataToCacheFile() throws {
+        // Cmd+Ctrl+Shift+4 screenshots show up as raw PNG bytes with no
+        // fileURL representation. Without spill-to-disk the agent has no
+        // way to read the image — we cache it under
+        // ~/Library/Caches/kooky/pastes/screenshot-*.png and paste the
+        // escaped file path.
+        let pb = makeIsolatedPasteboard()
+        pb.declareTypes([.png], owner: nil)
+        pb.setData(Self.oneByOnePNG, forType: .png)
+        let pasted = try XCTUnwrap(KookyShellIntegration.readTerminalPasteText(from: pb))
+        // Resolve the escape so we can `stat` the file.
+        let rawPath = pasted.replacingOccurrences(of: "\\", with: "")
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: rawPath),
+            "Expected pasted path to point at a real file on disk: \(rawPath)"
+        )
+        XCTAssertTrue(rawPath.contains("/kooky/pastes/screenshot-"))
+        XCTAssertTrue(rawPath.hasSuffix(".png"))
+        try? FileManager.default.removeItem(atPath: rawPath)
+    }
+
+    func testReadTerminalPasteTextSpillsTIFFImageDataAsPNG() throws {
+        // Cmd+Shift+3 (full-screen-to-clipboard) and Preview "Copy" land
+        // as TIFF on the pasteboard, not PNG — the TIFF→PNG re-encode
+        // branch is the actual screenshot hot path. Without coverage
+        // this can regress silently if someone tweaks the helper.
+        let pb = makeIsolatedPasteboard()
+        // Synthesise a 1×1 TIFF via NSBitmapImageRep so we exercise the
+        // re-encode branch without bundling a binary fixture.
+        let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 1, pixelsHigh: 1,
+            bitsPerSample: 8, samplesPerPixel: 4,
+            hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 4, bitsPerPixel: 32
+        )!
+        let tiffData = try XCTUnwrap(rep.representation(using: .tiff, properties: [:]))
+        pb.declareTypes([.tiff], owner: nil)
+        pb.setData(tiffData, forType: .tiff)
+        let pasted = try XCTUnwrap(KookyShellIntegration.readTerminalPasteText(from: pb))
+        let rawPath = pasted.replacingOccurrences(of: "\\", with: "")
+        XCTAssertTrue(rawPath.hasSuffix(".png"))
+        // Confirm we actually wrote PNG bytes (not TIFF with a .png suffix).
+        let cached = try XCTUnwrap(FileManager.default.contents(atPath: rawPath))
+        XCTAssertNotNil(NSBitmapImageRep(data: cached), "Cached file should parse as a bitmap image")
+        let magic = cached.prefix(8)
+        XCTAssertEqual(
+            Array(magic),
+            [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A],
+            "Cached file should have a PNG magic header, not TIFF"
+        )
+        try? FileManager.default.removeItem(atPath: rawPath)
+    }
+
+    func testReadTerminalPasteTextPrefersFileURLOverImageData() {
+        // Finder Copy on an image populates both fileURL and TIFF/PNG.
+        // fileURL must win — the user already has a real file on disk;
+        // re-spilling the bytes to a cache file loses provenance + bloats
+        // ~/Library/Caches.
+        let pb = makeIsolatedPasteboard()
+        let url = URL(fileURLWithPath: "/tmp/real-image.png")
+        pb.clearContents()
+        pb.writeObjects([url as NSURL])
+        pb.setData(Self.oneByOnePNG, forType: .png)
+        XCTAssertEqual(
+            KookyShellIntegration.readTerminalPasteText(from: pb),
+            "/tmp/real-image.png"
+        )
+    }
+
+    func testReadTerminalPasteTextReturnsNilForEmptyPasteboard() {
+        let pb = makeIsolatedPasteboard()
+        pb.clearContents()
+        XCTAssertNil(KookyShellIntegration.readTerminalPasteText(from: pb))
+    }
+
+    func testPasteboardHasTerminalPasteContentMatchesReadability() {
+        // Gate must agree with `readTerminalPasteText` so the right-click
+        // Paste menu enables exactly when the action will produce input.
+        let emptyPb = makeIsolatedPasteboard()
+        emptyPb.clearContents()
+        XCTAssertFalse(KookyShellIntegration.pasteboardHasTerminalPasteContent(emptyPb))
+
+        let stringPb = makeIsolatedPasteboard()
+        stringPb.declareTypes([.string], owner: nil)
+        stringPb.setString("x", forType: .string)
+        XCTAssertTrue(KookyShellIntegration.pasteboardHasTerminalPasteContent(stringPb))
+
+        let filePb = makeIsolatedPasteboard()
+        filePb.clearContents()
+        filePb.writeObjects([URL(fileURLWithPath: "/tmp/a.txt") as NSURL])
+        XCTAssertTrue(KookyShellIntegration.pasteboardHasTerminalPasteContent(filePb))
+
+        let imagePb = makeIsolatedPasteboard()
+        imagePb.declareTypes([.png], owner: nil)
+        imagePb.setData(Self.oneByOnePNG, forType: .png)
+        XCTAssertTrue(KookyShellIntegration.pasteboardHasTerminalPasteContent(imagePb))
     }
 }

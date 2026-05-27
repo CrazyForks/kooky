@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// We don't bundle ghostty's shell-integration assets, so we ship a small zsh
@@ -46,6 +47,136 @@ enum KookyShellIntegration {
         "(", ")", "|", "&", ";", "<", ">", "*", "?",
         "[", "]", "{", "}", "~", "!", "#",
     ]
+
+    /// Filter `urls` to fileURLs, `backslashEscape` each path, join by
+    /// spaces. Nil when nothing survives the filter — the caller falls
+    /// through to other paste sources. Shared between Finder drag-drop
+    /// (v0.11.3 `performDragOperation`) and Cmd+V on a Finder Copy
+    /// (v0.18.2 paste path): both produce a multi-URL pasteboard the
+    /// user expects to render as terminal argv.
+    static func backslashEscapedFileURLs(_ urls: [URL]) -> String? {
+        let escaped = urls.compactMap { $0.isFileURL ? backslashEscape($0.path) : nil }
+        return escaped.isEmpty ? nil : escaped.joined(separator: " ")
+    }
+
+    /// Resolve pasteboard contents into a terminal-safe text payload —
+    /// what Cmd+V and the right-click "Paste" entry should inject.
+    ///
+    /// Precedence:
+    /// 1. **File URLs** (Finder Copy on a file — including images) →
+    ///    `backslashEscape($0.path)` joined by spaces. Without this,
+    ///    `pb.string(forType: .string)` for a fileURL returns just the
+    ///    last path component (the filename), which agents can't open.
+    ///    Warp / iTerm2 both do this; matches user expectation.
+    /// 2. **Raw image data** (`Cmd+Ctrl+Shift+4` screenshot to
+    ///    clipboard, Preview "Edit → Copy" on an open image) →
+    ///    spilled to `~/Library/Caches/kooky/pastes/screenshot-<ts>.png`,
+    ///    then `backslashEscape(file.path)`. Agents (Claude / Cursor /
+    ///    Codex) take a file path as input; storing the bytes inline
+    ///    would dump base64 garbage into the prompt.
+    /// 3. **Plain string** → raw, no escaping (we'd corrupt `ls -la`).
+    ///    `bracketed-paste` mode already isolates it from shell parsing.
+    static func readTerminalPasteText(from pb: NSPasteboard) -> String? {
+        if pb.availableType(from: [.fileURL]) != nil,
+           let urls = pb.readObjects(forClasses: [NSURL.self]) as? [URL],
+           let joined = backslashEscapedFileURLs(urls)
+        {
+            return joined
+        }
+        if pb.availableType(from: [.png, .tiff]) != nil,
+           let cached = writePasteboardImageToCache(pb)
+        {
+            return backslashEscape(cached.path)
+        }
+        if let text = pb.string(forType: .string), !text.isEmpty {
+            return text
+        }
+        return nil
+    }
+
+    /// Cheap probe used by the right-click "Paste" menu's enabled gate.
+    /// Mirrors `readTerminalPasteText`'s precedence but skips the
+    /// image-to-disk write so a menu open never spills cache files.
+    /// `availableType(...)` is preferred over `pb.string(...)` for the
+    /// string check — `pb.string` materialises the full pasted bytes
+    /// into a Swift heap copy (~100ms for a 10MB clipboard) just for
+    /// an emptiness check; `availableType` is constant-time.
+    static func pasteboardHasTerminalPasteContent(_ pb: NSPasteboard) -> Bool {
+        if pb.availableType(from: [.fileURL]) != nil,
+           let urls = pb.readObjects(forClasses: [NSURL.self]) as? [URL],
+           urls.contains(where: { $0.isFileURL })
+        {
+            return true
+        }
+        if pb.availableType(from: [.png, .tiff, .string]) != nil {
+            return true
+        }
+        return false
+    }
+
+    /// Spill a pasteboard image to a kooky-owned cache file. Returns
+    /// the resulting URL on success. Prefers `.png` bytes verbatim;
+    /// re-encodes `.tiff` to PNG via `NSBitmapImageRep` when only TIFF
+    /// is offered (Cmd+Shift+3 screenshots land as TIFF, not PNG) —
+    /// agents accept PNG universally, TIFF support is uneven.
+    private static func writePasteboardImageToCache(_ pb: NSPasteboard) -> URL? {
+        guard let data = pasteboardPNGData(pb) else { return nil }
+        let ts = pasteFilenameTimestamp.string(from: Date())
+        let file = pastesCacheDirectory.appendingPathComponent("screenshot-\(ts).png")
+        guard (try? data.write(to: file, options: .atomic)) != nil else { return nil }
+        return file
+    }
+
+    private static func pasteboardPNGData(_ pb: NSPasteboard) -> Data? {
+        if let direct = pb.data(forType: .png) { return direct }
+        if let tiff = pb.data(forType: .tiff),
+           let rep = NSBitmapImageRep(data: tiff),
+           let encoded = rep.representation(using: .png, properties: [:])
+        {
+            return encoded
+        }
+        return nil
+    }
+
+    private static let pasteFilenameTimestamp: DateFormatter = {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyyMMdd-HHmmss-SSS"
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        fmt.timeZone = .current
+        return fmt
+    }()
+
+    /// Lazy-created `~/Library/Caches/kooky/pastes/`. Mirrors the
+    /// `kookyBinDirectory` / `hooksDirectory` pattern: one
+    /// `createDirectory` at first access, all subsequent paste-spills
+    /// skip the FS check.
+    private static let pastesCacheDirectory: URL = {
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        let dir = caches.appendingPathComponent("kooky/pastes", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }()
+
+    /// Sweep stale paste-cache files. macOS evicts Caches under disk
+    /// pressure but only when free space is critical — meanwhile a
+    /// daily-paste-screenshots workflow accumulates GBs. Call at app
+    /// startup via `Task.detached` so it doesn't block launch. The
+    /// 30-day default matches Chrome / Firefox HTTP-cache policy.
+    static func prunePastesCache(olderThan: TimeInterval = 30 * 24 * 3600) {
+        let cutoff = Date().addingTimeInterval(-olderThan)
+        guard let contents = try? FileManager.default.contentsOfDirectory(
+            at: pastesCacheDirectory,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: .skipsHiddenFiles
+        ) else { return }
+        for url in contents {
+            let mod = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate
+            if let mod, mod < cutoff {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+    }
 
     static let zshPath = "/bin/zsh"
     static let bashPath = "/bin/bash"

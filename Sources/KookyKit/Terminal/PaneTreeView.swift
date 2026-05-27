@@ -628,7 +628,7 @@ private struct PaneContextMenu: View {
     var body: some View {
         let selection = session.engine.readSelection() ?? ""
         let hasSelection = !selection.isEmpty
-        let pasteAvailable = !(NSPasteboard.general.string(forType: .string) ?? "").isEmpty
+        let pasteAvailable = KookyShellIntegration.pasteboardHasTerminalPasteContent(.general)
         let askRows = hasSelection ? buildAskRows() : []
         KookyMenuList(width: 240, maxHeight: 480) {
             if !askRows.isEmpty {
@@ -651,7 +651,9 @@ private struct PaneContextMenu: View {
             }
             KookyMenuRow(title: "Paste", shortcut: "⌘V", isDisabled: !pasteAvailable) {
                 isPresented = false
-                if let text = NSPasteboard.general.string(forType: .string), !text.isEmpty {
+                if let text = KookyShellIntegration.readTerminalPasteText(from: .general),
+                   !text.isEmpty
+                {
                     session.engine.paste(text)
                 }
             }
