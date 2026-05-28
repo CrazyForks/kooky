@@ -2,6 +2,12 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.18.3 — 2026-05-28
+
+- Worktree close is safe by default — closing a worktree now only removes it from the sidebar; the directory and branch stay on disk. Tick "also delete worktree directory and branch" in the confirm sheet for the v0.18.x destructive behaviour.
+- Adopt existing worktrees — Create Worktree → "adopt" mode lists every `git worktree list` entry not already in the sidebar. Pick the ones you want kooky to manage.
+- Kooky no longer auto-imports CLI-created worktrees at launch. Only worktrees you explicitly created or adopted show up in the sidebar.
+
 ## v0.18.2 — 2026-05-27
 
 - Paste a file or image — copy a file in Finder (Cmd+C) and Cmd+V into kooky now pastes the full file path instead of just the filename, so Claude / Codex / Cursor can read it as an argument.

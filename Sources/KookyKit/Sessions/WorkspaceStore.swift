@@ -163,8 +163,7 @@ final class WorkspaceStore {
         workingDirectory: URL? = nil,
         worktreeParent: Workspace? = nil,
         worktreeBranch: String? = nil,
-        template: AgentTemplate = .terminal,
-        preserveActive: Bool = false
+        template: AgentTemplate = .terminal
     ) -> Workspace {
         let dir = workingDirectory
             ?? active?.workingDirectory
@@ -200,12 +199,7 @@ final class WorkspaceStore {
         } else {
             workspaces.append(workspace)
         }
-        // Reconcile's orphan-adopt path passes `preserveActive: true` so a
-        // launch with disk-only orphans doesn't silently overwrite the
-        // user's persisted active-workspace choice.
-        if !preserveActive {
-            activeWorkspaceId = workspace.id
-        }
+        activeWorkspaceId = workspace.id
         scheduleSave()
         return workspace
     }
@@ -218,24 +212,39 @@ final class WorkspaceStore {
         source: Workspace,
         request: CreateWorktreeSheet.Request
     ) async -> CreateWorktreeSheet.CreateOutcome {
-        guard let repoPath = WorktreeManager.repoRoot(near: source.workingDirectory) else {
-            return .failure("not inside a git repository")
+        switch request.kind {
+        case .create(let mode, let path, let branchForDisplay):
+            guard let repoPath = WorktreeManager.repoRoot(near: source.workingDirectory) else {
+                return .failure("not inside a git repository")
+            }
+            let result = await Task.detached(priority: .userInitiated) {
+                WorktreeManager.add(repoPath: repoPath, path: path, mode: mode)
+            }.value
+            if case .failure(let err) = result {
+                return .failure(err.description)
+            }
+            addWorkspace(
+                workingDirectory: path,
+                worktreeParent: source,
+                worktreeBranch: branchForDisplay,
+                template: request.template
+            )
+            return .success
+        case .adopt(let worktrees):
+            // Pure sidebar materialization — no git command, the
+            // directories already exist on disk. One workspace per
+            // picked worktree, inserted after the source in array
+            // order so sidebar grouping stays correct.
+            for info in worktrees {
+                addWorkspace(
+                    workingDirectory: info.path,
+                    worktreeParent: source,
+                    worktreeBranch: info.branch,
+                    template: request.template
+                )
+            }
+            return .success
         }
-        let path = request.path
-        let mode = request.mode
-        let result = await Task.detached(priority: .userInitiated) {
-            WorktreeManager.add(repoPath: repoPath, path: path, mode: mode)
-        }.value
-        if case .failure(let err) = result {
-            return .failure(err.description)
-        }
-        addWorkspace(
-            workingDirectory: path,
-            worktreeParent: source,
-            worktreeBranch: request.branchForDisplay,
-            template: request.template
-        )
-        return .success
     }
 
     /// Worktree workspaces close through this request first so the
@@ -283,13 +292,17 @@ final class WorkspaceStore {
     }
 
     /// Performs the deferred source-with-worktrees close from the sheet.
-    /// Always `git worktree remove`s every worktree before closing the
-    /// source — the sidebar = disk invariant. First failing git remove
-    /// aborts and surfaces stderr.
-    func performCloseSource(_ request: CloseSourceRequest) async -> String? {
-        for worktree in request.worktrees {
-            if let message = await removeWorktreeDirectory(worktree) {
-                return message
+    /// `alsoDelete = true` runs `git worktree remove --force` + branch-d
+    /// for each child before closing the source (the v0.18.x default
+    /// behaviour, now opt-in via the sheet's checkbox). First failing
+    /// git remove aborts and surfaces stderr. `alsoDelete = false` just
+    /// drops the workspaces from the sidebar — disk untouched.
+    func performCloseSource(_ request: CloseSourceRequest, alsoDelete: Bool) async -> String? {
+        if alsoDelete {
+            for worktree in request.worktrees {
+                if let message = await removeWorktreeDirectory(worktree) {
+                    return message
+                }
             }
         }
         for worktree in request.worktrees { closeWorkspace(worktree) }
@@ -298,11 +311,19 @@ final class WorkspaceStore {
         return nil
     }
 
-    /// Two-way sync between sidebar worktree workspaces and what `git
-    /// worktree list` reports on disk. Runs once at app launch (AppDelegate
-    /// calls it after every window's store is restored). Disk is treated
-    /// as the source of truth — sidebar mirrors disk, matching the
-    /// Crystal / Conductor model.
+    /// Zombie-clean sidebar worktree workspaces against `git worktree list`.
+    /// Runs once at app launch (AppDelegate calls it after every window's
+    /// store is restored). Only handles the *removal* side — a sidebar
+    /// entry whose worktree directory was deleted from disk (e.g. CLI
+    /// `git worktree remove` while kooky was closed) gets dropped.
+    ///
+    /// v0.19.0 removed the disk → sidebar adopt path: kooky no longer
+    /// surfaces worktrees the user created via CLI or another tool. To
+    /// see them, the user explicitly goes through Create Worktree →
+    /// "adopt existing worktree" mode. Reasoning: v0.18.x's auto-adopt
+    /// caused noisy sidebars + scared users into not closing entries
+    /// (close was destructive then). state.json + user action is now
+    /// the single source of truth for what kooky displays.
     ///
     /// Subprocess fan-out runs off the main actor in a TaskGroup so a
     /// user with N source repos doesn't pay N × ~100ms blocked on launch.
@@ -351,41 +372,25 @@ final class WorkspaceStore {
         // comparing only sibling worktrees against the sidebar. This must
         // use a stable repo root, not `Workspace.workingDirectory`, because
         // that property follows the active shell's cwd and may be `/repo/sub`.
-        let satellites = diskWorktrees.filter { $0.path.standardizedFileURL.path != sourceRootPath }
         let sidebar = workspaces.filter { $0.worktreeParentId == source.id }
-        guard !satellites.isEmpty || !sidebar.isEmpty else { return }
+        guard !sidebar.isEmpty else { return }
+
+        // Precompute Set of disk satellite paths so the zombie check is
+        // O(M+K) (M sidebar entries, K disk worktrees), not O(M×K) — the
+        // user opens kooky a lot, every microsecond on this path adds up
+        // to perceived launch latency.
+        let satellitePaths: Set<String> = Set(
+            diskWorktrees.lazy
+                .map { $0.path.standardizedFileURL.path }
+                .filter { $0 != sourceRootPath }
+        )
 
         // Compare against the pinned worktreePath, not workingDirectory —
         // a sidebar row whose user cd'd to ~/Downloads still matches its
-        // disk root via worktreePath.
-        let pathFor: (Workspace) -> String = { wt in
-            wt.diskPath.standardizedFileURL.path
-        }
-
-        for wt in sidebar where !satellites.contains(where: {
-            $0.path.standardizedFileURL.path == pathFor(wt)
-        }) {
+        // disk root via worktreePath. Adopt-on-discovery is deliberately
+        // not handled — see method doc comment.
+        for wt in sidebar where !satellitePaths.contains(wt.diskPath.standardizedFileURL.path) {
             closeWorkspace(wt)
-        }
-
-        // Dedup against the whole workspace list — if the user has the
-        // same repo opened as two top-level workspaces (⌘O twice), each
-        // reconcile pass would otherwise re-adopt worktrees its twin has
-        // already attached. Match `+` / ⌘T / Create Worktree behaviour —
-        // use the user's configured default agent. Hoisted outside the
-        // loop because `visibleOrdered(model:)` rebuilds its array each
-        // call and N orphan adopts otherwise pay that cost N times.
-        let adoptTemplate = AgentTemplate.defaultLaunchTemplate(model: KookySettingsModel.shared) ?? .terminal
-        for diskWt in satellites where !workspaces.contains(where: {
-            pathFor($0) == diskWt.path.standardizedFileURL.path
-        }) {
-            addWorkspace(
-                workingDirectory: diskWt.path,
-                worktreeParent: source,
-                worktreeBranch: diskWt.branch,
-                template: adoptTemplate,
-                preserveActive: true
-            )
         }
     }
 
@@ -569,14 +574,18 @@ final class WorkspaceStore {
         for ws in others { closeWorkspace(ws) }
     }
 
-    /// Performs the deferred bulk close from the confirm sheet. Always
-    /// `git worktree remove`s every worktree in the others list — the
-    /// "keep dir" branch was dropped to enforce the sidebar = disk
-    /// invariant. First failing git remove aborts.
-    func performCloseOthers(_ request: BulkRemovalRequest) async -> String? {
-        for worktree in request.worktreeOthers {
-            if let message = await removeWorktreeDirectory(worktree) {
-                return message
+    /// Performs the deferred bulk close from the confirm sheet.
+    /// `alsoDelete = true` runs `git worktree remove --force` + branch-d
+    /// on each worktree in the others list before closing; `alsoDelete
+    /// = false` just drops them from the sidebar with disk untouched
+    /// (v0.19.0 default — destructive removal is the checkbox path).
+    /// First failing git remove aborts.
+    func performCloseOthers(_ request: BulkRemovalRequest, alsoDelete: Bool) async -> String? {
+        if alsoDelete {
+            for worktree in request.worktreeOthers {
+                if let message = await removeWorktreeDirectory(worktree) {
+                    return message
+                }
             }
         }
         for ws in request.others { closeWorkspace(ws) }

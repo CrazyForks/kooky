@@ -3,8 +3,14 @@ import SwiftUI
 
 /// Brutalist confirm sheet for closing a worktree workspace. Same visual
 /// language as `CreateWorktreeSheet` / `UpdatePromptView`. Parent owns
-/// the actual close + `git worktree remove` via the `confirm` closure;
-/// this view stays a pure form.
+/// the actual close (+ optional `git worktree remove`) via the `confirm`
+/// closure; this view stays a pure form.
+///
+/// Default close is non-destructive — just drops the sidebar entry,
+/// disk untouched. The checkbox opts into the v0.18.x behaviour of
+/// `git worktree remove --force` + `git branch -d` (merged only).
+/// Reasoning: v0.18.x's default-destructive close scared users into
+/// leaving unwanted entries in the sidebar instead of clicking close.
 struct ConfirmRemoveWorktreeSheet: View {
     enum Outcome: Equatable {
         case success
@@ -12,16 +18,16 @@ struct ConfirmRemoveWorktreeSheet: View {
     }
 
     let workspace: Workspace
-    /// Closes the workspace and `git worktree remove`s the directory. The
-    /// "keep dir" option is intentionally not exposed: sidebar = disk is
-    /// the invariant the rest of the worktree code relies on (no orphan
-    /// row, no dead-end). Caller still owns the close + pending-request
-    /// cleanup before resolving.
-    let confirm: @MainActor () async -> Outcome
+    /// `alsoDelete` is the checkbox state: false = sidebar removal only;
+    /// true = also `git worktree remove --force` + `git branch -d` (if
+    /// merged). Caller still owns the close + pending-request cleanup
+    /// before resolving.
+    let confirm: @MainActor (_ alsoDelete: Bool) async -> Outcome
     let dismiss: () -> Void
 
     @State private var isWorking: Bool = false
     @State private var errorMessage: String?
+    @State private var alsoDelete: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -37,7 +43,7 @@ struct ConfirmRemoveWorktreeSheet: View {
                 .frame(width: 32, height: 1)
                 .padding(.vertical, 22)
 
-            description
+            alsoDeleteCheckbox
 
             if let errorMessage {
                 Text(errorMessage)
@@ -52,7 +58,7 @@ struct ConfirmRemoveWorktreeSheet: View {
                 BracketButton("cancel") { dismiss() }
                     .disabled(isWorking)
                     .opacity(isWorking ? 0.4 : 1)
-                BracketButton(isWorking ? "deleting…" : "delete worktree") { submit() }
+                BracketButton(buttonLabel) { submit() }
                     .disabled(isWorking)
                     .opacity(isWorking ? 0.4 : 1)
             }
@@ -66,7 +72,7 @@ struct ConfirmRemoveWorktreeSheet: View {
     }
 
     private var statusLabel: some View {
-        Text("DELETE-WORKTREE")
+        Text("CLOSE-WORKTREE")
             .font(Theme.mono(10, weight: .medium))
             .tracking(1.6)
             .foregroundStyle(Theme.chromeMuted.opacity(0.85))
@@ -84,11 +90,22 @@ struct ConfirmRemoveWorktreeSheet: View {
             .foregroundStyle(Theme.chromeMuted)
     }
 
-    private var description: some View {
-        Text("The worktree directory above will be deleted from disk, along with its branch if the commits are merged. Uncommitted changes will be lost.")
-            .font(Theme.mono(11.5))
-            .foregroundStyle(Theme.chromeMuted)
-            .fixedSize(horizontal: false, vertical: true)
+    /// Toggle exposing the destructive escape hatch — when on, close
+    /// also runs `git worktree remove --force` + `git branch -d`.
+    /// Native SwiftUI `Toggle` styled to fit brutalist chrome.
+    private var alsoDeleteCheckbox: some View {
+        Toggle(isOn: $alsoDelete) {
+            Text("also delete worktree directory and branch")
+                .font(Theme.mono(11.5))
+                .foregroundStyle(alsoDelete ? Theme.chromeForeground : Theme.chromeMuted)
+        }
+        .toggleStyle(.checkbox)
+        .disabled(isWorking)
+    }
+
+    private var buttonLabel: String {
+        if isWorking { return alsoDelete ? "deleting…" : "closing…" }
+        return alsoDelete ? "close & delete" : "close"
     }
 
     private var worktreePath: URL { workspace.diskPath }
@@ -97,7 +114,7 @@ struct ConfirmRemoveWorktreeSheet: View {
         isWorking = true
         errorMessage = nil
         Task {
-            let outcome = await confirm()
+            let outcome = await confirm(alsoDelete)
             switch outcome {
             case .success:
                 dismiss()

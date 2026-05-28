@@ -24,10 +24,6 @@ struct SidebarWorkspaceRow: View {
     /// sidebar wires to a sheet. Nil on worktree rows so worktree
     /// nesting stays disabled.
     var onCreateWorktree: (() -> Void)? = nil
-    /// Optional manual sync for source rows. Reconcile is automatic on app
-    /// launch, but this gives users a direct way to pick up worktrees they
-    /// created in another terminal without restarting kooky.
-    var onRefreshWorktrees: (() -> Void)? = nil
     /// Non-nil for worktree rows — jumps the active selection back to the
     /// source workspace this worktree was forked from. Cheap navigation
     /// shortcut when the user is deep in a worktree and wants the main
@@ -58,7 +54,7 @@ struct SidebarWorkspaceRow: View {
         .popover(isPresented: $isContextMenuOpen, arrowEdge: .trailing) {
             VStack(alignment: .leading, spacing: 0) {
                 KookyMenuRow(
-                    title: workspace.worktreeParentId == nil ? "Close Workspace" : "Delete Worktree…",
+                    title: workspace.worktreeParentId == nil ? "Close Workspace" : "Close Worktree…",
                     shortcut: workspace.worktreeParentId == nil ? "⌘⇧W" : nil
                 ) {
                     isContextMenuOpen = false
@@ -88,12 +84,6 @@ struct SidebarWorkspaceRow: View {
                         // dismissing before the sheet anchors — back-to-back
                         // popovers/sheets off the same view glitch otherwise.
                         DispatchQueue.main.async { onCreateWorktree() }
-                    }
-                }
-                if let onRefreshWorktrees {
-                    KookyMenuRow(title: "Refresh Worktrees") {
-                        isContextMenuOpen = false
-                        onRefreshWorktrees()
                     }
                 }
                 if let onGoToSource {
@@ -168,7 +158,7 @@ struct SidebarWorkspaceRow: View {
                         systemName: "xmark",
                         fontSize: 9,
                         size: 20,
-                        help: workspace.worktreeParentId == nil ? "Close workspace" : "Delete worktree",
+                        help: workspace.worktreeParentId == nil ? "Close workspace" : "Close worktree",
                         action: onClose
                     )
                     .opacity(isHovered ? 1 : 0)

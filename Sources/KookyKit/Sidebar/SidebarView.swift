@@ -85,6 +85,17 @@ struct SidebarView: View {
                     launchTemplates: AgentTemplate.visibleOrdered(model: KookySettingsModel.shared),
                     defaultLaunchTemplate: AgentTemplate.defaultLaunchTemplate(model: KookySettingsModel.shared)
                         ?? .terminal,
+                    // Include every workspace's diskPath, not just worktree
+                    // children — if the user opened a worktree directory as
+                    // a top-level workspace (Finder drop / ⌘O), adopting it
+                    // again would spawn a duplicate row pointing at the same
+                    // dir. Source workspaces (the repo root) also belong in
+                    // the exclusion set because the adopt picker already
+                    // drops them via `sourceRootKey`; including them here is
+                    // belt-and-suspenders against multi-source ⌘O scenarios.
+                    alreadyAdoptedPaths: Set(
+                        store.workspaces.map { $0.diskPath.standardizedFileURL.path }
+                    ),
                     create: { request in
                         await store.createWorktree(source: source, request: request)
                     },
@@ -96,9 +107,11 @@ struct SidebarView: View {
             case .confirmRemoveWorktree(let workspace):
                 ConfirmRemoveWorktreeSheet(
                     workspace: workspace,
-                    confirm: {
-                        if let message = await store.removeWorktreeDirectory(workspace) {
-                            return .failure(message)
+                    confirm: { alsoDelete in
+                        if alsoDelete {
+                            if let message = await store.removeWorktreeDirectory(workspace) {
+                                return .failure(message)
+                            }
                         }
                         store.closeWorkspace(workspace)
                         store.pendingRemovalRequest = nil
@@ -118,10 +131,8 @@ struct SidebarView: View {
                         worktreeCount: request.worktreeOthers.count
                     ),
                     worktreesAmong: request.worktreeOthers,
-                    confirmButtonTitle: "delete worktree",
-                    workingButtonTitle: "deleting…",
-                    confirm: {
-                        if let message = await store.performCloseOthers(request) {
+                    confirm: { alsoDelete in
+                        if let message = await store.performCloseOthers(request, alsoDelete: alsoDelete) {
                             return .failure(message)
                         }
                         return .success
@@ -140,10 +151,8 @@ struct SidebarView: View {
                         worktreeCount: request.worktrees.count
                     ),
                     worktreesAmong: request.worktrees,
-                    confirmButtonTitle: "delete worktree",
-                    workingButtonTitle: "deleting…",
-                    confirm: {
-                        if let message = await store.performCloseSource(request) {
+                    confirm: { alsoDelete in
+                        if let message = await store.performCloseSource(request, alsoDelete: alsoDelete) {
                             return .failure(message)
                         }
                         return .success
@@ -272,7 +281,6 @@ struct SidebarView: View {
                             isCompact: isCompact,
                             draggingId: $draggingWorkspaceId,
                             onCreateWorktree: canCreate ? { presentCreateWorktree(workspace) } : nil,
-                            onRefreshWorktrees: canCreate ? { Task { await store.reconcileWorktrees() } } : nil,
                             onGoToSource: goToSource
                         )
                     }
@@ -318,8 +326,7 @@ struct SidebarView: View {
                     toggle: { toggleCollapsed(parent.id) }
                 )
                 : nil,
-            onCreateWorktree: canCreate ? { presentCreateWorktree(parent) } : nil,
-            onRefreshWorktrees: canCreate ? { Task { await store.reconcileWorktrees() } } : nil
+            onCreateWorktree: canCreate ? { presentCreateWorktree(parent) } : nil
         )
 
         if hasWorktrees && !isCollapsed {
@@ -373,7 +380,6 @@ private struct DraggableWorkspaceRow: View {
     /// without this wrapper, so they don't pick up drag/drop handlers.
     var disclosure: SidebarWorkspaceRow.WorktreeDisclosure? = nil
     var onCreateWorktree: (() -> Void)? = nil
-    var onRefreshWorktrees: (() -> Void)? = nil
     var onGoToSource: (() -> Void)? = nil
 
     @State private var isTargeted = false
@@ -399,7 +405,6 @@ private struct DraggableWorkspaceRow: View {
             onRename: { store.renameWorkspace(workspace, to: $0) },
             disclosure: disclosure,
             onCreateWorktree: onCreateWorktree,
-            onRefreshWorktrees: onRefreshWorktrees,
             onGoToSource: onGoToSource
         )
         .dropIndicator(active: isTargeted && !isSelfDrag, on: edge)

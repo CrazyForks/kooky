@@ -16,16 +16,16 @@ struct ConfirmBulkCloseSheet: View {
     let headlineText: String
     let subtitleText: String
     let worktreesAmong: [Workspace]
-    let confirmButtonTitle: String
-    let workingButtonTitle: String
-    /// Always deletes the listed worktree directories — the sidebar = disk
-    /// invariant means there's no "keep dir" path. Caller closes the
-    /// workspaces and clears the pending request before resolving.
-    let confirm: @MainActor () async -> Outcome
+    /// `alsoDelete` is the checkbox state: false = close workspaces from
+    /// sidebar only; true = also `git worktree remove --force` + delete
+    /// merged branches for each listed worktree. v0.19.0 makes destructive
+    /// disk removal opt-in, mirroring `ConfirmRemoveWorktreeSheet`.
+    let confirm: @MainActor (_ alsoDelete: Bool) async -> Outcome
     let dismiss: () -> Void
 
     @State private var isWorking: Bool = false
     @State private var errorMessage: String?
+    @State private var alsoDelete: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -44,7 +44,7 @@ struct ConfirmBulkCloseSheet: View {
             worktreeList
                 .padding(.bottom, 14)
 
-            warningRow
+            alsoDeleteCheckbox
 
             if let errorMessage {
                 Text(errorMessage)
@@ -59,7 +59,7 @@ struct ConfirmBulkCloseSheet: View {
                 BracketButton("cancel") { dismiss() }
                     .disabled(isWorking)
                     .opacity(isWorking ? 0.4 : 1)
-                BracketButton(isWorking ? workingButtonTitle : confirmButtonTitle) { submit() }
+                BracketButton(buttonLabel) { submit() }
                     .disabled(isWorking)
                     .opacity(isWorking ? 0.4 : 1)
             }
@@ -113,15 +113,19 @@ struct ConfirmBulkCloseSheet: View {
         }
     }
 
-    private var warningRow: some View {
-        let count = worktreesAmong.count
-        let text = count == 1
-            ? "The listed worktree directory will be deleted from disk, along with its branch if the commits are merged. Uncommitted changes will be lost."
-            : "The \(count) listed worktree directories will be deleted from disk, along with their branches if the commits are merged. Uncommitted changes will be lost."
-        return Text(text)
-            .font(Theme.mono(11.5))
-            .foregroundStyle(Theme.chromeMuted)
-            .fixedSize(horizontal: false, vertical: true)
+    private var alsoDeleteCheckbox: some View {
+        Toggle(isOn: $alsoDelete) {
+            Text("also delete worktree directories and branches")
+                .font(Theme.mono(11.5))
+                .foregroundStyle(alsoDelete ? Theme.chromeForeground : Theme.chromeMuted)
+        }
+        .toggleStyle(.checkbox)
+        .disabled(isWorking)
+    }
+
+    private var buttonLabel: String {
+        if isWorking { return alsoDelete ? "deleting…" : "closing…" }
+        return alsoDelete ? "close & delete" : "close"
     }
 
     private func worktreePath(for workspace: Workspace) -> URL { workspace.diskPath }
@@ -130,7 +134,7 @@ struct ConfirmBulkCloseSheet: View {
         isWorking = true
         errorMessage = nil
         Task {
-            let outcome = await confirm()
+            let outcome = await confirm(alsoDelete)
             switch outcome {
             case .success:
                 dismiss()

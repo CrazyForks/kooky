@@ -15,23 +15,35 @@ struct CreateWorktreeSheet: View {
         case failure(String)
     }
 
-    /// Bundle of form output handed to `create`.
+    /// Bundle of form output handed to `create`. `kind` distinguishes
+    /// "spawn a new worktree via git" from "adopt existing on-disk
+    /// worktrees into the sidebar" — the latter touches no git state,
+    /// just creates kooky workspaces for each picked path.
     struct Request {
-        let mode: WorktreeManager.BranchMode
-        let path: URL
-        /// Either the existing branch name or the new branch name — the
-        /// value sidebar shows under `Workspace.worktreeBranch`.
-        let branchForDisplay: String
+        enum Kind {
+            /// User picked new branch or existing branch — runs `git
+            /// worktree add` then materializes a workspace.
+            case create(mode: WorktreeManager.BranchMode, path: URL, branchForDisplay: String)
+            /// User picked existing on-disk worktrees to surface in
+            /// the sidebar. No git commands run; one workspace per
+            /// picked entry.
+            case adopt(worktrees: [WorktreeManager.Info])
+        }
+        let kind: Kind
         let template: AgentTemplate
     }
 
     let source: Workspace
     let launchTemplates: [AgentTemplate]
     let defaultLaunchTemplate: AgentTemplate
+    /// Standardized disk paths of worktrees already on the sidebar —
+    /// filtered out of the adopt picker so the user can't add the
+    /// same one twice.
+    let alreadyAdoptedPaths: Set<String>
     let create: @MainActor (Request) async -> CreateOutcome
     let dismiss: () -> Void
 
-    private enum BranchModeUI: Hashable { case newBranch, existing }
+    private enum BranchModeUI: Hashable { case newBranch, existing, adopt }
     private enum StartFromChoice: Hashable {
         case head
         case branch(String)
@@ -49,6 +61,24 @@ struct CreateWorktreeSheet: View {
     @State private var availableBranches: [String] = []
     @State private var checkedOutBranches: Set<String> = []
     @State private var branchesLoaded: Bool = false
+    /// Full `git worktree list --porcelain` output — kept so the adopt
+    /// picker can list paths not yet on the sidebar without re-running
+    /// the subprocess.
+    @State private var diskWorktrees: [WorktreeManager.Info] = []
+    /// Pre-filtered adopt rows: disk worktrees minus the source root
+    /// and minus everything already on the sidebar, each paired with
+    /// its standardized-path key. Caching avoids re-standardizing the
+    /// URL on every body re-eval (SwiftUI re-runs `adoptList`'s ForEach
+    /// closure each keystroke; without caching that's
+    /// `O(rows × ~8µs URL standardize)` per stroke).
+    @State private var adoptableRows: [AdoptRow] = []
+    /// Standardized paths the user has selected to adopt. Multi-select.
+    @State private var selectedAdoptPaths: Set<String> = []
+
+    fileprivate struct AdoptRow {
+        let info: WorktreeManager.Info
+        let key: String
+    }
     /// Stable git root for the source workspace. `Workspace.workingDirectory`
     /// follows the active shell cwd, so it may be a nested folder by the time
     /// the user opens this sheet.
@@ -91,7 +121,7 @@ struct CreateWorktreeSheet: View {
                 BracketButton("cancel") { dismiss() }
                     .disabled(isWorking)
                     .opacity(isWorking ? 0.4 : 1)
-                BracketButton(isWorking ? "creating…" : "create worktree") {
+                BracketButton(submitButtonLabel) {
                     submit()
                 }
                 .disabled(isWorking || !canSubmit)
@@ -119,23 +149,35 @@ struct CreateWorktreeSheet: View {
             let loaded = await Task.detached(priority: .userInitiated) {
                 let root = WorktreeManager.repoRoot(near: cwd)
                 let queryCwd = root ?? cwd
-                async let checkedOut: Set<String> = {
+                async let infos: [WorktreeManager.Info] = {
                     guard let root,
-                          case .success(let infos) = WorktreeManager.list(repoPath: root)
+                          case .success(let result) = WorktreeManager.list(repoPath: root)
                     else { return [] }
-                    return WorktreeManager.checkedOutBranches(in: infos)
+                    return result
                 }()
                 async let branches = GitBranchInventory.localBranches(cwd: queryCwd)
+                let resolvedInfos = await infos
                 return (
                     root: root,
                     branches: await branches,
-                    checkedOut: await checkedOut
+                    infos: resolvedInfos,
+                    checkedOut: WorktreeManager.checkedOutBranches(in: resolvedInfos)
                 )
             }.value
             sourceRoot = loaded.root
             let branches = loaded.branches
             availableBranches = branches
             checkedOutBranches = loaded.checkedOut
+            diskWorktrees = loaded.infos
+            // Precompute adopt rows: standardize each disk path once, drop
+            // the source root and anything already on sidebar. Cached so
+            // SwiftUI body re-evals (on every keystroke) don't re-walk.
+            let sourceRootKey = (loaded.root ?? source.workingDirectory).standardizedFileURL.path
+            adoptableRows = loaded.infos.compactMap { info in
+                let key = info.path.standardizedFileURL.path
+                if key == sourceRootKey || alreadyAdoptedPaths.contains(key) { return nil }
+                return AdoptRow(info: info, key: key)
+            }
             if existingBranch.isEmpty || loaded.checkedOut.contains(existingBranch) {
                 existingBranch = branches.first { !loaded.checkedOut.contains($0) } ?? ""
             }
@@ -173,51 +215,118 @@ struct CreateWorktreeSheet: View {
     private var form: some View {
         VStack(alignment: .leading, spacing: 18) {
             modePicker
-            branchField
-            if !isOptionsExpanded {
-                pathPreview
-            }
-
-            optionsToggle
-
-            if isOptionsExpanded {
-                VStack(alignment: .leading, spacing: 14) {
-                    editRow(label: "worktree-path", text: $worktreePathOverride, placeholder: defaultPath)
-                    if branchMode == .newBranch {
-                        startFromControl
-                    }
-                    VStack(alignment: .leading, spacing: 6) {
-                        fieldLabel("launch")
-                        Picker("", selection: Binding(
-                            get: { selectedTemplate ?? defaultLaunchTemplate },
-                            set: { selectedTemplate = $0 }
-                        )) {
-                            ForEach(launchTemplates) { t in
-                                Text(t.title).tag(t)
-                            }
+            switch branchMode {
+            case .newBranch, .existing:
+                branchField
+                if !isOptionsExpanded {
+                    pathPreview
+                }
+                optionsToggle
+                if isOptionsExpanded {
+                    VStack(alignment: .leading, spacing: 14) {
+                        editRow(label: "worktree-path", text: $worktreePathOverride, placeholder: defaultPath)
+                        if branchMode == .newBranch {
+                            startFromControl
                         }
-                        .pickerStyle(.menu)
-                        .labelsHidden()
+                        launchPicker
                     }
                 }
+            case .adopt:
+                adoptForm
             }
+        }
+    }
+
+    /// Adopt mode body — multi-select of disk worktrees not currently in
+    /// the sidebar. The launch-template picker stays inside the options
+    /// disclosure for consistency with create mode.
+    @ViewBuilder
+    private var adoptForm: some View {
+        if !branchesLoaded {
+            inlineStatus("loading worktrees…")
+        } else if adoptableRows.isEmpty {
+            // The mode picker hides `adopt` when this pool is empty, but
+            // a race (user toggles mode → CLI removes worktree → toggle
+            // resolves) could land here. Defensive fallback.
+            inlineStatus("no unmanaged worktrees on disk")
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                fieldLabel("worktrees")
+                adoptList
+            }
+            optionsToggle
+            if isOptionsExpanded {
+                launchPicker
+            }
+        }
+    }
+
+    private var adoptList: some View {
+        // Cap height so a repo with 20+ worktrees doesn't push the sheet
+        // off-screen. ScrollView only kicks in once the pile exceeds the
+        // cap; smaller pools render inline at natural height.
+        ScrollView {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(adoptableRows, id: \.key) { row in
+                    Toggle(isOn: Binding(
+                        get: { selectedAdoptPaths.contains(row.key) },
+                        set: { isOn in
+                            if isOn { selectedAdoptPaths.insert(row.key) }
+                            else { selectedAdoptPaths.remove(row.key) }
+                        }
+                    )) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(row.info.branch ?? "<detached>")
+                                .font(Theme.mono(11.5))
+                                .foregroundStyle(Theme.chromeForeground)
+                            Text((row.info.path.path as NSString).abbreviatingWithTildeInPath)
+                                .font(Theme.mono(10.5))
+                                .foregroundStyle(Theme.chromeMuted)
+                                .lineLimit(1)
+                                .truncationMode(.head)
+                        }
+                    }
+                    .toggleStyle(.checkbox)
+                }
+            }
+        }
+        .frame(maxHeight: 220)
+    }
+
+    private var launchPicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            fieldLabel("launch")
+            Picker("", selection: Binding(
+                get: { selectedTemplate ?? defaultLaunchTemplate },
+                set: { selectedTemplate = $0 }
+            )) {
+                ForEach(launchTemplates) { t in
+                    Text(t.title).tag(t)
+                }
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
         }
     }
 
     @ViewBuilder
     private var modePicker: some View {
-        // Stay hidden until branches finish loading so the picker doesn't
-        // flash in then disappear when we learn there's no selectable
-        // existing branch. After loading: show only when there's something
-        // to pick — a toggle whose only branch is "new" reads as broken.
-        // Loading typically resolves in well under the sheet's open
-        // animation, so users don't perceive the gap.
-        if branchesLoaded && !selectableExistingBranches.isEmpty {
+        // Stay hidden until branches load so segments don't flash in then
+        // disappear when we learn there's nothing to pick. Each segment
+        // has its own enable condition — "new" is always available;
+        // "existing" only when there are unchecked-out branches; "adopt"
+        // only when disk has worktrees not yet on the sidebar.
+        if branchesLoaded && (hasSelectableExistingBranches || hasAdoptablePool) {
             VStack(alignment: .leading, spacing: 6) {
                 fieldLabel("mode")
                 Picker("", selection: $branchMode) {
                     Text("new").tag(BranchModeUI.newBranch)
-                    Text("existing").tag(BranchModeUI.existing)
+                    if hasSelectableExistingBranches {
+                        Text("existing").tag(BranchModeUI.existing)
+                    }
+                    if hasAdoptablePool {
+                        Text("adopt").tag(BranchModeUI.adopt)
+                    }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
@@ -225,12 +334,22 @@ struct CreateWorktreeSheet: View {
         }
     }
 
+    private var hasSelectableExistingBranches: Bool {
+        !selectableExistingBranches.isEmpty
+    }
+
+    private var hasAdoptablePool: Bool {
+        !adoptableRows.isEmpty
+    }
+
     @ViewBuilder
     private var branchField: some View {
+        // Only rendered for `.newBranch` / `.existing` — `form` dispatches
+        // `.adopt` to `adoptForm`. `if/else if` over the relevant cases
+        // keeps the switch out of dead-arm territory.
         VStack(alignment: .leading, spacing: 6) {
             fieldLabel(branchMode == .newBranch ? "new-branch" : "existing-branch")
-            switch branchMode {
-            case .newBranch:
+            if branchMode == .newBranch {
                 TextField("feat-x", text: $newBranchName)
                     .textFieldStyle(.plain)
                     .font(Theme.mono(12))
@@ -241,7 +360,7 @@ struct CreateWorktreeSheet: View {
                 if newBranchAlreadyExists {
                     newBranchConflictRow
                 }
-            case .existing:
+            } else if branchMode == .existing {
                 existingBranchMenu
             }
         }
@@ -385,6 +504,8 @@ struct CreateWorktreeSheet: View {
             return branchesLoaded
                 && !existingBranch.isEmpty
                 && !checkedOutBranches.contains(existingBranch)
+        case .adopt:
+            return branchesLoaded && !selectedAdoptPaths.isEmpty
         }
     }
 
@@ -436,6 +557,7 @@ struct CreateWorktreeSheet: View {
         switch branchMode {
         case .newBranch: return normalizedNewBranchName
         case .existing: return existingBranch
+        case .adopt: return ""  // adopt mode doesn't drive path preview
         }
     }
 
@@ -464,34 +586,49 @@ struct CreateWorktreeSheet: View {
         sourceRoot ?? source.workingDirectory
     }
 
-    private func submit() {
-        // worktree-path falls back to the auto-computed default when the
-        // user didn't expand options (or left it blank). The override
-        // wins only when non-empty.
-        let override = worktreePathOverride.trimmingCharacters(in: .whitespacesAndNewlines)
-        let effectivePath = override.isEmpty ? defaultPath : override
-        let expanded = (effectivePath as NSString).expandingTildeInPath
-        let url = URL(fileURLWithPath: expanded)
-
-        let mode: WorktreeManager.BranchMode
-        let branchForDisplay: String
+    private var submitButtonLabel: String {
+        if isWorking {
+            return branchMode == .adopt ? "adopting…" : "creating…"
+        }
         switch branchMode {
-        case .newBranch:
-            let name = normalizedNewBranchName
-            mode = .newBranch(name: name, base: selectedStartRef)
-            branchForDisplay = name
-        case .existing:
-            mode = .existing(branch: existingBranch)
-            branchForDisplay = existingBranch
+        case .newBranch, .existing: return "create worktree"
+        case .adopt: return "adopt"
+        }
+    }
+
+    private func submit() {
+        let template = selectedTemplate ?? defaultLaunchTemplate
+        let kind: Request.Kind
+        switch branchMode {
+        case .newBranch, .existing:
+            // worktree-path falls back to the auto-computed default when
+            // the user didn't expand options (or left it blank). The
+            // override wins only when non-empty.
+            let override = worktreePathOverride.trimmingCharacters(in: .whitespacesAndNewlines)
+            let effectivePath = override.isEmpty ? defaultPath : override
+            let expanded = (effectivePath as NSString).expandingTildeInPath
+            let url = URL(fileURLWithPath: expanded)
+            let mode: WorktreeManager.BranchMode
+            let branchForDisplay: String
+            if branchMode == .newBranch {
+                let name = normalizedNewBranchName
+                mode = .newBranch(name: name, base: selectedStartRef)
+                branchForDisplay = name
+            } else {
+                mode = .existing(branch: existingBranch)
+                branchForDisplay = existingBranch
+            }
+            kind = .create(mode: mode, path: url, branchForDisplay: branchForDisplay)
+        case .adopt:
+            // Pick in display order so adoptions land in the sidebar in
+            // the same order the user saw them in the picker.
+            let picked = adoptableRows.compactMap {
+                selectedAdoptPaths.contains($0.key) ? $0.info : nil
+            }
+            kind = .adopt(worktrees: picked)
         }
 
-        let request = Request(
-            mode: mode,
-            path: url,
-            branchForDisplay: branchForDisplay,
-            template: selectedTemplate ?? defaultLaunchTemplate
-        )
-
+        let request = Request(kind: kind, template: template)
         isWorking = true
         errorMessage = nil
         Task {

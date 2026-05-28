@@ -163,25 +163,45 @@ final class WorkspaceStoreTests: XCTestCase {
         XCTAssertFalse(ids.contains(unrelated.id))
     }
 
-    func testReconcileAdoptsDiskOnlyOrphans() {
-        // A worktree the user `git worktree add`-ed in a shell shows up
-        // in `git worktree list` but isn't yet in the sidebar — reconcile
-        // creates the missing row so kooky's view matches disk.
+    func testCreateWorktreeAdoptKindAddsOneWorkspacePerPickedPath() async {
+        // v0.19.0 "Create Worktree → adopt existing worktree" path —
+        // sheet emits Request(.adopt(...)), store materializes one
+        // workspace per picked Info without running git.
+        let store = makeStore()
+        let source = store.workspaces[0]
+        let before = store.workspaces.count
+        let picked: [WorktreeManager.Info] = [
+            WorktreeManager.Info(path: URL(fileURLWithPath: "/tmp/adopt-a"), branch: "feat-a"),
+            WorktreeManager.Info(path: URL(fileURLWithPath: "/tmp/adopt-b"), branch: "feat-b"),
+        ]
+        let request = CreateWorktreeSheet.Request(
+            kind: .adopt(worktrees: picked),
+            template: .terminal
+        )
+        let outcome = await store.createWorktree(source: source, request: request)
+        XCTAssertEqual(outcome, .success)
+        XCTAssertEqual(store.workspaces.count, before + 2)
+        let adopted = store.workspaces.filter { $0.worktreeParentId == source.id }
+        XCTAssertEqual(adopted.count, 2)
+        XCTAssertEqual(adopted.map(\.worktreeBranch).compactMap { $0 }.sorted(), ["feat-a", "feat-b"])
+    }
+
+    func testReconcileDoesNotAdoptDiskOnlyOrphans() {
+        // v0.19.0 reverses v0.18.x: a worktree the user `git worktree add`-ed
+        // in a shell stays out of the sidebar until they explicitly adopt it
+        // via Create Worktree → adopt existing. The motivating user feedback:
+        // "auto-adopted entries are noise I can't easily dismiss."
         let store = makeStore()
         let source = store.workspaces[0]
         XCTAssertTrue(store.workspaces.filter { $0.worktreeParentId == source.id }.isEmpty)
-        let orphan = WorktreeManager.Info(
-            path: URL(fileURLWithPath: "/tmp/source-feat-x"),
-            branch: "feat-x"
-        )
         store.reconcile(source: source, diskWorktrees: [
             WorktreeManager.Info(path: source.workingDirectory, branch: "main"),
-            orphan
+            WorktreeManager.Info(path: URL(fileURLWithPath: "/tmp/source-feat-x"), branch: "feat-x")
         ])
-        let adopted = store.workspaces.filter { $0.worktreeParentId == source.id }
-        XCTAssertEqual(adopted.count, 1)
-        XCTAssertEqual(adopted.first?.workingDirectory.path, "/tmp/source-feat-x")
-        XCTAssertEqual(adopted.first?.worktreeBranch, "feat-x")
+        XCTAssertTrue(
+            store.workspaces.filter { $0.worktreeParentId == source.id }.isEmpty,
+            "reconcile must not auto-adopt disk-only worktrees in v0.19.0"
+        )
     }
 
     func testReconcileClosesSidebarOnlyZombies() {
@@ -198,70 +218,6 @@ final class WorkspaceStoreTests: XCTestCase {
             WorktreeManager.Info(path: source.workingDirectory, branch: "main")
         ])
         XCTAssertTrue(store.workspaces.filter { $0.worktreeParentId == source.id }.isEmpty)
-    }
-
-    func testReconcileAdoptDoesNotClobberActiveWorkspace() {
-        // Repro for the P0 review finding: addWorkspace used to always
-        // overwrite activeWorkspaceId, so reconcile silently picked the
-        // last adopted orphan as active on every launch with orphans.
-        let store = makeStore()
-        let activeId = store.activeWorkspaceId
-        let source = store.addWorkspace(workingDirectory: projectA)
-        store.activateWorkspace(store.workspaces[0])
-        let pinnedActiveId = store.activeWorkspaceId
-        XCTAssertEqual(pinnedActiveId, activeId)
-
-        store.reconcile(source: source, diskWorktrees: [
-            WorktreeManager.Info(path: source.workingDirectory, branch: "main"),
-            WorktreeManager.Info(path: URL(fileURLWithPath: "/tmp/projectA-orphan"), branch: "orphan")
-        ])
-        XCTAssertEqual(store.activeWorkspaceId, pinnedActiveId,
-                       "adopt must not steal the active selection")
-    }
-
-    func testAdoptedWorktreeRowInsertsAfterItsParent() {
-        // Compact-mode sidebar walks `store.workspaces` in array order, so
-        // a newly adopted worktree must land next to its source — not at
-        // the end of the array where unrelated workspaces sit.
-        let store = makeStore()
-        let source = store.addWorkspace(workingDirectory: projectA)
-        let unrelated = store.addWorkspace(workingDirectory: projectB)
-
-        store.reconcile(source: source, diskWorktrees: [
-            WorktreeManager.Info(path: source.workingDirectory, branch: "main"),
-            WorktreeManager.Info(path: URL(fileURLWithPath: "/tmp/projectA-feat"), branch: "feat")
-        ])
-        guard let sourceIdx = store.workspaces.firstIndex(where: { $0.id == source.id }) else {
-            return XCTFail("source missing")
-        }
-        let adopted = store.workspaces[sourceIdx + 1]
-        XCTAssertEqual(adopted.worktreeParentId, source.id)
-        XCTAssertEqual(adopted.worktreeBranch, "feat")
-        XCTAssertEqual(store.workspaces[sourceIdx + 2].id, unrelated.id,
-                       "unrelated workspace must come after the adopted worktree")
-    }
-
-    func testReconcileDoesNotAdoptWorktreeAlreadyAttachedElsewhere() {
-        // If the user has the same repo opened as two top-level workspaces
-        // (⌘O twice), reconcile runs once per source. The second pass
-        // must NOT re-adopt the same disk worktree that the first pass
-        // already attached — otherwise sidebar grows a duplicate row.
-        let store = makeStore()
-        let firstSource = store.workspaces[0]
-        let secondSource = store.addWorkspace(workingDirectory: projectA)
-        // First source already holds the worktree (simulate first pass).
-        _ = store.addWorkspace(
-            workingDirectory: URL(fileURLWithPath: "/tmp/shared-feat"),
-            worktreeParent: firstSource, worktreeBranch: "feat"
-        )
-        let beforeCount = store.workspaces.count
-        // Second source's reconcile sees the same disk worktree.
-        store.reconcile(source: secondSource, diskWorktrees: [
-            WorktreeManager.Info(path: secondSource.workingDirectory, branch: "main"),
-            WorktreeManager.Info(path: URL(fileURLWithPath: "/tmp/shared-feat"), branch: "feat")
-        ])
-        XCTAssertEqual(store.workspaces.count, beforeCount,
-                       "duplicate adopt must be skipped — the worktree is already in sidebar under another source")
     }
 
     func testWorktreePathIsPinnedAndIndependentOfWorkingDirectoryDrift() {
@@ -301,22 +257,32 @@ final class WorkspaceStoreTests: XCTestCase {
                       "drifted-cwd worktree must not be treated as a zombie")
     }
 
-    func testReconcileUsesStableSourceRootWhenSourceCwdDriftedToSubdirectory() {
-        // Source workspaces also drift via OSC 7. If the active shell is in
-        // `/repo/sub`, `git worktree list` still reports `/repo` as the
-        // source's own root; reconcile must filter that root out instead of
-        // adopting it as a child worktree.
+    func testReconcileUsesStableSourceRootForExistingWorktreeZombieCheck() {
+        // v0.19.0 no longer adopts disk-only entries, but zombie cleanup
+        // still needs the stable source root: a worktree workspace whose
+        // disk dir is gone (`/tmp/projectA-feat` removed) gets dropped,
+        // while one whose disk dir is still present (matching by
+        // worktreePath, not the drifted source cwd) survives.
         let store = makeStore()
         let source = store.addWorkspace(workingDirectory: URL(fileURLWithPath: "/tmp/projectA/sub"))
+        let stillThere = store.addWorkspace(
+            workingDirectory: URL(fileURLWithPath: "/tmp/projectA-feat"),
+            worktreeParent: source, worktreeBranch: "feat"
+        )
+        _ = store.addWorkspace(
+            workingDirectory: URL(fileURLWithPath: "/tmp/projectA-zombie"),
+            worktreeParent: source, worktreeBranch: "zombie"
+        )
 
         store.reconcile(source: source, sourceRoot: projectA, diskWorktrees: [
             WorktreeManager.Info(path: projectA, branch: "main"),
             WorktreeManager.Info(path: URL(fileURLWithPath: "/tmp/projectA-feat"), branch: "feat")
         ])
 
-        let children = store.workspaces.filter { $0.worktreeParentId == source.id }
-        XCTAssertEqual(children.count, 1)
-        XCTAssertEqual(children.first?.workingDirectory.path, "/tmp/projectA-feat")
+        let surviving = store.workspaces.filter { $0.worktreeParentId == source.id }
+        XCTAssertEqual(surviving.count, 1)
+        XCTAssertEqual(surviving.first?.id, stillThere.id,
+                       "matched-disk worktree survives; missing-from-disk one drops")
     }
 
     func testReconcileLeavesMatchedPairsUntouched() {
@@ -368,6 +334,33 @@ final class WorkspaceStoreTests: XCTestCase {
         XCTAssertNil(store.pendingCloseSourceRequest)
     }
 
+    func testPerformCloseSourceAlsoDeleteFalseSkipsGitRemoveEntirely() async {
+        // v0.19.0 default — close drops sidebar entries only, never
+        // touches disk. The fake worktree path used in the failure test
+        // would normally bomb on `git worktree remove`; with alsoDelete
+        // false, we skip the subprocess entirely so the close succeeds.
+        let store = makeStore()
+        let source = store.addWorkspace(workingDirectory: projectA)
+        let fakePath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kooky-fake-wt-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: fakePath, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: fakePath) }
+        let wt = store.addWorkspace(
+            workingDirectory: fakePath,
+            worktreeParent: source, worktreeBranch: "feat"
+        )
+        let request = WorkspaceStore.CloseSourceRequest(source: source, worktrees: [wt])
+        let message = await store.performCloseSource(request, alsoDelete: false)
+        XCTAssertNil(message, "no git invocation means no error to surface")
+        XCTAssertFalse(store.workspaces.contains { $0.id == source.id })
+        XCTAssertFalse(store.workspaces.contains { $0.id == wt.id })
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: fakePath.path),
+            "disk dir must survive alsoDelete=false close"
+        )
+        XCTAssertNil(store.pendingCloseSourceRequest)
+    }
+
     func testPerformCloseSourceAbortsWhenGitRemoveFails() async {
         // A fake existing directory that is not a git worktree causes
         // `git worktree remove` to fail; abort means source + worktrees
@@ -383,7 +376,7 @@ final class WorkspaceStoreTests: XCTestCase {
             worktreeParent: source, worktreeBranch: "feat"
         )
         let request = WorkspaceStore.CloseSourceRequest(source: source, worktrees: [wt])
-        let message = await store.performCloseSource(request)
+        let message = await store.performCloseSource(request, alsoDelete: true)
         XCTAssertNotNil(message, "git remove must fail on fake worktree path")
         XCTAssertTrue(store.workspaces.contains { $0.id == source.id })
         XCTAssertTrue(store.workspaces.contains { $0.id == wt.id })
@@ -448,7 +441,7 @@ final class WorkspaceStoreTests: XCTestCase {
         let p1 = store.addWorkspace(workingDirectory: projectA)
         let p2 = store.addWorkspace(workingDirectory: projectB)
         let request = WorkspaceStore.BulkRemovalRequest(keeping: kept, others: [p1, p2])
-        let message = await store.performCloseOthers(request)
+        let message = await store.performCloseOthers(request, alsoDelete: false)
         XCTAssertNil(message)
         XCTAssertEqual(store.workspaces.count, 1)
         XCTAssertEqual(store.workspaces.first?.id, kept.id)
@@ -471,7 +464,7 @@ final class WorkspaceStoreTests: XCTestCase {
             worktreeParent: other, worktreeBranch: "feat"
         )
         let request = WorkspaceStore.BulkRemovalRequest(keeping: kept, others: [other, wt])
-        let message = await store.performCloseOthers(request)
+        let message = await store.performCloseOthers(request, alsoDelete: true)
         XCTAssertNotNil(message, "git remove must fail on fake worktree path")
         XCTAssertTrue(store.workspaces.contains { $0.id == other.id })
         XCTAssertTrue(store.workspaces.contains { $0.id == wt.id })
