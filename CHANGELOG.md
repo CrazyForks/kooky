@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.22.3 — 2026-06-01
+
+- Fixed agent activity not updating when you launch an agent by typing its command (`claude` / `codex` / …) directly in the terminal — macOS had been silently killing the small helper kooky uses to detect it. Claude's hooks and the tool-call pill are restored too.
+
 ## v0.22.2 — 2026-06-01
 
 - Split a pane straight from its tab bar — two buttons on the right (split right / split down) do the same thing as ⌘D / ⌘⇧D, so splitting is right there instead of behind a shortcut.

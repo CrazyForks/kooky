@@ -243,13 +243,38 @@ enum KookyShellIntegration {
         return dir
     }()
 
-    /// Absolute path to the bundled `KookyHook` helper binary. Lives next to
-    /// the main executable for both `swift run` (`.build/<config>/`) and
-    /// `.app` bundles (`Contents/MacOS/`).
+    /// Absolute path to the `KookyHook` helper we exec for IPC. We do NOT run
+    /// it in place from the bundle: macOS Gatekeeper silently SIGKILLs an
+    /// adhoc-signed (unnotarized) *secondary* binary the first time its cdhash
+    /// is assessed from inside an app in `/Applications`, and a helper we exec
+    /// ourselves has no "Open Anyway" affordance to clear that the way the
+    /// main binary does — so every build that changes KookyHook's code (new
+    /// cdhash) would break manual agent detection, Claude hooks, and tool
+    /// pills on first install. The exact same bytes run fine from a path
+    /// outside `/Applications` (verified: a /tmp copy exits 0 where the
+    /// bundled one exits 137). So copy KookyHook into Application Support — a
+    /// location Gatekeeper doesn't exec-assess — on launch and run the copy.
+    /// Re-copied every launch so a freshly-installed build's helper supersedes
+    /// the stale copy. Falls back to the in-bundle path if the copy fails
+    /// (dev `swift run` runs fine in place from `.build/<config>/` anyway).
     static let kookyHookBinaryPath: String = {
         guard let exe = Bundle.main.executablePath else { return "" }
-        let dir = (exe as NSString).deletingLastPathComponent
-        return (dir as NSString).appendingPathComponent("KookyHook")
+        let bundled = (exe as NSString).deletingLastPathComponent + "/KookyHook"
+        let fm = FileManager.default
+        // No bundled helper next to us (e.g. the xctest runner) → return the
+        // bundle path and DON'T touch the Application Support copy, so running
+        // the test suite can't clobber the helper a live kooky depends on.
+        guard fm.fileExists(atPath: bundled) else { return bundled }
+        // `kookyBinDirectory` is the App Support `kooky/bin` dir (already created).
+        let dest = (kookyBinDirectory as NSString).appendingPathComponent("KookyHook")
+        do {
+            try? fm.removeItem(atPath: dest)  // throws when absent — copyItem just needs a clear dest
+            try fm.copyItem(atPath: bundled, toPath: dest)
+            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dest)
+            return dest
+        } catch {
+            return bundled
+        }
     }()
 
     /// Per-session env vars our wrappers + hook helper read. Caller supplies
