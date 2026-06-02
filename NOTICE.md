@@ -19,7 +19,13 @@ upstream license; nothing here is dual-licensed under kooky's MIT.
 ### lobe-icons (brand PNGs)
 - Source: <https://github.com/lobehub/lobe-icons>
 - License: MIT
-- Files: `Sources/KookyKit/Resources/Icons/{claudecode,codex,gemini,opencode,amp,cursor,githubcopilot}.png`
+- Files: `Sources/KookyKit/Resources/Icons/{claudecode,codex,gemini,opencode,amp,cursor,githubcopilot,grok,antigravity,kimi,kiro}.png`
+
+### Pi logo (brand PNG)
+- Source: <https://pi.dev> (press kit)
+- Owner: Earendil Inc.
+- License: MIT
+- File: `Sources/KookyKit/Resources/Icons/pi.png`
 
 ## Pulled at build time
 

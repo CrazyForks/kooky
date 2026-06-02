@@ -22,7 +22,7 @@
 
 **垂直 tab、分屏、多窗口。** 侧边栏管理所有 workspace，三档宽度可切换（`⌘⌃S`）。每个 pane 都有独立 tab 栏和当前 tab，用 tab 栏右侧两个按钮或 ⌘D / ⌘⇧D 就能向右 / 向下分屏。⌘R 重命名 tab、⌘⇧R 重命名 workspace。`⌘⇧N` 打开新窗口。tab 可以拖动排序、跨 pane 移动，也能拖进另一个窗口 —— 实时会话整体带过去，scrollback 和正在跑的进程都在。重启后状态自动恢复，每个打开的窗口都会还原。把任意文件夹打开成新 workspace:从 Finder 拖到 sidebar,或者按 ⌘O。按 `⌘⇧E` 把当前 pane 放大占满 workspace 再按一次还原 —— 其他 pane 滑出视野但进程还在跑。
 
-**一键启动各种 agent。** Claude Code · Codex · Gemini CLI · OpenCode · Amp · Cursor CLI · Copilot CLI · Grok Build · Antigravity CLI · Kimi Code · Pi。`+` 菜单里选一个,agent 会在第一个 prompt 出现前启动。Claude 对话还会跨 kooky 重启自动 resume,关掉 tab 再打开能从离开的地方接上。
+**一键启动各种 agent。** Claude Code · Codex · Gemini CLI · OpenCode · Amp · Cursor CLI · Copilot CLI · Grok Build · Antigravity CLI · Kimi Code · Pi · Kiro CLI。`+` 菜单里选一个,agent 会在第一个 prompt 出现前启动。Claude 对话还会跨 kooky 重启自动 resume,关掉 tab 再打开能从离开的地方接上。
 
 **Git worktree。** 右键任意 git workspace → "Create Worktree…",在新 branch 上(或 checkout 已有 branch)起一个 worktree。Worktree 在 sidebar 里缩进显示在源 repo 下面,有自己的 tab + agent —— 让 Claude 在 feature branch 上跑活,不打扰 main 上正在跑的进程。命令行 `git worktree add` 建的 worktree,下次启动 kooky 也会自动出现在 sidebar。
 
