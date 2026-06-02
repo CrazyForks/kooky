@@ -140,9 +140,14 @@ final class ShellIntegrationTests: XCTestCase {
 
         XCTAssertTrue(script.contains(#"_kooky_root="${TMPDIR:-/tmp}/kooky-agent-markers-"#))
         XCTAssertTrue(script.contains("for _kooky_slug in 'claude' 'codex'"))
-        XCTAssertTrue(script.contains("'cursor-agent'"))
-        XCTAssertTrue(script.contains("'kimi'"))
-        XCTAssertTrue(script.contains("'pi'"), "remote marker slugs must include pi so a remote `pi` emits markers")
+        // Every builtin agent's binary must flow into the bootstrap (the slug
+        // list derives from `builtin`), so a remote launch of any agent —
+        // including future ones — emits markers. A new agent silently missing
+        // from the SSH bootstrap fails here instead of shipping a dead shim.
+        for binary in AgentTemplate.builtin.compactMap(\.initialCommand) {
+            XCTAssertTrue(script.contains("'\(binary)'"),
+                          "remote bootstrap must include a marker shim for '\(binary)'")
+        }
         XCTAssertTrue(script.contains(#"printf '\033]2;kooky-agent:%s:running\a'"#))
         XCTAssertTrue(script.contains(#"printf '\033]2;kooky-agent:%s:ended\a'"#))
         XCTAssertTrue(script.contains("export KOOKY_AGENT_MARKERS=1"))

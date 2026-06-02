@@ -194,6 +194,8 @@ final class AgentTemplateTests: XCTestCase {
         XCTAssertEqual(antigravityConfig.environment["KOOKY_AGENT"], "agy")
         let kimiConfig = AgentTemplate.kimi.makeSessionConfig(resumeId: "abc-123")
         XCTAssertEqual(kimiConfig.environment["KOOKY_AGENT"], "kimi")
+        let kiroConfig = AgentTemplate.kiro.makeSessionConfig(resumeId: "abc-123")
+        XCTAssertEqual(kiroConfig.environment["KOOKY_AGENT"], "kiro-cli")
     }
 
     func testSupportsResumeMatchesResumeFlag() {
@@ -203,6 +205,7 @@ final class AgentTemplateTests: XCTestCase {
         XCTAssertFalse(AgentTemplate.grok.supportsResume)
         XCTAssertFalse(AgentTemplate.antigravity.supportsResume)
         XCTAssertFalse(AgentTemplate.kimi.supportsResume)
+        XCTAssertFalse(AgentTemplate.kiro.supportsResume)
         XCTAssertTrue(AgentTemplate.pi.supportsResume)
     }
 
@@ -230,6 +233,7 @@ final class AgentTemplateTests: XCTestCase {
         XCTAssertFalse(AgentTemplate.gemini.reportsToolCalls)
         XCTAssertFalse(AgentTemplate.kimi.reportsToolCalls)
         XCTAssertFalse(AgentTemplate.copilot.reportsToolCalls)
+        XCTAssertFalse(AgentTemplate.kiro.reportsToolCalls)
     }
 
     func testFromCustomInheritsReportsToolCallsFromBase() {
@@ -286,23 +290,24 @@ final class AgentTemplateTests: XCTestCase {
     }
 
     func testMonochromeBrandsTintedAndColorBrandsRenderedAsIs() {
-        // The five white-mark brands get template-tinted so they survive a
-        // light theme; the color brands keep their own pixels on every theme.
+        // The white-mark brands get template-tinted so they survive a light
+        // theme; the color brands keep their own pixels on every theme.
         for mono in ["opencode", "cursor", "githubcopilot", "grok", "kimi", "pi"] {
             XCTAssertTrue(AgentIcon.isMonochrome(mono), "\(mono) should be template-tinted")
         }
-        for color in ["claudecode", "codex", "gemini", "amp", "antigravity"] {
+        for color in ["claudecode", "codex", "gemini", "amp", "antigravity", "kiro"] {
             XCTAssertFalse(AgentIcon.isMonochrome(color), "\(color) is a color brand, render as-is")
         }
     }
 
-    func testMakeSessionConfigPositionalPromptForCodexCursorGeminiOpencodeGrok() {
+    func testMakeSessionConfigPositionalPromptForFlaglessAgents() {
         let pairs: [(AgentTemplate, String)] = [
             (.codex, "codex"),
             (.cursor, "cursor-agent"),
             (.gemini, "gemini"),
             (.opencode, "opencode"),
             (.grok, "grok"),
+            (.kiro, "kiro-cli"),
         ]
         for (template, bin) in pairs {
             let config = template.makeSessionConfig(initialPrompt: "hello")

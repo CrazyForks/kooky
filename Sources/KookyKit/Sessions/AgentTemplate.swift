@@ -401,9 +401,38 @@ extension AgentTemplate {
         reportsToolCalls: true
     )
 
-    /// The 12 templates shipped with kooky. User-defined custom agents are
+    /// Kiro CLI — AWS's agentic coding CLI, the terminal sibling of the Kiro
+    /// IDE; binary `kiro-cli` (curl-installed into `~/.local/bin`). We wrap
+    /// `kiro-cli`, NOT `kiro`: the bare `kiro` command launches the Kiro IDE
+    /// (a VS Code fork), so shimming it would hijack the editor — the distinct
+    /// binary name means no readlink guard is needed (unlike Antigravity's
+    /// `agy`). Bracket wrapper only: Kiro's hooks are context-injection
+    /// ("pre/post command" context fed to the model), not lifecycle events
+    /// kooky can map to attention, so the dot comes from the wrapper's
+    /// running/ended.
+    ///
+    /// Prompt is positional (`kiro-cli -- "<prompt>"`) — `kiro-cli` with no
+    /// subcommand defaults to `kiro-cli chat`, which takes the prompt as its
+    /// first positional. (`--no-interactive` exists but single-shots like
+    /// Kimi's `-p`, so it's not used for Ask.) Resume stays unwired: Kiro has
+    /// `--resume` / `--resume-id <id>`, but like every non-Claude/Pi agent
+    /// kooky has no id-capture path, so `resumeFlag` is nil. The lobe-icon is
+    /// the full-color brand mark (purple tile + white ghost), rendered as-is on
+    /// every theme like the codex / gemini / amp / antigravity marks — so it's
+    /// deliberately NOT in `AgentIcon.monochromeAssets`; `tintHex: "9046FF"`
+    /// (brand purple) drives the sidebar pip.
+    static let kiro = AgentTemplate(
+        id: "kiro",
+        title: "Kiro CLI",
+        symbol: "cloud.fill",
+        iconAsset: "kiro",
+        tintHex: "9046FF",
+        initialCommand: "kiro-cli"
+    )
+
+    /// The 13 templates shipped with kooky. User-defined custom agents are
     /// merged on top via `all` at runtime.
-    static let builtin: [AgentTemplate] = [.terminal, .claudeCode, .codex, .gemini, .opencode, .amp, .cursor, .copilot, .grok, .antigravity, .kimi, .pi]
+    static let builtin: [AgentTemplate] = [.terminal, .claudeCode, .codex, .gemini, .opencode, .amp, .cursor, .copilot, .grok, .antigravity, .kimi, .pi, .kiro]
 
     /// All templates available right now — `builtin` plus the user's custom
     /// agents from Settings → Agents. MainActor-isolated because it

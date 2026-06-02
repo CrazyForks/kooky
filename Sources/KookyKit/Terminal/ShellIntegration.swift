@@ -337,6 +337,7 @@ enum KookyShellIntegration {
         writeWrapper(name: "agy", script: antigravityWrapperScript)
         writeWrapper(name: "kimi", script: bracketWrapperScript(slug: "kimi"))
         writeWrapper(name: "pi", script: bracketWrapperScript(slug: "pi"))
+        writeWrapper(name: "kiro-cli", script: bracketWrapperScript(slug: "kiro-cli"))
         refreshSshRemoteAgentDetection(enabled: sshRemoteAgentDetection)
 
         let hookCmd = kookyHookBinaryPath
@@ -361,6 +362,12 @@ enum KookyShellIntegration {
         // to pi's session / turn events and pings KookyHook, same model as the
         // OpenCode plugin — so the dot also reaches `attention` (waiting on
         // you), not just the bracket wrapper's running/ended.
+        //
+        // Kiro CLI (`kiro-cli`) is bracket-wrapper-only: its hooks are
+        // context-injection ("pre/post command" context for the model), not a
+        // lifecycle feed kooky can map to attention, so running/ended is all
+        // the wrapper surfaces. We wrap `kiro-cli`, never `kiro` (the IDE
+        // launcher).
     }
 
     static func refreshSshRemoteAgentDetection(enabled: Bool) {
@@ -710,10 +717,12 @@ enum KookyShellIntegration {
         "[[ -n \"$KOOKY_AGENT_MARKERS\" ]] && printf '\\033]2;\(AgentStatusMarker.title(slug: slug, event: event))\\a' > /dev/tty 2>/dev/null"
     }
 
-    private static let remoteAgentMarkerSlugs = [
-        "claude", "codex", "gemini", "opencode", "amp",
-        "cursor-agent", "copilot", "grok", "agy", "kimi", "pi",
-    ]
+    /// Binary slugs the SSH remote bootstrap installs marker-emitting shims for.
+    /// Derived from `builtin` so every agent — and every future one — is covered
+    /// without a second hand-maintained roster to keep in sync. `compactMap`
+    /// drops Terminal (nil `initialCommand`); customs are excluded on purpose
+    /// (their binary is user-defined, unknowable to a remote pre-staged shim).
+    private static let remoteAgentMarkerSlugs = AgentTemplate.builtin.compactMap(\.initialCommand)
 
     /// Common bash header for every wrapper: locate the real binary on
     /// `$PATH` skipping our own dir, abort if missing.

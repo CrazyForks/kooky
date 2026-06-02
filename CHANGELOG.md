@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.23.0 — 2026-06-02
+
+- **Kiro CLI** — AWS's `kiro-cli` agent joins the launcher. Pick it from the `+` menu or set it as your default agent; the sidebar activity dot tracks when it's running.
+
 ## v0.22.6 — 2026-06-02
 
 - Right-click the Dock icon to open a new window, or jump straight to any workspace or tab across all your open windows.
