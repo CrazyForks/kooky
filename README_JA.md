@@ -34,6 +34,8 @@ AI コーディングのために作られた、ミニマルでモダンな macO
 
 **Agent ステータスをリアルタイム表示。** サイドバーのドットが各 agent の状態を示します —— 実行中 (青)、ユーザー待ち (琥珀)、アイドル (なし)。直前のコマンドが非ゼロ終了したときは tab と workspace のドットが赤くなり、ホバーで `exit N · 12.4s` が確認できます。Claude Code と Pi のセッションでは pane 下部のステータスバーに agent が今走らせているツール (Bash / Edit / Read など) と経過時間も表示されます —— pill をクリックすればセッション全体の履歴を確認でき、失敗したツール呼び出しはすぐに赤くなります。pill は Settings → Status Bar で agent ごとに表示/非表示を切り替えられます。
 
+**通知。** 見ていない tab で agent がユーザー待ちになったり、そこでコマンドが失敗したりすると、kooky が macOS 通知を出します —— 種類ごとに Settings → Notifications でオン / オフできます。上部 chrome のベル (⇧⌘I) は、それらの通知を全ウィンドウ横断で 1 つの受信箱にまとめます —— 誰が待っているか、何が失敗したか、何が完了したか —— 未読があれば赤いドットが点きます。エントリをクリックすればその tab に直接ジャンプ、tab に切り替えればその通知は自動でクリアされます。
+
 **作業環境の状態が一目で見える。** pane 下部のステータスバーに Git branch + diff (`N files +X −Y`)、Python venv、Node バージョン、有効中の proxy (`https_proxy` / `http_proxy` / `all_proxy`) を表示。agent の Bash ツールや別ターミナルで branch を切り替えても自動で更新されます。Node バージョンや Git branch の pill をクリックすればコマンドを打たずに切り替え可能、proxy pill をクリックすると完全な `name=value` を表示してコピーできます。
 
 **SwiftUI ネイティブ、ミニマルな chrome。** Onest + JetBrains Mono。カスタム About パネル、ショートカットヒント付きのネイティブメニュー、日本語 IME を完全サポート。
