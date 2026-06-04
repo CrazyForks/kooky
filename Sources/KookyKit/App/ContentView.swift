@@ -15,6 +15,10 @@ struct ContentView: View {
                 }
                 mainPane
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if store.rightSidebarMode != .hidden {
+                    Rectangle().fill(Theme.chromeHairline).frame(width: 1)
+                    AgentOverviewSidebar(mode: store.rightSidebarMode)
+                }
             }
         }
         .background(chromeBackground)
@@ -52,6 +56,16 @@ struct ContentView: View {
                         EmptyView()
                     }
                 }
+            HoverableIconButton(
+                systemName: "square.grid.2x2",
+                fontSize: 12,
+                size: 28,
+                help: "Agent Panel"
+            ) {
+                withAnimation(Theme.chromeTransition) {
+                    store.setRightSidebarMode(store.rightSidebarMode.next)
+                }
+            }
             InboxBell()
                 .padding(.trailing, 8)
         }
@@ -80,4 +94,5 @@ struct ContentView: View {
         case .hidden: return "Show sidebar"
         }
     }
+
 }

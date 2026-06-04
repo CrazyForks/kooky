@@ -16,7 +16,12 @@ private enum MenuTag {
 
 @MainActor
 public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
-    private var windowControllers: [KookyWindowController] = []
+    private var windowControllers: [KookyWindowController] = [] {
+        // Every window add/remove flows through this one property, so bump the
+        // agent monitor here — the right sidebar re-aggregates over the new
+        // window set, and no future mutation site can forget to.
+        didSet { AgentMonitor.shared.windowGeneration += 1 }
+    }
     private let appPersistence = AppPersistence()
     /// Set in `applicationShouldTerminate` so `windowWillClose` (fired for
     /// every window during ⌘Q) can tell "app quitting" from "user closed
@@ -84,6 +89,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             self?.activateFromNotification(sessionId)
         }
         notificationManager.start()
+        // The right-side agent overview reads the global AgentMonitor; give it
+        // the live window stores to aggregate + the same reveal-tab jump.
+        AgentMonitor.shared.storesProvider = { [weak self] in
+            self?.windowControllers.map(\.store) ?? []
+        }
+        AgentMonitor.shared.onActivate = { [weak self] sessionId in
+            self?.activateFromNotification(sessionId)
+        }
 
         // Sweep paste-image cache off the launch hot path. macOS's
         // own Caches eviction is unreliable; without this a heavy

@@ -8,6 +8,7 @@ struct PersistedState: Codable, Equatable {
     var workspaces: [PersistedWorkspace]
     var activeWorkspaceId: UUID?
     var sidebarMode: SidebarMode?
+    var rightSidebarMode: SidebarMode?
 }
 
 /// Root of the multi-window `state.json`. Each `PersistedWindow` is one

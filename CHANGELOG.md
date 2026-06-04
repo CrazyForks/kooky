@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.25.0 — 2026-06-04
+
+- **Agent panel** — a right-side sidebar (top-bar toggle, three collapse states like the left one) listing every agent across all your windows, sorted by who needs you first: waiting on you, then failed, running, idle. Click a row to jump straight to that tab; compact mode shrinks it to a rail of status-tinted icons.
+
 ## v0.24.1 — 2026-06-03
 
 - **Notification center** — a bell in the top bar (⇧⌘I) collects agent alerts from every window: who's waiting on you, what failed, what finished. A red dot marks unread; click any entry to jump straight to that tab.

@@ -62,6 +62,11 @@ final class WorkspaceStore {
     /// even when the source lives in a different pane.
     var draggingTabId: UUID?
     var sidebarMode: SidebarMode = .full
+    /// Right-side agent-overview sidebar — per-window collapse state, sharing
+    /// the left sidebar's three modes (full / compact / hidden). The content is
+    /// the global `AgentMonitor`; each window toggles its own panel. Defaults
+    /// to hidden since it's opt-in.
+    var rightSidebarMode: SidebarMode = .hidden
     /// Fired when the last workspace closes. `KookyWindowController` wires
     /// this to close its window — a window with zero workspaces is empty.
     var onBecameEmpty: (() -> Void)?
@@ -70,6 +75,12 @@ final class WorkspaceStore {
     func setSidebarMode(_ mode: SidebarMode) {
         guard sidebarMode != mode else { return }
         sidebarMode = mode
+        scheduleSave()
+    }
+
+    func setRightSidebarMode(_ mode: SidebarMode) {
+        guard rightSidebarMode != mode else { return }
+        rightSidebarMode = mode
         scheduleSave()
     }
 
@@ -1229,6 +1240,7 @@ final class WorkspaceStore {
             ? state.activeWorkspaceId
             : workspaces.first?.id
         sidebarMode = state.sidebarMode ?? .full
+        rightSidebarMode = state.rightSidebarMode ?? .hidden
     }
 
     private func restorePane(_ persisted: PersistedPaneNode, fm: FileManager) -> PaneNode? {
@@ -1479,7 +1491,8 @@ final class WorkspaceStore {
         PersistedState(
             workspaces: workspaces.map(PersistedWorkspace.init),
             activeWorkspaceId: activeWorkspaceId,
-            sidebarMode: sidebarMode
+            sidebarMode: sidebarMode,
+            rightSidebarMode: rightSidebarMode
         )
     }
 }
