@@ -10,7 +10,7 @@
 
 🇬🇧 English  ·  🇨🇳 [中文](README_CN.md)  ·  🇯🇵 [日本語](README_JA.md)
 
-![kooky screenshot](screenshot.png)
+![kooky](img/screenshot-1.png)
 
 A minimal modern terminal built for AI coding. Sidebar workspaces; horizontal / vertical split panes; one-click agent launch; per-agent activity readout; live workspace state with one-click Node and branch switching. Open-source, MIT-licensed. No accounts, no telemetry; app state stays local. GPU rendering via [libghostty](https://github.com/ghostty-org/ghostty).
 
@@ -22,7 +22,11 @@ A minimal modern terminal built for AI coding. Sidebar workspaces; horizontal / 
 
 **Vertical tabs, split panes & windows.** Sidebar workspaces with three-state collapse (`⌘⌃S`). Each pane owns its own tab strip and active tab; split it right or down from the two buttons on its tab bar, or with ⌘D / ⌘⇧D. Rename a tab with ⌘R, a workspace with ⌘⇧R. `⌘⇧N` opens another window. Drag a tab to reorder it, move it across panes, or drop it into a different window — the live session moves whole, scrollback and running process intact. State persists across launches; every open window is restored. Open any folder as a new workspace: drop it onto the sidebar from Finder, or use ⌘O. Press `⌘⇧E` to zoom the active pane to fullscreen and back — the other panes slide off-screen but their processes keep running.
 
+![Vertical tabs on the left, one pane split into four](img/screenshot-2.png)
+
 **One-click AI agent sessions.** Claude Code · Codex · Gemini CLI · OpenCode · Amp · Cursor CLI · Copilot CLI · Grok Build · Antigravity CLI · Kimi Code · Pi · Kiro CLI. Pick one from the `+` menu; the agent boots before your first prompt prints. Claude conversations also auto-resume across kooky restarts so closing and reopening a tab picks up where you left off.
+
+![Every supported agent, each toggleable in Settings](img/screenshot-4.png)
 
 **Git worktrees.** Right-click any git workspace → "Create Worktree…" to spin one up on a new branch (or check out an existing one). Each worktree shows up nested under its source repo in the sidebar with its own tabs + agent — let Claude work on a feature branch without touching what's running on main. Worktrees you create from the command line show up automatically the next time you launch kooky.
 
@@ -35,6 +39,8 @@ A minimal modern terminal built for AI coding. Sidebar workspaces; horizontal / 
 **Agent activity readout.** Sidebar dot tracks each agent in real time — running (blue), waiting on you (amber), idle (none). Tab + workspace dots also turn red when the last command exited non-zero; hover for `exit N · 12.4s`. For Claude Code and Pi sessions, the pane status bar also shows the tool the agent is running right now (Bash / Edit / Read / etc.) and how long — click the pill for the full session history; failed calls turn red immediately. Toggle the pill per agent in Settings → Status Bar.
 
 **Notifications.** When an agent in a tab you're not looking at starts waiting on you, or a command there fails, kooky posts a macOS notification — turn each kind on or off in Settings → Notifications. A bell in the top bar (⇧⌘I) keeps a running inbox of those alerts across every window — who's waiting, what failed, what finished — with a red dot when something's unread. Click an entry to jump straight to that tab; switching to a tab clears its alerts on its own.
+
+![The notification center, collected across every window](img/screenshot-3.png)
 
 **Agent panel.** A right-side sidebar — toggle in the top bar, three collapse states like the left one — lists every agent across all your windows at once, sorted by who needs you first: waiting on you, then failed, then running, then idle. Click any row to jump straight to that tab; compact mode shrinks it to a rail of status-tinted icons.
 

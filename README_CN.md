@@ -10,7 +10,7 @@
 
 🇨🇳 中文  ·  🇬🇧 [English](README.md)  ·  🇯🇵 [日本語](README_JA.md)
 
-![kooky 截图](screenshot.png)
+![kooky](img/screenshot-1.png)
 
 专为 AI coding 优化的极简 macOS 终端。支持侧边栏 workspace 管理、水平 / 垂直分屏、一键启动 agent、实时查看 agent 状态，也能在 pane 底部直接看到 Git、Node、Python 等工作区状态。开源，MIT 许可；不需要账号，不做遥测，应用状态都留在本机。GPU 渲染基于 [libghostty](https://github.com/ghostty-org/ghostty)。
 
@@ -22,7 +22,11 @@
 
 **垂直 tab、分屏、多窗口。** 侧边栏管理所有 workspace，三档宽度可切换（`⌘⌃S`）。每个 pane 都有独立 tab 栏和当前 tab，用 tab 栏右侧两个按钮或 ⌘D / ⌘⇧D 就能向右 / 向下分屏。⌘R 重命名 tab、⌘⇧R 重命名 workspace。`⌘⇧N` 打开新窗口。tab 可以拖动排序、跨 pane 移动，也能拖进另一个窗口 —— 实时会话整体带过去，scrollback 和正在跑的进程都在。重启后状态自动恢复，每个打开的窗口都会还原。把任意文件夹打开成新 workspace:从 Finder 拖到 sidebar,或者按 ⌘O。按 `⌘⇧E` 把当前 pane 放大占满 workspace 再按一次还原 —— 其他 pane 滑出视野但进程还在跑。
 
+![左侧竖直 tab，一个 pane 分成四块](img/screenshot-2.png)
+
 **一键启动各种 agent。** Claude Code · Codex · Gemini CLI · OpenCode · Amp · Cursor CLI · Copilot CLI · Grok Build · Antigravity CLI · Kimi Code · Pi · Kiro CLI。`+` 菜单里选一个,agent 会在第一个 prompt 出现前启动。Claude 对话还会跨 kooky 重启自动 resume,关掉 tab 再打开能从离开的地方接上。
+
+![支持的所有 agent，每个都能在 Settings 里单独开关](img/screenshot-4.png)
 
 **Git worktree。** 右键任意 git workspace → "Create Worktree…",在新 branch 上(或 checkout 已有 branch)起一个 worktree。Worktree 在 sidebar 里缩进显示在源 repo 下面,有自己的 tab + agent —— 让 Claude 在 feature branch 上跑活,不打扰 main 上正在跑的进程。命令行 `git worktree add` 建的 worktree,下次启动 kooky 也会自动出现在 sidebar。
 
@@ -35,6 +39,8 @@
 **Agent 状态实时展示。** 侧边栏圆点显示每个 agent 的状态：运行中（蓝）、等待你处理（琥珀）、空闲（无色）。上一条命令非零退出时，tab 和 workspace 会同步显示红点；悬停可看到 `exit N · 12.4s`。Claude Code 和 Pi 会话还会在 pane 底部状态栏显示 agent 当前正在跑的工具（Bash / Edit / Read 等）和已运行的时间——点击 pill 看完整历史；失败的工具调用立刻变红。可在 Settings → Status Bar 里按 agent 单独开关这个 pill。
 
 **通知。** 你没在看的某个 tab 里 agent 开始等你处理、或那里命令失败时，kooky 会发一条 macOS 系统通知——每一类都能在 Settings → Notifications 里单独开关。顶栏还有个铃铛（⇧⌘I），把这些提醒跨窗口收进一个收件箱——谁在等你、什么失败了、什么跑完了——有没读的就亮红点。点一条直接跳到对应 tab；切到那个 tab，它的提醒会自己清掉。
+
+![跨窗口收集的通知中心](img/screenshot-3.png)
 
 **Agent 面板。** 顶栏有个开关（三种折叠状态，跟左边栏一样）能拉出右侧边栏，把所有窗口里的 agent 一次性列出来，按谁最需要你排序：等你处理、失败、运行中、空闲。点任意一行直接跳到对应 tab；折叠模式会收成一条带状态色圆点的窄图标栏。
 

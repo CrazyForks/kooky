@@ -10,7 +10,7 @@
 
 🇯🇵 日本語  ·  🇬🇧 [English](README.md)  ·  🇨🇳 [中文](README_CN.md)
 
-![kooky のスクリーンショット](screenshot.png)
+![kooky](img/screenshot-1.png)
 
 AI コーディングのために作られた、ミニマルでモダンな macOS ターミナルです。サイドバーで workspace を管理、水平 / 垂直の split pane、ワンクリックで agent を起動、agent のステータスをリアルタイム表示、pane 下部で Git・Node・Python など作業環境の状態が一目で確認できます。オープンソース、MIT ライセンス。アカウント不要、テレメトリなし、アプリの状態は端末内にのみ保存。GPU レンダリングは [libghostty](https://github.com/ghostty-org/ghostty) ベース。
 
@@ -22,7 +22,11 @@ AI コーディングのために作られた、ミニマルでモダンな macO
 
 **垂直 tab、split pane、複数ウィンドウ。** サイドバーで全ての workspace を管理、3 段階の幅切り替え (`⌘⌃S`)。各 pane が独自の tab バーとアクティブ tab を持ち、tab バー右側の 2 つのボタンや ⌘D / ⌘⇧D で右 / 下に分割できます。tab は ⌘R、workspace は ⌘⇧R で名前を変更できます。`⌘⇧N` で新しいウィンドウを開きます。tab はドラッグで並び替え、pane 間の移動、別ウィンドウへの移動が可能 —— セッションが scrollback と実行中のプロセスごとまるごと移動します。アプリ再起動後も状態は復元され、開いていた全ウィンドウが復元されます。任意のフォルダを新しい workspace として開く方法：Finder からサイドバーにドロップするか、⌘O。`⌘⇧E` でアクティブな pane を最大化、もう一度押すと元に戻ります —— 他の pane は画面外にスライドしますが、プロセスは走り続けています。
 
+![左側に垂直 tab、1 つの pane を 4 分割](img/screenshot-2.png)
+
 **ワンクリックで AI agent セッション。** Claude Code · Codex · Gemini CLI · OpenCode · Amp · Cursor CLI · Copilot CLI · Grok Build · Antigravity CLI · Kimi Code · Pi · Kiro CLI。`+` メニューから選ぶだけで、最初の prompt を打つ前に agent が起動します。Claude の会話は kooky の再起動を跨いで自動で resume されるので、tab を閉じて再度開いても直前の続きから再開できます。
+
+![対応する全 agent、それぞれ Settings で切り替え可能](img/screenshot-4.png)
 
 **Git worktree。** 任意の git workspace を右クリック → "Create Worktree…" で新しい branch (または既存 branch の checkout) に対する worktree を作成します。worktree はサイドバーで元のリポジトリの下にネストして表示され、独自の tab + agent を持ちます —— main で何かが走っている最中でも、Claude を feature branch で並行して動かせます。コマンドラインで `git worktree add` した worktree も、次回 kooky 起動時に自動でサイドバーに現れます。
 
@@ -35,6 +39,8 @@ AI コーディングのために作られた、ミニマルでモダンな macO
 **Agent ステータスをリアルタイム表示。** サイドバーのドットが各 agent の状態を示します —— 実行中 (青)、ユーザー待ち (琥珀)、アイドル (なし)。直前のコマンドが非ゼロ終了したときは tab と workspace のドットが赤くなり、ホバーで `exit N · 12.4s` が確認できます。Claude Code と Pi のセッションでは pane 下部のステータスバーに agent が今走らせているツール (Bash / Edit / Read など) と経過時間も表示されます —— pill をクリックすればセッション全体の履歴を確認でき、失敗したツール呼び出しはすぐに赤くなります。pill は Settings → Status Bar で agent ごとに表示/非表示を切り替えられます。
 
 **通知。** 見ていない tab で agent がユーザー待ちになったり、そこでコマンドが失敗したりすると、kooky が macOS 通知を出します —— 種類ごとに Settings → Notifications でオン / オフできます。上部 chrome のベル (⇧⌘I) は、それらの通知を全ウィンドウ横断で 1 つの受信箱にまとめます —— 誰が待っているか、何が失敗したか、何が完了したか —— 未読があれば赤いドットが点きます。エントリをクリックすればその tab に直接ジャンプ、tab に切り替えればその通知は自動でクリアされます。
+
+![全ウィンドウ横断で集約される通知センター](img/screenshot-3.png)
 
 **Agent パネル。** 上部のトグル (左サイドバーと同じ 3 段階の折りたたみ) で右サイドバーを開くと、全ウィンドウの agent を一覧でき、あなたを必要とする順に並びます —— ユーザー待ち、失敗、実行中、アイドル。任意の行をクリックすればその tab に直接ジャンプ、コンパクトモードではステータス色のドット付きアイコンの細い列に縮みます。
 
