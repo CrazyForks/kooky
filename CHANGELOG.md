@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.26.0 — 2026-06-08
+
+- **Prompt composer (⌘L)** — a chat-style box that rises from the bottom of the pane for writing long, multi-line prompts without a stray Return firing them off mid-thought. Return sends to the current agent (or shell), Shift+Return adds a newline, Esc cancels and keeps your draft. Open it with ⌘L or the compose button in the pane status bar.
+
 ## v0.25.0 — 2026-06-04
 
 - **Agent panel** — a right-side sidebar (top-bar toggle, three collapse states like the left one) listing every agent across all your windows, sorted by who needs you first: waiting on you, then failed, running, idle. Click a row to jump straight to that tab; compact mode shrinks it to a rail of status-tinted icons.

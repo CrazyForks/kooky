@@ -87,10 +87,22 @@ private struct PaneView: View {
                             .padding(.trailing, Theme.space3)
                         }
                     }
-                if paneStatusBarHasData(session: active) || workspace.canZoom {
-                    Rectangle().fill(Theme.chromeHairline).frame(height: 1)
-                    PaneStatusBar(session: active, paneId: pane.id, workspace: workspace, store: store)
-                }
+                    .overlay(alignment: .bottom) {
+                        // ⌘L composer rises from the bottom like a chat box.
+                        // Per-pane / per-session, same as search.
+                        if active.composerActive {
+                            PaneComposerBar(
+                                session: active,
+                                onFocusGained: { store.activateTab(active, in: workspace) }
+                            )
+                            .padding(.horizontal, Theme.space3)
+                            .padding(.bottom, Theme.space3)
+                        }
+                    }
+                // Always present now that it hosts the compose button — a
+                // stable bottom affordance, not gated on git / env / zoom data.
+                Rectangle().fill(Theme.chromeHairline).frame(height: 1)
+                PaneStatusBar(session: active, paneId: pane.id, workspace: workspace, store: store)
             } else {
                 Color.clear
             }
@@ -98,9 +110,11 @@ private struct PaneView: View {
         .opacity(paneOpacity)
         .animation(Theme.chromeTransition, value: isFocused)
         .onChange(of: pane.activeTab.map { paneStatusBarHasData(session: $0) } ?? false) { _, _ in
-            // Status bar visibility transition (activity pill arrives, all
-            // git/env signals clear, zoom button appears/disappears) changes
-            // chrome height ±28pt → libghostty re-frames the surface →
+            // Status-bar height transition. The bar is always present now (it
+            // hosts the compose button), so this fires when its CONTENT height
+            // changes — a pill/segment appears or clears, or FlowLayout wraps
+            // to another row — not when the whole bar shows/hides. That still
+            // moves chrome height → libghostty re-frames the surface →
             // SIGWINCH burst → conda init's precmd hook would wipe scrollback
             // (CLAUDE.md Known issues). Reuse v0.17.0 (M5.ddd) pane-zoom
             // pattern: suspend SIGWINCH on EVERY tab's engine in the pane
@@ -221,6 +235,45 @@ func sessionWantsToolCallActivity(_ session: Session) -> Bool {
     return !KookySettingsModel.shared.hiddenToolCallAgents.contains(agentKey)
 }
 
+/// A status-bar icon button: bracket-bordered pill with hover + engaged
+/// (active) fill, matching `BracketButton` / Settings rows. Both the compose
+/// and zoom buttons are this — factored out the moment there were two.
+private struct StatusBarIconButton: View {
+    let systemName: String
+    let isActive: Bool
+    let help: String
+    let action: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(isActive ? Theme.chromeForeground : Theme.chromeMuted)
+                .frame(width: 22, height: 22)
+                .background(
+                    RoundedRectangle(cornerRadius: 4, style: .continuous).fill(fill)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .stroke(Theme.chromeHairline, lineWidth: 1)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .onHover { hovered = $0 }
+        .animation(Theme.chromeTransition, value: hovered)
+        .animation(Theme.chromeTransition, value: isActive)
+    }
+
+    private var fill: Color {
+        if isActive { return Theme.chromeActive }
+        if hovered { return Theme.chromeHover }
+        return Color.clear
+    }
+}
+
 /// Chrome status bar pinned to the bottom of the active pane — Warp-style
 /// approximation. libghostty owns the terminal grid, so we can't inline
 /// above the prompt; pinning to chrome below the terminal is the closest
@@ -238,17 +291,32 @@ private struct PaneStatusBar: View {
     /// reads, so observation is per-`statusBarItems` / per-`hiddenStatusBarItems`
     /// access without needing `@Bindable`.
     private let model = KookySettingsModel.shared
-    @State private var zoomButtonHovered = false
 
     var body: some View {
         HStack(spacing: 8) {
-            // Zoom button — visible whenever zoom is meaningful. The
-            // status bar's own visibility gate now includes `canZoom`,
-            // so in clean multi-pane workspaces with no env/git data the
-            // bar appears just to host this button (else the affordance
-            // would be unreachable by mouse).
+            // Zoom + compose: bracket-pill icon buttons. Zoom shows only when
+            // meaningful; compose is always present — the reason the bar's
+            // visibility gate is gone (the bar is the stable host for it).
             if workspace.canZoom {
-                zoomButton
+                let isZoomed = workspace.isZoomed(paneId)
+                StatusBarIconButton(
+                    systemName: isZoomed
+                        ? "arrow.down.right.and.arrow.up.left"
+                        : "arrow.up.left.and.arrow.down.right",
+                    isActive: isZoomed,
+                    help: isZoomed ? "Exit zoom (⌘⇧E)" : "Zoom pane (⌘⇧E)"
+                ) {
+                    withAnimation(Theme.chromeTransition) {
+                        store.toggleZoom(in: workspace, paneId: paneId)
+                    }
+                }
+            }
+            StatusBarIconButton(
+                systemName: "long.text.page.and.pencil",
+                isActive: session.composerActive,
+                help: "Compose (⌘L)"
+            ) {
+                session.composerActive.toggle()
             }
             // Tool-call activity pill — Claude-only, shows the latest
             // tool call + click-to-popover for history. Sits on the left
@@ -272,46 +340,6 @@ private struct PaneStatusBar: View {
         .padding(.horizontal, Theme.space2)
         .padding(.vertical, 5)
         .background(Theme.chromeBackground)
-    }
-
-    private var zoomButton: some View {
-        let isZoomed = workspace.isZoomed(paneId)
-        let tooltip = isZoomed ? "Exit zoom (⌘⇧E)" : "Zoom pane (⌘⇧E)"
-        // Bracket-bordered pill matching `BracketButton` / Settings rows.
-        // Active (zoomed) state fills with `chromeActive` so the button
-        // itself reads as "engaged"; hover state lifts to `chromeHover`.
-        // No state = transparent fill, hairline border for affordance.
-        let fill: Color = {
-            if isZoomed { return Theme.chromeActive }
-            if zoomButtonHovered { return Theme.chromeHover }
-            return Color.clear
-        }()
-        return Button(action: {
-            withAnimation(Theme.chromeTransition) {
-                store.toggleZoom(in: workspace, paneId: paneId)
-            }
-        }) {
-            Image(systemName: isZoomed
-                  ? "arrow.down.right.and.arrow.up.left"
-                  : "arrow.up.left.and.arrow.down.right")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(isZoomed ? Theme.chromeForeground : Theme.chromeMuted)
-                .frame(width: 22, height: 22)
-                .background(
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .fill(fill)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .stroke(Theme.chromeHairline, lineWidth: 1)
-                )
-                .contentShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .help(tooltip)
-        .onHover { zoomButtonHovered = $0 }
-        .animation(Theme.chromeTransition, value: zoomButtonHovered)
-        .animation(Theme.chromeTransition, value: isZoomed)
     }
 
     /// Items that render inside the right-aligned `FlowLayout`. Activity
@@ -920,6 +948,170 @@ private struct PaneSearchBar: View {
     private var counterText: String {
         guard session.searchSelected >= 0 else { return "\(session.searchTotal)" }
         return "\(session.searchSelected + 1) / \(session.searchTotal)"
+    }
+}
+
+/// Multiline prompt composer (⌘L) — a chat-style box that rises from the
+/// bottom of the pane for writing prompts. Return sends the draft to the agent
+/// (pasted whole, newlines intact, then a carriage return to submit);
+/// Shift+Return inserts a newline; Esc cancels but keeps the draft on the
+/// session. The body is an `NSTextView` (`ComposerTextView`) rather than a
+/// SwiftUI `TextEditor`: only `doCommandBy` can intercept Return *before* a
+/// newline is inserted, which is what the chat convention needs (Return =
+/// send, Shift+Return = newline — same as ChatGPT / Claude.ai / Slack).
+private struct PaneComposerBar: View {
+    @Bindable var session: Session
+    let onFocusGained: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ComposerTextView(
+                text: $session.composerDraft,
+                onSend: send,
+                onCancel: close
+            )
+            // Identity by session. SwiftUI otherwise reuses one
+            // NSViewRepresentable coordinator across tabs, so switching between
+            // two tabs that both have the composer open would route this tab's
+            // edits / Return to the previous session, and the reused view
+            // wouldn't re-grab focus (Codex P2). `.id` forces a fresh view +
+            // coordinator + makeFirstResponder per session.
+            .id(session.id)
+            .frame(minHeight: 46, maxHeight: 168)
+            .overlay(alignment: .topLeading) {
+                if session.composerDraft.isEmpty {
+                    Text("type prompt or command here")
+                        .font(Theme.mono(12.5))
+                        .foregroundStyle(Theme.chromeMuted.opacity(0.55))
+                        .padding(.leading, 7)
+                        .padding(.top, 6)
+                        .allowsHitTesting(false)
+                }
+            }
+            HStack(spacing: 12) {
+                Spacer(minLength: 0)
+                hint("⏎", "send")
+                hint("⇧⏎", "newline")
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Theme.chromeBackground.opacity(0.98))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Theme.chromeHairline, lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.3), radius: 12, y: 3)
+        )
+        .frame(maxWidth: .infinity)
+        .onAppear { onFocusGained() }
+    }
+
+    private func hint(_ key: String, _ label: String) -> some View {
+        HStack(spacing: 4) {
+            Text(key)
+                .font(Theme.mono(9.5, weight: .medium))
+                .foregroundStyle(Theme.chromeForeground.opacity(0.7))
+            Text(label)
+                .font(Theme.mono(9.5))
+                .foregroundStyle(Theme.chromeMuted)
+        }
+    }
+
+    private func send() {
+        let trimmed = session.composerDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { close(); return }
+        // Paste the raw draft (newlines intact, bracketed-paste wrapped) then a
+        // carriage return to submit — the same two-step the shell / agent
+        // readline expects from a real ⌘V followed by Enter.
+        session.engine.paste(session.composerDraft)
+        session.engine.sendInput("\r")
+        session.composerDraft = ""
+        close()
+    }
+
+    private func close() {
+        session.composerActive = false
+        // Hand first responder back to the terminal surface. The composer's
+        // NSTextView held it, so without this the surface stays unfocused once
+        // the overlay is torn down and the user must click the pane before
+        // typing again (Codex P2). Deferred so the overlay is gone first.
+        let view = session.engine.view
+        DispatchQueue.main.async { view.window?.makeFirstResponder(view) }
+    }
+}
+
+/// AppKit-backed multiline editor for the composer. A SwiftUI `TextEditor`
+/// inserts a newline on Return before `onKeyPress` can see it, so it can't do
+/// "Return sends, Shift+Return newlines." An `NSTextView` via `doCommandBy`
+/// intercepts the Return command itself, before any newline is inserted.
+private struct ComposerTextView: NSViewRepresentable {
+    @Binding var text: String
+    var onSend: () -> Void
+    var onCancel: () -> Void
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scroll = NSTextView.scrollableTextView()
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = true
+        guard let tv = scroll.documentView as? NSTextView else { return scroll }
+        tv.delegate = context.coordinator
+        tv.string = text
+        tv.font = .monospacedSystemFont(ofSize: 12.5, weight: .regular)
+        tv.textColor = NSColor(Theme.chromeForeground)
+        tv.insertionPointColor = NSColor(Theme.chromeForeground)
+        tv.drawsBackground = false
+        tv.isRichText = false
+        tv.allowsUndo = true
+        tv.textContainerInset = NSSize(width: 3, height: 5)
+        // This text feeds a terminal / agent verbatim — kill every auto-rewrite
+        // so smart quotes / dashes, text replacement, and autocorrect can't
+        // mangle command args, JSON, or `--flags` before paste (Codex P2).
+        tv.isAutomaticQuoteSubstitutionEnabled = false
+        tv.isAutomaticDashSubstitutionEnabled = false
+        tv.isAutomaticTextReplacementEnabled = false
+        tv.isAutomaticSpellingCorrectionEnabled = false
+        tv.isContinuousSpellCheckingEnabled = false
+        tv.isGrammarCheckingEnabled = false
+        // Grab focus once the view lands in a window so Return / Esc route here.
+        DispatchQueue.main.async { tv.window?.makeFirstResponder(tv) }
+        return scroll
+    }
+
+    func updateNSView(_ scroll: NSScrollView, context: Context) {
+        guard let tv = scroll.documentView as? NSTextView else { return }
+        if tv.string != text { tv.string = text }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        let parent: ComposerTextView
+        init(_ parent: ComposerTextView) { self.parent = parent }
+
+        func textDidChange(_ notification: Notification) {
+            guard let tv = notification.object as? NSTextView else { return }
+            parent.text = tv.string
+        }
+
+        func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            switch selector {
+            case #selector(NSResponder.insertNewline(_:)):
+                // Shift+Return → newline (let the text view handle it);
+                // plain Return → send.
+                if NSApp.currentEvent?.modifierFlags.contains(.shift) == true {
+                    return false
+                }
+                parent.onSend()
+                return true
+            case #selector(NSResponder.cancelOperation(_:)):  // Esc
+                parent.onCancel()
+                return true
+            default:
+                return false
+            }
+        }
     }
 }
 
