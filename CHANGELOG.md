@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.26.4 — 2026-06-09
+
+- New: hide the top-bar search box if you don't want it — Settings → General → "top bar search". ⌘P still opens search either way.
+
 ## v0.26.3 — 2026-06-09
 
 - Polish: selected and hover states read more clearly now — stronger contrast on the active tab, workspace, buttons, and Settings rows, in both light and dark themes.

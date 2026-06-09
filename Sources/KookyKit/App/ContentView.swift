@@ -49,11 +49,13 @@ struct ContentView: View {
             }
             WindowDragHandle()
                 .overlay {
-                    ViewThatFits(in: .horizontal) {
-                        SearchTriggerPill {
-                            NSApp.sendAction(#selector(AppDelegate.handleQuickOpen), to: nil, from: nil)
+                    if KookySettingsModel.shared.showSearchPill {
+                        ViewThatFits(in: .horizontal) {
+                            SearchTriggerPill {
+                                NSApp.sendAction(#selector(AppDelegate.handleQuickOpen), to: nil, from: nil)
+                            }
+                            EmptyView()
                         }
-                        EmptyView()
                     }
                 }
             HoverableIconButton(

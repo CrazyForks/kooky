@@ -87,6 +87,10 @@ final class KookySettingsModel {
     /// marker-emitting agent wrappers into plain interactive `ssh host`
     /// sessions. The marker receiver itself is always available.
     var sshRemoteAgentDetection: Bool = false
+    /// Shows the `⌘P` search pill in the top chrome strip. When false the
+    /// pill is hidden (the palette stays reachable via `⌘P` / the File menu).
+    /// Persisted under `general.showSearchPill` (only when non-default).
+    var showSearchPill: Bool = true
     /// Master switch for macOS notifications about a non-visible tab. When
     /// off, nothing is posted. The first post triggers the OS permission
     /// prompt. Persisted under `notifications.enabled` (only when non-default).
@@ -129,6 +133,9 @@ final class KookySettingsModel {
 
         let ssh = parsed["ssh"] as? [String: Any] ?? [:]
         sshRemoteAgentDetection = (ssh["remoteAgentDetection"] as? Bool) ?? false
+
+        let general = parsed["general"] as? [String: Any] ?? [:]
+        showSearchPill = (general["showSearchPill"] as? Bool) ?? true
 
         let notifications = parsed["notifications"] as? [String: Any] ?? [:]
         notificationsEnabled = (notifications["enabled"] as? Bool) ?? true
@@ -290,6 +297,14 @@ final class KookySettingsModel {
             parsed.removeValue(forKey: "ssh")
         } else {
             parsed["ssh"] = ssh
+        }
+
+        var general = parsed["general"] as? [String: Any] ?? [:]
+        general["showSearchPill"] = showSearchPill ? nil : false
+        if general.isEmpty {
+            parsed.removeValue(forKey: "general")
+        } else {
+            parsed["general"] = general
         }
 
         var notifications = parsed["notifications"] as? [String: Any] ?? [:]
@@ -519,6 +534,7 @@ struct KookySettingsView: View {
             .onChange(of: model.customAgents) { _, _ in model.scheduleSave() }
             .onChange(of: model.resumeConversations) { _, _ in model.scheduleSave() }
             .onChange(of: model.sshRemoteAgentDetection) { _, _ in model.scheduleSave() }
+            .onChange(of: model.showSearchPill) { _, _ in model.scheduleSave() }
             .onChange(of: model.terminalPresets) { _, _ in model.scheduleSave() }
             .onChange(of: model.hiddenPresets) { _, _ in model.scheduleSave() }
             .onChange(of: model.statusBarItems) { _, _ in model.scheduleSave() }
@@ -655,6 +671,12 @@ struct KookySettingsView: View {
                 .labelsHidden()
                 .pickerStyle(.menu)
                 .frame(minWidth: 180)
+            }
+            SettingsHairline()
+            SettingsRow(label: "top bar search") {
+                Toggle("", isOn: $model.showSearchPill)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
             }
             terminalRestartCallout
         }
