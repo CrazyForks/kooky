@@ -157,6 +157,7 @@ enum StatusBarItemKind: String, CaseIterable, Codable, Hashable, Sendable {
     case pythonVenv = "python-venv"
     case nodeVersion = "node-version"
     case proxy
+    case remoteLogin = "remote-login"
     case gitBranch = "git-branch"
     case gitDiff = "git-diff"
 
@@ -166,6 +167,7 @@ enum StatusBarItemKind: String, CaseIterable, Codable, Hashable, Sendable {
         case .pythonVenv: return "Python venv"
         case .nodeVersion: return "Node version"
         case .proxy: return "Proxy"
+        case .remoteLogin: return "Remote Login"
         case .gitBranch: return "Git branch"
         case .gitDiff: return "Git diff"
         }
@@ -181,6 +183,7 @@ enum StatusBarItemKind: String, CaseIterable, Codable, Hashable, Sendable {
         case .pythonVenv: return "p.circle.fill"
         case .nodeVersion: return "n.circle.fill"
         case .proxy: return "network"
+        case .remoteLogin: return "person.fill"
         case .gitBranch: return "arrow.triangle.branch"
         case .gitDiff: return "line.3.horizontal.button.angledtop.vertical.right"
         }
@@ -190,7 +193,7 @@ enum StatusBarItemKind: String, CaseIterable, Codable, Hashable, Sendable {
     /// touched Settings → Status Bar. Tool-call activity goes first so a
     /// fresh Settings → Status Bar list renders it at the top.
     static let defaultOrder: [StatusBarItemKind] = [
-        .toolCallActivity, .pythonVenv, .nodeVersion, .proxy, .gitBranch, .gitDiff,
+        .toolCallActivity, .remoteLogin, .pythonVenv, .nodeVersion, .proxy, .gitBranch, .gitDiff,
     ]
 }
 
@@ -213,6 +216,7 @@ func paneStatusBarHasData(session: Session) -> Bool {
         case .pythonVenv: if session.environment.pythonVenv != nil { return true }
         case .nodeVersion: if session.environment.nodeVersion != nil { return true }
         case .proxy: if session.environment.proxy != nil { return true }
+        case .remoteLogin: if session.remoteHost != nil { return true }
         case .gitBranch: if session.gitStatus.branch != nil { return true }
         case .gitDiff: if session.gitStatus.branch != nil && session.gitStatus.filesChanged > 0 { return true }
         }
@@ -359,6 +363,7 @@ private struct PaneStatusBar: View {
         case .pythonVenv: pythonSegment
         case .nodeVersion: nodeSegment
         case .proxy: proxySegment
+        case .remoteLogin: remoteLoginSegment
         case .gitBranch: branchSegment
         case .gitDiff: diffSegment
         }
@@ -397,6 +402,18 @@ private struct PaneStatusBar: View {
     private var proxySegment: some View {
         if let info = session.environment.proxy {
             ProxyStatusSegment(info: info, session: session)
+        }
+    }
+
+    @ViewBuilder
+    private var remoteLoginSegment: some View {
+        if let host = session.remoteHost {
+            StatusSegment(systemImage: "person.fill") {
+                Text(host)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .foregroundStyle(Theme.chromeForeground)
+            }
         }
     }
 

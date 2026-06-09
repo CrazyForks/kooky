@@ -1337,6 +1337,13 @@ final class WorkspaceStore {
         }
         engine.onTitleChange = { [weak self, weak session] title in
             guard let session else { return }
+            // A `kooky-remote-login:*` title is an ssh-destination marker, not
+            // a visible title — record the host and stop before it reaches
+            // `terminalTitle`. Cleared on command-finished (ssh exit).
+            if let host = RemoteLoginMarker.parseTitle(title) {
+                session.remoteHost = host
+                return
+            }
             // Any `kooky-agent:*` title is a status marker, never a visible
             // title — consume it (applying the agent state when it resolves to
             // a known agent) and stop before it reaches `terminalTitle`.
@@ -1376,6 +1383,7 @@ final class WorkspaceStore {
                 session.transientAgent = nil
                 session.activityState = .idle
             }
+            session.remoteHost = nil
             session.lastCommandExit = exit
             session.lastCommandDuration = duration
             // A non-zero exit on a backgrounded tab is worth a nudge;

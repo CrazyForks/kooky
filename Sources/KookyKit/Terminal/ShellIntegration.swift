@@ -839,6 +839,7 @@ enum KookyShellIntegration {
                 if [[ "$arg" == "--" ]]; then
                     ((i++))
                     [[ $i -lt ${#args[@]} ]] || exec "$real" "$@"
+                    dest="${args[$i]}"
                     destination_seen=1
                     continue
                 fi
@@ -874,6 +875,7 @@ enum KookyShellIntegration {
                     done
                     continue
                 fi
+                dest="$arg"
                 destination_seen=1
                 continue
             fi
@@ -884,6 +886,8 @@ enum KookyShellIntegration {
         if (( ! destination_seen || remote_command_seen )); then
             exec "$real" "$@"
         fi
+
+        printf '\\033]2;\(RemoteLoginMarker.titlePrefix)%s\\a' "$dest" > /dev/tty 2>/dev/null
 
         remote_command=\(quote(remoteCommand))
         exec "$real" -t "$@" "$remote_command"

@@ -54,6 +54,10 @@ final class Session: Identifiable {
     /// while the persisted launch template remains `terminal`.
     var transientAgent: AgentTemplate?
     var displayAgent: AgentTemplate { transientAgent ?? agent }
+    /// Runtime-only SSH destination (`user@host` or bare `host`) reported by
+    /// the ssh wrapper via an OSC title marker, shown in the pane status bar.
+    /// Not persisted (like `transientAgent`); cleared on command-finished.
+    var remoteHost: String?
     /// Per-tab cwd. Initialized from the workspace's cwd at spawn, then kept in
     /// sync via OSC 7 (`engine.onPwdChange`). Drives the tab title so users see
     /// where they are, not which agent template the tab was launched from.

@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.26.5 — 2026-06-09
+
+- New: a "Remote Login" status-bar slot shows the `user@host` you're SSHed into. Toggle it in Settings → Status Bar (needs "remote agent detection" on under Settings → SSH).
+
 ## v0.26.4 — 2026-06-09
 
 - New: hide the top-bar search box if you don't want it — Settings → General → "top bar search". ⌘P still opens search either way.
