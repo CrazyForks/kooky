@@ -241,11 +241,22 @@ struct ToolCallActivityPill: View {
             return String(format: "%.1fs", elapsed)
         } else if elapsed < 60 {
             return String(format: "%.0fs", elapsed)
-        } else {
-            let mins = Int(elapsed) / 60
-            let secs = Int(elapsed) % 60
-            return "\(mins):\(String(format: "%02d", secs))"
         }
+        // Roll minutes into hours and hours into days so a long-lived span
+        // (the popover's total measures from the oldest retained tool call, so
+        // an all-day tab can reach hours/days) reads as `1:05:09` / `2d 3:04:05`
+        // instead of an ever-growing raw minute count like `3000:00`.
+        let total = Int(elapsed)
+        let secs = total % 60
+        let mins = (total / 60) % 60
+        let hours = (total / 3600) % 24
+        let days = total / 86400
+        if total < 3600 {
+            return "\(mins):\(String(format: "%02d", secs))"
+        } else if total < 86400 {
+            return "\(hours):\(String(format: "%02d", mins)):\(String(format: "%02d", secs))"
+        }
+        return "\(days)d \(hours):\(String(format: "%02d", mins)):\(String(format: "%02d", secs))"
     }
 
     struct ToolCounts: Equatable {

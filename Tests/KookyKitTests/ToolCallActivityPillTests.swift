@@ -101,7 +101,19 @@ final class ToolCallActivityPillTests: XCTestCase {
         XCTAssertEqual(ToolCallActivityPill.formatElapsed(60), "1:00")
         XCTAssertEqual(ToolCallActivityPill.formatElapsed(125), "2:05")
         XCTAssertEqual(ToolCallActivityPill.formatElapsed(599), "9:59")
-        XCTAssertEqual(ToolCallActivityPill.formatElapsed(3661), "61:01")
+        XCTAssertEqual(ToolCallActivityPill.formatElapsed(3599), "59:59")
+    }
+
+    func testFormatElapsedHours() {
+        XCTAssertEqual(ToolCallActivityPill.formatElapsed(3600), "1:00:00")
+        XCTAssertEqual(ToolCallActivityPill.formatElapsed(3661), "1:01:01")
+        XCTAssertEqual(ToolCallActivityPill.formatElapsed(45296), "12:34:56")
+    }
+
+    func testFormatElapsedDays() {
+        XCTAssertEqual(ToolCallActivityPill.formatElapsed(86400), "1d 0:00:00")
+        // The reported "thousands of minutes" case: ~50h now reads as days.
+        XCTAssertEqual(ToolCallActivityPill.formatElapsed(180000), "2d 2:00:00")
     }
 
     func testDurationLabelUsesCompletedAtWhenAvailable() {

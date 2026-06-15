@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.26.7 — 2026-06-15
+
+- Fixed: the elapsed time on the Claude Code / Pi tool-call pill (and its popover) now shows hours and days for long spans — e.g. `2d 2:00:00` instead of a giant raw minute count like `3000:00`.
+
 ## v0.26.6 — 2026-06-15
 
 - Fixed: an agent another tool launches in the background — e.g. `codex:review` running inside Claude Code in a kooky tab — no longer hangs. kooky's agent wrapper now steps aside for background, tool-driven calls instead of trying to report their status.
