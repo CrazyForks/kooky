@@ -128,8 +128,8 @@ struct AgentTemplate: Identifiable, Hashable {
         initialPrompt: String? = nil
     ) -> TerminalSessionConfig {
         // Pick a shell that has a kooky integration wrapper. Plain terminal
-        // sessions respect $SHELL where we have a wrapper (zsh/bash); other
-        // shells (fish/nu/...) get $SHELL too, just without cwd tracking.
+        // sessions respect $SHELL where we have a wrapper (zsh/bash/fish); other
+        // shells (nu/...) get $SHELL too, just without cwd tracking.
         // Agent sessions force a wrapped shell so KOOKY_AGENT auto-launch
         // works — `.other` users get zsh as a working fallback.
         var config: TerminalSessionConfig
@@ -138,6 +138,8 @@ struct AgentTemplate: Identifiable, Hashable {
             config = .bashShell(launcher: KookyShellIntegration.bashLauncherPath)
         case (.zsh, _):
             config = .zshShell()
+        case (.fish, _):
+            config = .fishShell()
         case (.other, .none):
             config = .defaultShell()
         case (.other, .some):

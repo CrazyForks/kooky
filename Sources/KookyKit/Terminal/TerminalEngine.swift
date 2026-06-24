@@ -22,6 +22,25 @@ struct TerminalSessionConfig {
     static func bashShell(launcher: String) -> TerminalSessionConfig {
         TerminalSessionConfig(command: launcher, arguments: [], workingDirectory: nil, environment: [:])
     }
+
+    /// fish via `XDG_DATA_DIRS` injection: we prepend kooky's data root so fish
+    /// auto-loads our `fish/vendor_conf.d/kooky.fish` (the integration hooks).
+    /// No launcher / `-C` — both run after `config.fish` and get swallowed by
+    /// shell-wrapping autocomplete tools (Fig / Amazon Q / kiro); vendor_conf.d
+    /// is read by every fish, including the inner shell those tools re-`exec`.
+    /// fish adds its own default vendor dirs (homebrew, ~/.local/share)
+    /// independently of `XDG_DATA_DIRS`, so prepending here can't drop them.
+    static func fishShell() -> TerminalSessionConfig {
+        let env = ProcessInfo.processInfo.environment
+        let shell = env["SHELL"] ?? KookyShellIntegration.fishPath
+        let existing = env["XDG_DATA_DIRS"] ?? "/usr/local/share:/usr/share"
+        return TerminalSessionConfig(
+            command: shell,
+            arguments: [],
+            workingDirectory: nil,
+            environment: ["XDG_DATA_DIRS": "\(KookyShellIntegration.fishVendorDataRoot):\(existing)"]
+        )
+    }
 }
 
 @MainActor

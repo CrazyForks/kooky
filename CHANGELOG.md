@@ -2,6 +2,11 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.27.0 — 2026-06-24
+
+- New: fish shell support — fish users now get the same integration as zsh and bash (manually-typed agents light up the sidebar, cwd tracking, status-bar slots, one-click agent launch), and it keeps working alongside shell autocomplete tools like Fig / Amazon Q / kiro.
+- Fixed: typing `gemini` by hand now lights its icon immediately, like every other agent.
+
 ## v0.26.8 — 2026-06-15
 
 - Fixed: switching workspaces now keeps keyboard focus on the pane you left it on, instead of jumping to the last split pane (#24).

@@ -147,6 +147,19 @@ final class ShellIntegrationTests: XCTestCase {
         XCTAssertTrue(script.contains("exec \"$real\" \"$@\""), "must passthrough when KOOKY_SURFACE_ID is unset")
     }
 
+    func testGeminiWrapperBracketsRunningAndEnded() {
+        // Gemini's own GEMINI_CLI_SYSTEM_SETTINGS_PATH hooks have no launch event
+        // (earliest is BeforeAgent), so a manually-typed `gemini` showed no icon
+        // until the first prompt. It now also rides the bracket wrapper for the
+        // immediate launch promotion every other agent gets — the two coexist
+        // via same-value dedup. Regression guard.
+        let script = KookyShellIntegration.bracketWrapperScript(slug: "gemini")
+
+        XCTAssertTrue(script.contains("\"$KOOKY_HOOK_BIN\" gemini running"))
+        XCTAssertTrue(script.contains("\"$KOOKY_HOOK_BIN\" gemini ended"))
+        XCTAssertTrue(script.contains("exec \"$real\" \"$@\""), "must passthrough when KOOKY_SURFACE_ID is unset")
+    }
+
     func testSshWrapperInjectsRemoteBootstrapForPlainInteractiveLogin() {
         let script = KookyShellIntegration.sshWrapperScript
 
@@ -290,6 +303,87 @@ final class ShellIntegrationTests: XCTestCase {
         XCTAssertTrue(body.contains("--version"), "must invoke node --version")
         XCTAssertTrue(body.contains("_KOOKY_NODE_KEY_LAST"), "must memoize node version against path+NVM_BIN")
         XCTAssertTrue(body.contains("_KOOKY_ENV_LAST"), "must skip the kooky-hook IPC when env unchanged")
+    }
+
+    func testFishInitScriptPrependsWrapperPathAndTracksCwd() {
+        let s = KookyShellIntegration.fishInitScript
+        // The core fix for fish users: force the wrapper dir to the FRONT of PATH
+        // so a manually-typed `claude` resolves to our shim (lights the dot) —
+        // even when config.fish / fish_add_path left it mid-PATH behind
+        // ~/.local/bin. Must dedupe + prepend, not a `contains`-guarded skip.
+        XCTAssertTrue(s.contains(#"set -gx PATH "$KOOKY_BIN_DIR" (string match -v -- "$KOOKY_BIN_DIR" $PATH)"#), "must move the wrapper dir to the front, dropping any mid-PATH copy")
+        XCTAssertTrue(s.contains(#"test "$PATH[1]" = "$KOOKY_BIN_DIR"; and return"#), "must skip when already first (no per-prompt PATH churn)")
+        // PATH prepend lives in a fish_prompt hook so it runs AFTER config.fish.
+        XCTAssertTrue(s.contains("function __kooky_prompt --on-event fish_prompt"), "PATH/cwd work must defer to a prompt hook (runs after config.fish)")
+        // fish never emits OSC 7, so cwd tracking is always ours.
+        XCTAssertTrue(s.contains(#"printf '\e]7;file://%s%s\e\\'"#), "must emit OSC 7 for cwd tracking")
+    }
+
+    func testFishInitScriptGuardsNonInteractiveShells() {
+        // vendor_conf.d is read by non-interactive fish too; wiring prompt hooks
+        // there would be wasted work — bail early.
+        XCTAssertTrue(KookyShellIntegration.fishInitScript.contains("status is-interactive"))
+    }
+
+    func testFishInitScriptGatesOSC133OnLegacyFish() {
+        let s = KookyShellIntegration.fishInitScript
+        // fish 4+ emits OSC 133 natively — adding ours unconditionally would
+        // double-mark every prompt. The version gate is load-bearing.
+        XCTAssertTrue(s.contains(#"set -l __kooky_major (string split '.' -- $version)[1]"#))
+        XCTAssertTrue(s.contains(#"test "$__kooky_major" -lt 4"#), "must only add OSC 133 on fish 3.x")
+        XCTAssertTrue(s.contains(#"printf '\e]133;D;%s\a' $status"#), "the 3.x path must report command exit status")
+    }
+
+    func testFishInitScriptAutoLaunchesAgentAsOneShotPromptHook() {
+        let s = KookyShellIntegration.fishInitScript
+        // Agent launch defers to the first prompt (after config.fish) and removes
+        // itself so it can't re-fire.
+        XCTAssertTrue(s.contains("function __kooky_agent_launch --on-event fish_prompt"), "agent launch must be a prompt hook (runs after config.fish set up PATH/env)")
+        XCTAssertTrue(s.contains("functions -e __kooky_agent_launch"), "must self-remove to stay one-shot")
+        XCTAssertTrue(s.contains("eval $_kooky_cmd"), "must launch KOOKY_AGENT via eval for multi-word commands")
+        XCTAssertTrue(s.contains("KOOKY_AGENT_LAUNCHED"), "must guard against subshell re-entry")
+        XCTAssertTrue(s.contains(#""$KOOKY_HOOK_BIN" $_kooky_bin ended"#), "must ping ended after the agent returns")
+    }
+
+    func testCleanupRemovesOnlyCurrentPidTempFiles() throws {
+        let fm = FileManager.default
+        let dir = NSTemporaryDirectory()
+        let pid = getpid()
+        let mine = ["kooky-zsh-\(pid)", "kooky-bash-launch-\(pid).sh", "kooky-fish-init-\(pid).fish"]
+        // Decoys: another process's file, and a non-kooky file — both must survive.
+        let others = ["kooky-zsh-9999999", "notkooky-\(pid).txt"]
+        for name in mine + others { fm.createFile(atPath: dir.appending(name), contents: Data()) }
+        defer { for name in others { try? fm.removeItem(atPath: dir.appending(name)) } }
+
+        KookyShellIntegration.cleanup()
+
+        for name in mine {
+            XCTAssertFalse(fm.fileExists(atPath: dir.appending(name)), "\(name) should be swept")
+        }
+        for name in others {
+            XCTAssertTrue(fm.fileExists(atPath: dir.appending(name)), "\(name) must NOT be touched")
+        }
+    }
+
+    @MainActor
+    func testFishShellInjectsVendorConfViaXdgDataDirs() throws {
+        // libghostty's spawn path ignores `.arguments`, and `-C` runs after
+        // config.fish (swallowed by shell-wrapping autocomplete). So fish gets
+        // its integration via XDG_DATA_DIRS → vendor_conf.d instead.
+        let config = TerminalSessionConfig.fishShell()
+        XCTAssertTrue(config.arguments.isEmpty, "must NOT rely on .arguments — libghostty drops it")
+        let xdg = try XCTUnwrap(config.environment["XDG_DATA_DIRS"])
+        XCTAssertTrue(xdg.hasPrefix("\(KookyShellIntegration.fishVendorDataRoot):"), "kooky data root must be prepended, preserving existing dirs")
+        // The vendor conf must live where fish discovers it.
+        XCTAssertTrue(KookyShellIntegration.fishVendorConfPath.hasSuffix("/fish/vendor_conf.d/kooky.fish"))
+        XCTAssertTrue(KookyShellIntegration.fishVendorConfPath.hasPrefix(KookyShellIntegration.fishVendorDataRoot))
+    }
+
+    @MainActor
+    func testInstallFishVendorConfWritesDiscoverableFile() throws {
+        KookyShellIntegration.installFishVendorConf()
+        let written = try String(contentsOfFile: KookyShellIntegration.fishVendorConfPath, encoding: .utf8)
+        XCTAssertEqual(written, KookyShellIntegration.fishInitScript, "installed vendor conf must match the source script")
     }
 
     @MainActor

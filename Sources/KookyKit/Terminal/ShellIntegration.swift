@@ -180,13 +180,24 @@ enum KookyShellIntegration {
 
     static let zshPath = "/bin/zsh"
     static let bashPath = "/bin/bash"
+    // fish has no canonical system path (homebrew installs it under
+    // /opt/homebrew or /usr/local), so this is only a defensive fallback —
+    // callers resolve the real binary from `$SHELL`.
+    static let fishPath = "/opt/homebrew/bin/fish"
     static let zdotdirKey = "ZDOTDIR"
+
+    /// `~/Library/Application Support/kooky/<subpath>` — single source for the
+    /// app's private support locations. Path-only; callers create the directory
+    /// when they need it (some of these are roots, not leaf dirs).
+    private static func kookyAppSupport(_ subpath: String, isDirectory: Bool) -> URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("kooky/\(subpath)", isDirectory: isDirectory)
+    }
 
     /// Directory we prepend to spawned-shell `PATH` so wrapper scripts (e.g.
     /// `claude` shim) get found before the real binaries on disk.
     static let kookyBinDirectory: String = {
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = support.appendingPathComponent("kooky/bin", isDirectory: true)
+        let dir = kookyAppSupport("bin", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.path
     }()
@@ -237,8 +248,7 @@ enum KookyShellIntegration {
     }()
 
     private static let hooksDirectory: URL = {
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = support.appendingPathComponent("kooky/hooks", isDirectory: true)
+        let dir = kookyAppSupport("hooks", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }()
@@ -327,8 +337,13 @@ enum KookyShellIntegration {
     static func installAgentHooks(sshRemoteAgentDetection: Bool = false) {
         writeWrapper(name: "claude", script: claudeWrapperScript)
         writeWrapper(name: "codex", script: codexWrapperScript)
-        // Gemini doesn't need a wrapper — `GEMINI_CLI_SYSTEM_SETTINGS_PATH`
-        // in the spawned shell is enough for hooks to fire from gemini itself.
+        // Gemini's own lifecycle hooks (via `GEMINI_CLI_SYSTEM_SETTINGS_PATH`)
+        // drive the finer running/attention/ended states, but their earliest
+        // event is `BeforeAgent` (fires on the first prompt, not on launch) —
+        // so a manually-typed `gemini` showed no icon until you messaged it.
+        // The bracket wrapper adds the immediate launch promotion every other
+        // agent gets; it coexists with the gemini hooks (same-value pings dedup).
+        writeWrapper(name: "gemini", script: bracketWrapperScript(slug: "gemini"))
         writeWrapper(name: "opencode", script: bracketWrapperScript(slug: "opencode"))
         writeWrapper(name: "amp", script: bracketWrapperScript(slug: "amp"))
         writeWrapper(name: "cursor-agent", script: bracketWrapperScript(slug: "cursor-agent"))
@@ -346,6 +361,7 @@ enum KookyShellIntegration {
         installCopilotHooksIfPresent(hookCmd: hookCmd)
         writeManagedFile(at: opencodePluginPath, contents: opencodePluginScript)
         installPiExtensionIfPresent()
+        installFishVendorConf()
         // Grok CLI has no JSON hook file like Claude — its `~/.grok/hooks/`
         // is a script directory driven by env vars (GROK_HOOK_EVENT /
         // GROK_SESSION_ID), so the bracket wrapper handles running/ended
@@ -1120,12 +1136,13 @@ enum KookyShellIntegration {
     }
     """
 
-    enum DetectedUserShell { case zsh, bash, other }
+    enum DetectedUserShell { case zsh, bash, fish, other }
 
     static var detectedUserShell: DetectedUserShell {
         let path = ProcessInfo.processInfo.environment["SHELL"] ?? zshPath
         if path.hasSuffix("/zsh") { return .zsh }
         if path.hasSuffix("/bash") { return .bash }
+        if path.hasSuffix("/fish") { return .fish }
         return .other
     }
 
@@ -1278,18 +1295,169 @@ enum KookyShellIntegration {
         return dir
     }()
 
+    /// fish integration, auto-loaded from a kooky-owned `vendor_conf.d/kooky.fish`
+    /// that fish discovers via the `XDG_DATA_DIRS` we set for fish sessions
+    /// (`fishVendorDataRoot`). This is the fish analogue of zsh's `ZDOTDIR`
+    /// wrapper: a `-C "source …"` launcher was tried first but `-C` runs AFTER
+    /// `config.fish`, so shell-wrapping autocomplete tools (Fig / Amazon Q /
+    /// kiro) that re-`exec` fish from `config.fish` swallowed it. vendor_conf.d
+    /// is read by every fish — including the inner fish those tools spawn (it
+    /// inherits `XDG_DATA_DIRS`) — so the integration survives the hijack.
+    ///
+    /// vendor_conf.d runs BEFORE `config.fish`, so all real work is deferred to
+    /// `fish_prompt` event handlers that fire after it: that lets us win on PATH
+    /// and lets the agent launch in the fully-configured shell. Additive only —
+    /// we never override the user's `fish_prompt` / `fish_title`, so themes
+    /// (Tide / Starship) keep working. Two things fish gives us for free:
+    /// (a) fish auto-restores `$status` around each event handler, so our hooks
+    ///     can't leak a status into the user's prompt (zsh needs explicit
+    ///     `return $_s` masking).
+    /// (b) fish 4+ emits OSC 133 markers natively, so we only add them on fish
+    ///     3.x (a version gate) to avoid double-marking. fish never emits OSC 7,
+    ///     though, so cwd tracking is always ours.
+    static let fishInitScript = """
+    # Interactive shells only — vendor_conf.d is also read by non-interactive
+    # fish (e.g. `fish -c` a tool spawns in this session, since XDG_DATA_DIRS is
+    # inherited). Use `return` (stop sourcing THIS file), never `exit` (which
+    # reads as "terminate the shell" — fish happens to scope it to the snippet,
+    # but `return` is the correct, version-robust way to bail).
+    status is-interactive; or return
+
+    set -g __kooky_host (hostname 2>/dev/null)
+
+    # Re-prepend the wrapper dir so `claude` etc. resolve to our shims first,
+    # even if config.fish rebuilt PATH (fish_add_path / brew shellenv). Shared by
+    # the prompt hook and the agent launcher so PATH is ready regardless of which
+    # fires first. This is what makes a manually-typed `claude` light the dot.
+    function __kooky_prepend_path
+        test -n "$KOOKY_BIN_DIR"; or return
+        # Force the wrapper dir to the FRONT, even when it's already present
+        # somewhere — config.fish / fish_add_path / kiro routinely leave it
+        # mid-PATH (e.g. behind ~/.local/bin), and the shim only wins when it's
+        # first. Skip when already first (avoids per-prompt PATH churn); else
+        # drop any existing copy and prepend (no duplicates).
+        test "$PATH[1]" = "$KOOKY_BIN_DIR"; and return
+        set -gx PATH "$KOOKY_BIN_DIR" (string match -v -- "$KOOKY_BIN_DIR" $PATH)
+    end
+
+    # PATH re-prepend + OSC 7 cwd, each prompt (fires after config.fish, so we
+    # win PATH). fish never emits OSC 7 itself; new tabs inherit the reported cwd.
+    function __kooky_prompt --on-event fish_prompt
+        __kooky_prepend_path
+        printf '\\e]7;file://%s%s\\e\\\\' "$__kooky_host" "$PWD"
+    end
+
+    # env status IPC (Python venv / Node version / proxy → pane status bar).
+    # Two-layer dedup mirrors the zsh wrapper: cache `node --version` against the
+    # resolved node path, and skip the IPC fork entirely when no key changed.
+    function __kooky_env_status --on-event fish_prompt
+        if test -z "$KOOKY_SURFACE_ID"; or test -z "$KOOKY_HOOK_BIN"; or not test -x "$KOOKY_HOOK_BIN"
+            return
+        end
+        set -l node_path ""
+        if command -q node
+            set node_path (command -v node)
+        end
+        set -l node_key "$node_path|$NVM_BIN"
+        if test "$node_key" != "$__kooky_node_key_last"
+            set -g __kooky_node_version_last ""
+            if test -n "$node_path"
+                set -g __kooky_node_version_last ($node_path --version 2>/dev/null)
+            end
+            set -g __kooky_node_key_last "$node_key"
+        end
+        set -l https_v "$https_proxy"; test -z "$https_v"; and set https_v "$HTTPS_PROXY"
+        set -l http_v "$http_proxy"; test -z "$http_v"; and set http_v "$HTTP_PROXY"
+        set -l all_v "$all_proxy"; test -z "$all_v"; and set all_v "$ALL_PROXY"
+        set -l env_now "$VIRTUAL_ENV|$CONDA_DEFAULT_ENV|$NVM_BIN|$NVM_DIR|$__kooky_node_version_last|$https_v|$http_v|$all_v"
+        if test "$env_now" = "$__kooky_env_last"
+            return
+        end
+        # Only advance the dedup cache when the IPC actually succeeded, so a
+        # transient socket gap retries next prompt instead of freezing.
+        if "$KOOKY_HOOK_BIN" env "$VIRTUAL_ENV" "$CONDA_DEFAULT_ENV" "$NVM_BIN" "$NVM_DIR" "$__kooky_node_version_last" "$https_v" "$http_v" "$all_v" 2>/dev/null
+            set -g __kooky_env_last "$env_now"
+        end
+    end
+
+    # OSC 133 prompt/command markers — fish 4+ emits these natively, so only add
+    # them on fish 3.x to avoid double-marking. Gives kooky per-command exit
+    # status (the failed-command red dot), duration, and jump-to-prompt.
+    set -l __kooky_major (string split '.' -- $version)[1]
+    if test "$__kooky_major" -lt 4 2>/dev/null
+        function __kooky_133_prompt --on-event fish_prompt
+            printf '\\e]133;A;cl=line\\a'
+        end
+        function __kooky_133_preexec --on-event fish_preexec
+            printf '\\e]133;C\\a'
+        end
+        function __kooky_133_postexec --on-event fish_postexec
+            printf '\\e]133;D;%s\\a' $status
+        end
+    end
+
+    # Agent auto-launch — one-shot on the FIRST prompt (after config.fish set up
+    # the real PATH/env). Self-removes so it can't re-fire, and the exported
+    # guard blocks re-entry from any subshell the agent spawns.
+    function __kooky_agent_launch --on-event fish_prompt
+        functions -e __kooky_agent_launch
+        test -n "$KOOKY_AGENT"; and test -z "$KOOKY_AGENT_LAUNCHED"; or return
+        set -gx KOOKY_AGENT_LAUNCHED 1
+        __kooky_prepend_path
+        set -l _kooky_cmd $KOOKY_AGENT
+        set -e KOOKY_AGENT
+        set -l _kooky_bin (string split -m1 ' ' -- $_kooky_cmd)[1]
+        # `eval` lets KOOKY_AGENT carry multi-word commands (resume flag, prompt,
+        # extra options); a single-word `claude` behaves identically.
+        eval $_kooky_cmd
+        # The agent ran foreground, so reaching here means it exited (or a user
+        # alias shadowed the PATH wrapper before its `ended` ping). Revert the
+        # eagerly-promoted tab icon to a plain shell; idempotent if the wrapper
+        # already pinged ended.
+        if test -n "$KOOKY_SURFACE_ID"; and test -n "$KOOKY_HOOK_BIN"
+            "$KOOKY_HOOK_BIN" $_kooky_bin ended 2>/dev/null
+        end
+    end
+    """
+
+    /// `XDG_DATA_DIRS` entry we hand fish sessions so it discovers our
+    /// `fish/vendor_conf.d/kooky.fish` (see `fishInitScript`). A stable
+    /// Application Support path (not per-process) — fish reads it on every shell
+    /// start, including inner shells spawned by autocomplete wrappers.
+    static let fishVendorDataRoot: String = {
+        kookyAppSupport("share", isDirectory: true).path
+    }()
+
+    /// Absolute path to the kooky-owned fish vendor conf file.
+    static let fishVendorConfPath: String = {
+        (fishVendorDataRoot as NSString).appendingPathComponent("fish/vendor_conf.d/kooky.fish")
+    }()
+
+    /// Writes the fish vendor conf. Called from `installAgentHooks` so it tracks
+    /// the latest `fishInitScript` on every launch.
+    static func installFishVendorConf() {
+        let dir = (fishVendorConfPath as NSString).deletingLastPathComponent
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        writeFile(at: fishVendorConfPath, contents: fishInitScript)
+    }
+
     /// Removes per-process temp files. Wired into `applicationWillTerminate`
     /// so wrappers don't accumulate in `NSTemporaryDirectory()` across runs.
+    ///
+    /// Sweeps every `kooky-<slug>-<pid>` artifact (optional extension) by
+    /// pattern rather than a hardcoded name list — a new wrapper file is then
+    /// cleaned up for free, with no second site to keep in sync. Matching the
+    /// `-<pid>` suffix on the extension-stripped stem scopes deletion to this
+    /// process: another live kooky's files (or a pid that's merely a digit
+    /// prefix of ours, e.g. 234 vs 1234) stay untouched.
     static func cleanup() {
         let fm = FileManager.default
         let dir = NSTemporaryDirectory()
-        let pid = getpid()
-        for path in [
-            dir.appending("kooky-bash-launch-\(pid).sh"),
-            dir.appending("kooky-bashrc-\(pid)"),
-            dir.appending("kooky-zsh-\(pid)"),
-        ] {
-            try? fm.removeItem(atPath: path)
+        let pidSuffix = "-\(getpid())"
+        guard let entries = try? fm.contentsOfDirectory(atPath: dir) else { return }
+        for entry in entries where entry.hasPrefix("kooky-") {
+            guard (entry as NSString).deletingPathExtension.hasSuffix(pidSuffix) else { continue }
+            try? fm.removeItem(atPath: dir.appending(entry))
         }
     }
 
