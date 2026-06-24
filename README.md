@@ -40,6 +40,8 @@ A minimal modern terminal built for AI coding. Sidebar workspaces; horizontal / 
 
 **Agent activity readout.** Sidebar dot tracks each agent in real time — running (blue), waiting on you (amber), idle (none). Tab + workspace dots also turn red when the last command exited non-zero; hover for `exit N · 12.4s`. For Claude Code and Pi sessions, the pane status bar also shows the tool the agent is running right now (Bash / Edit / Read / etc.) and how long — click the pill for the full session history; failed calls turn red immediately. Toggle the pill per agent in Settings → Status Bar.
 
+**Works with zsh, bash, and fish.** Manually-typed agent detection, cwd tracking, the status-bar slots, and one-click agent launch behave the same across all three shells — and keep working even alongside shell autocomplete tools like Fig / Amazon Q / kiro.
+
 **Notifications.** When an agent in a tab you're not looking at starts waiting on you, or a command there fails, kooky posts a macOS notification — turn each kind on or off in Settings → Notifications. A bell in the top bar (⇧⌘I) keeps a running inbox of those alerts across every window — who's waiting, what failed, what finished — with a red dot when something's unread. Click an entry to jump straight to that tab; switching to a tab clears its alerts on its own.
 
 ![The notification center, collected across every window](img/screenshot-3.png)
