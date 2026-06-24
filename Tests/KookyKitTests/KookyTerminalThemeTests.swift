@@ -19,6 +19,21 @@ final class KookyTerminalThemeTests: XCTestCase {
         XCTAssertEqual(theme?.lines.filter { $0.hasPrefix("palette = ") }.count, 16)
     }
 
+    func testNewPresetsAreRegistered() {
+        for id in ["tokyo-night", "tokyo-day", "gruvbox-dark", "gruvbox-light", "one-dark", "one-light"] {
+            XCTAssertNotNil(KookyTerminalTheme.preset(for: id), "missing preset \(id)")
+        }
+    }
+
+    func testIsDarkClassifiesPresetsForPickerGrouping() {
+        XCTAssertEqual(KookyTerminalTheme.preset(for: "tokyo-night")?.isDark, true)
+        XCTAssertEqual(KookyTerminalTheme.preset(for: "gruvbox-dark")?.isDark, true)
+        XCTAssertEqual(KookyTerminalTheme.preset(for: "one-dark")?.isDark, true)
+        XCTAssertEqual(KookyTerminalTheme.preset(for: "tokyo-day")?.isDark, false)
+        XCTAssertEqual(KookyTerminalTheme.preset(for: "gruvbox-light")?.isDark, false)
+        XCTAssertEqual(KookyTerminalTheme.preset(for: "one-light")?.isDark, false)
+    }
+
     func testSettingsThemeSelectionPreservesUnknownRawTheme() {
         let state = KookySettingsModel.themeSelection(for: "/Users/me/.config/ghostty/themes/custom")
         XCTAssertEqual(state.selection, KookySettingsModel.customThemeSelection)

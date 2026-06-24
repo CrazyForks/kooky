@@ -388,6 +388,14 @@ final class KookySettingsModel {
         terminalThemeChoices.filter(\.isBundled)
     }
 
+    var darkBundledThemes: [KookyTerminalTheme] {
+        bundledTerminalThemes.filter(\.isDark)
+    }
+
+    var lightBundledThemes: [KookyTerminalTheme] {
+        bundledTerminalThemes.filter { !$0.isDark }
+    }
+
     var ghosttyUserThemes: [KookyTerminalTheme] {
         terminalThemeChoices.filter { !$0.isBundled }
     }
@@ -785,14 +793,21 @@ struct KookySettingsView: View {
             if let customLabel = model.customTerminalThemeLabel {
                 Text(customLabel).tag(KookySettingsModel.customThemeSelection)
             }
-            Divider()
-            ForEach(model.bundledTerminalThemes) { preset in
-                Text(preset.title).tag(preset.id)
+            Section("Dark") {
+                ForEach(model.darkBundledThemes) { preset in
+                    Text(preset.title).tag(preset.id)
+                }
+            }
+            Section("Light") {
+                ForEach(model.lightBundledThemes) { preset in
+                    Text(preset.title).tag(preset.id)
+                }
             }
             if !model.ghosttyUserThemes.isEmpty {
-                Divider()
-                ForEach(model.ghosttyUserThemes) { theme in
-                    Text(theme.title).tag(theme.id)
+                Section("Custom") {
+                    ForEach(model.ghosttyUserThemes) { theme in
+                        Text(theme.title).tag(theme.id)
+                    }
                 }
             }
         }

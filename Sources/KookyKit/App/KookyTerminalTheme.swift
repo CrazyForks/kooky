@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 struct KookyTerminalTheme: Identifiable, Hashable {
     enum Source: Hashable {
@@ -15,6 +16,14 @@ struct KookyTerminalTheme: Identifiable, Hashable {
     let source: Source
 
     var isBundled: Bool { source == .bundled }
+
+    /// Light/dark split for the picker's section grouping. Uses the same
+    /// luminance threshold `Theme.Resolved` applies when deciding chrome
+    /// appearance, so a theme listed under "Dark" is exactly one that renders
+    /// dark chrome.
+    var isDark: Bool {
+        (NSColor(hex: backgroundHex)?.relativeLuminance ?? 0) <= 0.55
+    }
 
     static let presets: [KookyTerminalTheme] = [
         .init(
@@ -120,6 +129,96 @@ struct KookyTerminalTheme: Identifiable, Hashable {
                 "#268BD2", "#D33682", "#2AA198", "#EEE8D5",
                 "#002B36", "#CB4B16", "#586E75", "#657B83",
                 "#839496", "#6C71C4", "#93A1A1", "#FDF6E3",
+            ]
+        ),
+        .init(
+            id: "tokyo-night",
+            title: "Tokyo Night",
+            background: "#1A1B26",
+            foreground: "#C0CAF5",
+            cursor: "#C0CAF5",
+            selectionBackground: "#283457",
+            selectionForeground: "#C0CAF5",
+            palette: [
+                "#15161E", "#F7768E", "#9ECE6A", "#E0AF68",
+                "#7AA2F7", "#BB9AF7", "#7DCFFF", "#A9B1D6",
+                "#414868", "#F7768E", "#9ECE6A", "#E0AF68",
+                "#7AA2F7", "#BB9AF7", "#7DCFFF", "#C0CAF5",
+            ]
+        ),
+        .init(
+            id: "tokyo-day",
+            title: "Tokyo Day",
+            background: "#E1E2E7",
+            foreground: "#3760BF",
+            cursor: "#3760BF",
+            selectionBackground: "#B7C1E3",
+            selectionForeground: "#3760BF",
+            palette: [
+                "#B4B5B9", "#F52A65", "#587539", "#8C6C3E",
+                "#2E7DE9", "#9854F1", "#007197", "#6172B0",
+                "#A1A6C5", "#F52A65", "#587539", "#8C6C3E",
+                "#2E7DE9", "#9854F1", "#007197", "#3760BF",
+            ]
+        ),
+        .init(
+            id: "gruvbox-dark",
+            title: "Gruvbox Dark",
+            background: "#282828",
+            foreground: "#EBDBB2",
+            cursor: "#EBDBB2",
+            selectionBackground: "#665C54",
+            selectionForeground: "#EBDBB2",
+            palette: [
+                "#282828", "#CC241D", "#98971A", "#D79921",
+                "#458588", "#B16286", "#689D6A", "#A89984",
+                "#928374", "#FB4934", "#B8BB26", "#FABD2F",
+                "#83A598", "#D3869B", "#8EC07C", "#EBDBB2",
+            ]
+        ),
+        .init(
+            id: "gruvbox-light",
+            title: "Gruvbox Light",
+            background: "#FBF1C7",
+            foreground: "#3C3836",
+            cursor: "#3C3836",
+            selectionBackground: "#D5C4A1",
+            selectionForeground: "#3C3836",
+            palette: [
+                "#FBF1C7", "#CC241D", "#98971A", "#D79921",
+                "#458588", "#B16286", "#689D6A", "#7C6F64",
+                "#928374", "#9D0006", "#79740E", "#B57614",
+                "#076678", "#8F3F71", "#427B58", "#3C3836",
+            ]
+        ),
+        .init(
+            id: "one-dark",
+            title: "One Dark",
+            background: "#282C34",
+            foreground: "#ABB2BF",
+            cursor: "#ABB2BF",
+            selectionBackground: "#3E4451",
+            selectionForeground: "#ABB2BF",
+            palette: [
+                "#282C34", "#E06C75", "#98C379", "#E5C07B",
+                "#61AFEF", "#C678DD", "#56B6C2", "#ABB2BF",
+                "#5C6370", "#E06C75", "#98C379", "#E5C07B",
+                "#61AFEF", "#C678DD", "#56B6C2", "#FFFFFF",
+            ]
+        ),
+        .init(
+            id: "one-light",
+            title: "One Light",
+            background: "#FAFAFA",
+            foreground: "#383A42",
+            cursor: "#383A42",
+            selectionBackground: "#DBDBDC",
+            selectionForeground: "#383A42",
+            palette: [
+                "#383A42", "#E45649", "#50A14F", "#C18401",
+                "#4078F2", "#A626A4", "#0184BC", "#A0A1A7",
+                "#696C77", "#E45649", "#50A14F", "#C18401",
+                "#4078F2", "#A626A4", "#0184BC", "#FFFFFF",
             ]
         ),
     ]

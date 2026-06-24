@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.28.1 — 2026-06-24
+
+- New: six more built-in themes — Tokyo Night / Tokyo Day, Gruvbox Dark / Gruvbox Light, One Dark / One Light. The theme picker now groups choices by Dark and Light.
+
 ## v0.28.0 — 2026-06-24
 
 - New: Droid (Factory.ai's coding CLI) is now a built-in agent — pick it from the `+` menu, and a manually-typed `droid` lights up the sidebar like the others.
