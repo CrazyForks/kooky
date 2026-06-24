@@ -196,6 +196,8 @@ final class AgentTemplateTests: XCTestCase {
         XCTAssertEqual(kimiConfig.environment["KOOKY_AGENT"], "kimi")
         let kiroConfig = AgentTemplate.kiro.makeSessionConfig(resumeId: "abc-123")
         XCTAssertEqual(kiroConfig.environment["KOOKY_AGENT"], "kiro-cli")
+        let droidConfig = AgentTemplate.droid.makeSessionConfig(resumeId: "abc-123")
+        XCTAssertEqual(droidConfig.environment["KOOKY_AGENT"], "droid")
     }
 
     func testSupportsResumeMatchesResumeFlag() {
@@ -206,6 +208,7 @@ final class AgentTemplateTests: XCTestCase {
         XCTAssertFalse(AgentTemplate.antigravity.supportsResume)
         XCTAssertFalse(AgentTemplate.kimi.supportsResume)
         XCTAssertFalse(AgentTemplate.kiro.supportsResume)
+        XCTAssertFalse(AgentTemplate.droid.supportsResume)
         XCTAssertTrue(AgentTemplate.pi.supportsResume)
     }
 
@@ -234,6 +237,7 @@ final class AgentTemplateTests: XCTestCase {
         XCTAssertFalse(AgentTemplate.kimi.reportsToolCalls)
         XCTAssertFalse(AgentTemplate.copilot.reportsToolCalls)
         XCTAssertFalse(AgentTemplate.kiro.reportsToolCalls)
+        XCTAssertFalse(AgentTemplate.droid.reportsToolCalls)
     }
 
     func testFromCustomInheritsReportsToolCallsFromBase() {
@@ -292,7 +296,7 @@ final class AgentTemplateTests: XCTestCase {
     func testMonochromeBrandsTintedAndColorBrandsRenderedAsIs() {
         // The white-mark brands get template-tinted so they survive a light
         // theme; the color brands keep their own pixels on every theme.
-        for mono in ["opencode", "cursor", "githubcopilot", "grok", "kimi", "pi"] {
+        for mono in ["opencode", "cursor", "githubcopilot", "grok", "kimi", "pi", "droid"] {
             XCTAssertTrue(AgentIcon.isMonochrome(mono), "\(mono) should be template-tinted")
         }
         for color in ["claudecode", "codex", "gemini", "amp", "antigravity", "kiro"] {
@@ -308,6 +312,7 @@ final class AgentTemplateTests: XCTestCase {
             (.opencode, "opencode"),
             (.grok, "grok"),
             (.kiro, "kiro-cli"),
+            (.droid, "droid"),
         ]
         for (template, bin) in pairs {
             let config = template.makeSessionConfig(initialPrompt: "hello")

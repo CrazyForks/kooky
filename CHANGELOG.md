@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.28.0 — 2026-06-24
+
+- New: Droid (Factory.ai's coding CLI) is now a built-in agent — pick it from the `+` menu, and a manually-typed `droid` lights up the sidebar like the others.
+
 ## v0.27.0 — 2026-06-24
 
 - New: fish shell support — fish users now get the same integration as zsh and bash (manually-typed agents light up the sidebar, cwd tracking, status-bar slots, one-click agent launch), and it keeps working alongside shell autocomplete tools like Fig / Amazon Q / kiro.

@@ -432,9 +432,36 @@ extension AgentTemplate {
         initialCommand: "kiro-cli"
     )
 
-    /// The 13 templates shipped with kooky. User-defined custom agents are
+    /// Droid — Factory.ai's agentic coding CLI; binary `droid`
+    /// (curl-installed or npm `droid`). Bracket wrapper only: Droid has a
+    /// lifecycle-hook system (shell commands around tool events, configured
+    /// with `/hooks`), but it's declared in Droid's own config with no
+    /// system-settings env-var override (no `GEMINI_CLI_SYSTEM_SETTINGS_PATH`
+    /// analogue), so — like Kimi / Kiro — kooky can't inject hooks
+    /// non-invasively. running/ended come from the wrapper; mid-run attention
+    /// + tool-call pills are deferred until a config-merge path exists.
+    ///
+    /// Prompt is positional — interactive `droid "<prompt>"` starts the REPL
+    /// seeded with that query (`droid exec "<prompt>"` is the separate
+    /// headless single-shot, not what Ask wants), so `promptLaunchFlag` is nil
+    /// and Ask sends `droid -- "<prompt>"`. Resume stays unwired: Droid has
+    /// `-r/--resume [id]`, but like every non-Claude/Pi agent kooky has no
+    /// id-capture path, so `resumeFlag` is nil. The brand mark is the white
+    /// pinwheel on a black tile; extracted to white-on-transparent and
+    /// registered in `AgentIcon.monochromeAssets` so the theme-adaptive
+    /// tinting handles light themes (same treatment as grok / kimi / pi).
+    static let droid = AgentTemplate(
+        id: "droid",
+        title: "Droid",
+        symbol: "asterisk",
+        iconAsset: "droid",
+        tintHex: "C9CDD3",
+        initialCommand: "droid"
+    )
+
+    /// The 14 templates shipped with kooky. User-defined custom agents are
     /// merged on top via `all` at runtime.
-    static let builtin: [AgentTemplate] = [.terminal, .claudeCode, .codex, .gemini, .opencode, .amp, .cursor, .copilot, .grok, .antigravity, .kimi, .pi, .kiro]
+    static let builtin: [AgentTemplate] = [.terminal, .claudeCode, .codex, .gemini, .opencode, .amp, .cursor, .copilot, .grok, .antigravity, .kimi, .pi, .kiro, .droid]
 
     /// All templates available right now — `builtin` plus the user's custom
     /// agents from Settings → Agents. MainActor-isolated because it

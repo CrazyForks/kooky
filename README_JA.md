@@ -24,7 +24,7 @@ AI コーディングのために作られた、ミニマルでモダンな macO
 
 ![左側に垂直 tab、1 つの pane を 4 分割](img/screenshot-2.png)
 
-**ワンクリックで AI agent セッション。** Claude Code · Codex · Gemini CLI · OpenCode · Amp · Cursor CLI · Copilot CLI · Grok Build · Antigravity CLI · Kimi Code · Pi · Kiro CLI。`+` メニューから選ぶだけで、最初の prompt を打つ前に agent が起動します。Claude の会話は kooky の再起動を跨いで自動で resume されるので、tab を閉じて再度開いても直前の続きから再開できます。
+**ワンクリックで AI agent セッション。** Claude Code · Codex · Gemini CLI · OpenCode · Amp · Cursor CLI · Copilot CLI · Grok Build · Antigravity CLI · Kimi Code · Pi · Kiro CLI · Droid。`+` メニューから選ぶだけで、最初の prompt を打つ前に agent が起動します。Claude の会話は kooky の再起動を跨いで自動で resume されるので、tab を閉じて再度開いても直前の続きから再開できます。
 
 ![対応する全 agent、それぞれ Settings で切り替え可能](img/screenshot-4.png)
 
