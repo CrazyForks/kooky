@@ -173,7 +173,7 @@ struct CommandPaletteView: View {
         // narrowest the rows can wrap to and ignores the NSPanel
         // contentRect width entirely.
         .frame(width: 720)
-        .background(Theme.chromeBackground)
+        .glassWindowBackground(fallback: Theme.chromeBackground)
         .preferredColorScheme(Theme.chromeColorScheme)
         .onAppear {
             focusField = true
@@ -319,6 +319,7 @@ final class CommandPaletteWindowController: NSWindowController {
         panel.level = .floating
         panel.isReleasedWhenClosed = false
         panel.appearance = Theme.windowAppearance
+        panel.applyGlassBacking()
         self.init(window: panel)
         NotificationCenter.default.addObserver(
             self, selector: #selector(panelResignedKey(_:)),

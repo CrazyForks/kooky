@@ -55,6 +55,10 @@ final class KookyWindowController: NSWindowController, NSWindowDelegate {
         // "kooky × N" above our own workspace/tab list. Drop them — the Dock
         // menu's workspace list and ⌘P are the real navigation.
         window.isExcludedFromWindowsMenu = true
+        // Liquid Glass needs a non-opaque window so the glass layer can sample
+        // the desktop behind it and the terminal's `background-opacity` reads
+        // through. `refreshThemeAppearances` keeps this in sync on live edits.
+        window.applyGlassBacking()
         return window
     }
 

@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.28.2 — 2026-06-26
+
+- New: Liquid Glass on macOS 26 — kooky's windows can take on the system's translucent glass material. Turn it on in Settings → General → liquid-glass (Regular or Clear). (#26)
+
 ## v0.28.1 — 2026-06-24
 
 - New: six more built-in themes — Tokyo Night / Tokyo Day, Gruvbox Dark / Gruvbox Light, One Dark / One Light. The theme picker now groups choices by Dark and Light.

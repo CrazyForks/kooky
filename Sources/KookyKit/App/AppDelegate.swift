@@ -424,13 +424,21 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     /// pickers) that aren't ours.
     func refreshThemeAppearances() {
         let appearance = Theme.windowAppearance
-        for controller in windowControllers {
-            controller.window?.appearance = appearance
+        // Glass needs non-opaque windows so the glass layer can sample the
+        // desktop; reverting to opaque restores the default background so a
+        // glass→off toggle doesn't leave a window see-through. Every kooky
+        // window (main + the shared panels) carries glass on macOS 26.
+        let auxiliary = [
+            KookySettingsWindowController.shared.window,
+            UpdatePromptWindowController.shared.window,
+            CommandPaletteWindowController.shared.window,
+            InboxWindowController.shared.window,
+            AboutWindowController.shared.window,
+        ]
+        for window in windowControllers.map(\.window) + auxiliary {
+            window?.appearance = appearance
+            window?.applyGlassBacking()
         }
-        KookySettingsWindowController.shared.window?.appearance = appearance
-        UpdatePromptWindowController.shared.window?.appearance = appearance
-        CommandPaletteWindowController.shared.window?.appearance = appearance
-        InboxWindowController.shared.window?.appearance = appearance
     }
 
     public func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -908,68 +916,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     }
 
     @objc private func handleAbout() {
-        NSApp.orderFrontStandardAboutPanel(options: [
-            .applicationName: KookyApp.name,
-            .applicationVersion: KookyApp.displayVersion,
-            // Suppress the parenthesized build number — Info.plist sets
-            // CFBundleVersion to the same string as CFBundleShortVersionString,
-            // and the default "Version X (X)" reads as a typo.
-            .version: "",
-            .credits: aboutCredits,
-        ])
-        NSApp.activate(ignoringOtherApps: true)
-    }
-
-    private var aboutCredits: NSAttributedString {
-        // Two paragraph styles: `tight` for adjacent lines within a block,
-        // `blockGap` for the first line of a new block (adds a uniform gap
-        // above, independent of surrounding font sizes). Without this, blank
-        // lines inherit the previous paragraph's font and the spacing wobbles
-        // as the font drops from 11pt headline to 9pt footnote.
-        let tight = NSMutableParagraphStyle()
-        tight.alignment = .center
-        tight.lineSpacing = 1
-
-        let blockGap = NSMutableParagraphStyle()
-        blockGap.alignment = .center
-        blockGap.lineSpacing = 1
-        blockGap.paragraphSpacingBefore = 12
-
-        let body = NSFont.systemFont(ofSize: 11)
-        let foot = NSFont.systemFont(ofSize: 9)
-
-        func attrs(_ font: NSFont, _ color: NSColor, _ style: NSParagraphStyle, link: URL? = nil) -> [NSAttributedString.Key: Any] {
-            var dict: [NSAttributedString.Key: Any] = [
-                .font: font,
-                .foregroundColor: color,
-                .paragraphStyle: style,
-            ]
-            if let link { dict[.link] = link }
-            return dict
-        }
-
-        let credits = NSMutableAttributedString()
-        credits.append(NSAttributedString(
-            string: KookyApp.tagline,
-            attributes: attrs(body, .labelColor, tight)
-        ))
-        credits.append(NSAttributedString(
-            string: "\nGithub ↗",
-            attributes: attrs(body, .linkColor, tight, link: KookyApp.repositoryURL)
-        ))
-        credits.append(NSAttributedString(
-            string: "\n© \(KookyApp.copyrightYear) \(KookyApp.name). All rights reserved.",
-            attributes: attrs(foot, .secondaryLabelColor, blockGap)
-        ))
-        credits.append(NSAttributedString(
-            string: "\nBuilt with ❤️ by ",
-            attributes: attrs(foot, .secondaryLabelColor, tight)
-        ))
-        credits.append(NSAttributedString(
-            string: KookyApp.author,
-            attributes: attrs(foot, .linkColor, tight, link: KookyApp.authorURL)
-        ))
-        return credits
+        AboutWindowController.shared.show()
     }
 
     @objc private func handleOpenIssues() {

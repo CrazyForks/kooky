@@ -21,6 +21,14 @@ final class KookySettingsModel {
     /// silently shadow the user's `~/.config/ghostty/config` font-size.
     var fontSize: Int? = nil
     var cursorStyle: String = "block"
+    /// `terminal.background-blur` — one of ghostty's `macos-glass-*` values
+    /// turns on macOS 26 Liquid Glass chrome. No UI control yet (set it in
+    /// settings.json or ghostty config); kept observable so chrome re-renders
+    /// live when it changes. `nil` = opaque chrome.
+    var backgroundBlur: String? = nil
+    /// `terminal.background-opacity` (0...1). Drives both libghostty's surface
+    /// alpha and kooky's glass tint. `nil` = unset (libghostty default).
+    var backgroundOpacity: Double? = nil
     /// Picker selection for the terminal theme row. Values are one of:
     /// `defaultThemeSelection`, `customThemeSelection`, or a theme choice id.
     var terminalThemeSelection: String = KookySettingsModel.defaultThemeSelection
@@ -117,6 +125,16 @@ final class KookySettingsModel {
             fontSize = Int(d)
         }
         cursorStyle = (terminal["cursor-style"] as? String) ?? "block"
+        // Tolerate a JSON bool / numeric `background-blur` so a hand-edited
+        // `false` isn't read as "unset" and then deleted on the next save.
+        backgroundBlur = KookySettings.blurString(from: terminal["background-blur"])
+        if let o = terminal["background-opacity"] as? Double {
+            backgroundOpacity = o
+        } else if let i = terminal["background-opacity"] as? Int {
+            backgroundOpacity = Double(i)
+        } else {
+            backgroundOpacity = nil
+        }
         let themeState = Self.themeSelection(
             for: terminal["theme"] as? String,
             in: terminalThemeChoices
@@ -251,6 +269,8 @@ final class KookySettingsModel {
         terminal["font-family"] = fontFamily.isEmpty ? nil : fontFamily
         terminal["font-size"] = fontSize
         terminal["cursor-style"] = cursorStyle == "block" ? nil : cursorStyle
+        terminal["background-blur"] = backgroundBlur
+        terminal["background-opacity"] = backgroundOpacity
         terminal["theme"] = Self.persistedThemeValue(
             selection: terminalThemeSelection,
             customRawValue: customTerminalThemeRawValue,
@@ -347,15 +367,17 @@ final class KookySettingsModel {
         KookySettings.write(parsed)
         KookyShellIntegration.refreshClaudeCustomSettings(customAgents: customAgents)
         KookyShellIntegration.refreshSshRemoteAgentDetection(enabled: sshRemoteAgentDetection)
-        // Theme-only diff is the trigger for chrome / window-appearance
-        // refresh — font and cursor changes also flow through `reloadConfig`
-        // so libghostty picks up the new values, but they don't change
-        // chrome tokens, so skip the window-appearance pass for them.
+        // Theme or glass (blur / opacity) diff triggers the chrome /
+        // window-appearance refresh — font and cursor changes also flow
+        // through `reloadConfig` so libghostty picks up the new values, but
+        // they don't change chrome tokens, so skip the window pass for them.
         let themeChanged = (previousTerminal["theme"] as? String) != (terminal["theme"] as? String)
+        let glassChanged = (previousTerminal["background-blur"] as? String) != (terminal["background-blur"] as? String)
+            || (previousTerminal["background-opacity"] as? NSNumber) != (terminal["background-opacity"] as? NSNumber)
         let terminalChanged = !NSDictionary(dictionary: previousTerminal).isEqual(to: terminal)
         if terminalChanged {
             LibghosttyApp.shared.reloadConfig()
-            if themeChanged {
+            if themeChanged || glassChanged {
                 (NSApp.delegate as? AppDelegate)?.refreshThemeAppearances()
             }
         }
@@ -527,12 +549,13 @@ struct KookySettingsView: View {
             ScrollView { detail }
                 .frame(maxWidth: .infinity)
         }
-        .background(Theme.chromeBackground)
+        .glassWindowBackground(fallback: Theme.chromeBackground)
         .preferredColorScheme(Theme.chromeColorScheme)
         .onChange(of: model.fontFamily) { _, _ in model.scheduleSave() }
         .onChange(of: model.fontSize) { _, _ in model.scheduleSave() }
         .onChange(of: model.cursorStyle) { _, _ in model.scheduleSave() }
         .onChange(of: model.terminalThemeSelection) { _, _ in model.flushSave() }
+        .onChange(of: model.backgroundBlur) { _, _ in model.flushSave() }
         .onChange(of: model.agentOrder) { _, _ in model.scheduleSave() }
         .onChange(of: model.hiddenAgents) { _, _ in model.scheduleSave() }
         .onChange(of: model.agentOptions) { _, _ in model.scheduleSave() }
@@ -642,7 +665,7 @@ struct KookySettingsView: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)
-                .frame(minWidth: 180)
+                .frame(minWidth: 180, alignment: .trailing)
             }
             SettingsHairline()
             SettingsRow(label: "font-size") {
@@ -665,8 +688,28 @@ struct KookySettingsView: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)
-                .frame(minWidth: 180)
+                .frame(minWidth: 180, alignment: .trailing)
             }
+            SettingsHairline()
+            SettingsRow(label: "liquid-glass") {
+                // Real Liquid Glass on macOS 26+; no effect on older systems.
+                // Tags are ghostty's `background-blur` values; "Off" stores
+                // `false` so it overrides a glassy ghostty config.
+                Picker("", selection: glassSelection) {
+                    Text("Off").tag("false")
+                    Text("Regular").tag("macos-glass-regular")
+                    Text("Clear").tag("macos-glass-clear")
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .frame(minWidth: 180, alignment: .trailing)
+            }
+            Text("Requires macOS 26 or later.")
+                .font(Theme.mono(11))
+                .foregroundStyle(Theme.chromeMuted)
+                .padding(.horizontal, 28)
+                .padding(.top, 6)
+                .padding(.bottom, 10)
             SettingsHairline()
             SettingsRow(label: "default-new-tab") {
                 Picker("", selection: $model.defaultAgentId) {
@@ -678,7 +721,7 @@ struct KookySettingsView: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)
-                .frame(minWidth: 180)
+                .frame(minWidth: 180, alignment: .trailing)
             }
             SettingsHairline()
             SettingsRow(label: "top bar search") {
@@ -813,7 +856,7 @@ struct KookySettingsView: View {
         }
         .labelsHidden()
         .pickerStyle(.menu)
-        .frame(minWidth: 220)
+        .frame(minWidth: 220, alignment: .trailing)
     }
 
     /// Falls back to 13 when the user hasn't explicitly chosen a size —
@@ -827,6 +870,27 @@ struct KookySettingsView: View {
         Binding(
             get: { model.fontSize ?? Self.defaultFontSize },
             set: { model.fontSize = $0 }
+        )
+    }
+
+    /// The picker shows what's *in effect* (kooky's own value, else the ghostty
+    /// fallback, else off), but always writes an explicit value — so picking
+    /// "Off" stores `false` rather than clearing the key, keeping it distinct
+    /// from "never set" (which is what defers to the ghostty config).
+    ///
+    /// The blur→opacity coupling lives in `KookySettings.apply` (the libghostty
+    /// config builder), not here — so it holds for every config path and never
+    /// clobbers a `background-opacity` the user set by hand.
+    private var glassSelection: Binding<String> {
+        Binding(
+            get: {
+                switch Theme.effectiveBlurRaw {
+                case "macos-glass-regular": return "macos-glass-regular"
+                case "macos-glass-clear": return "macos-glass-clear"
+                default: return "false"
+                }
+            },
+            set: { model.backgroundBlur = $0 }
         )
     }
 
@@ -1227,6 +1291,9 @@ final class KookySettingsWindowController: NSWindowController {
         window.setContentSize(NSSize(width: 680, height: 460))
         window.isReleasedWhenClosed = false
         window.appearance = Theme.windowAppearance
+        // Glass runs edge to edge under a transparent full-size titlebar;
+        // content keeps its safe-area inset, so rows still sit below the bar.
+        window.configureGlassChrome()
         self.window = window
     }
 

@@ -27,6 +27,132 @@ enum Theme {
         NSAppearance(named: resolved.isLight ? .aqua : .darkAqua)
     }
 
+    // MARK: Glass — macOS 26 Liquid Glass (opt-in via `background-blur`)
+
+    /// The two glass styles ghostty exposes as `macos-glass-regular` /
+    /// `macos-glass-clear`. `official` bridges to AppKit's
+    /// `NSGlassEffectView.Style`, which only exists in the macOS 26 SDK —
+    /// hence the compiler guard so older toolchains still build.
+    enum GlassStyle {
+        case regular, clear
+
+        #if compiler(>=6.2)
+        @available(macOS 26.0, *)
+        var official: NSGlassEffectView.Style {
+            switch self {
+            case .regular: return .regular
+            case .clear: return .clear
+            }
+        }
+        #endif
+    }
+
+    /// The glass mode in effect, or `nil` for opaque chrome.
+    static var glassStyle: GlassStyle? {
+        switch effectiveBlurRaw {
+        case "macos-glass-regular": return .regular
+        case "macos-glass-clear": return .clear
+        default: return nil
+        }
+    }
+
+    /// The resolved `background-blur` value: kooky's own setting wins whenever
+    /// it's present (including an explicit non-glass value like `false` = off),
+    /// and the user's ghostty config only fills in when kooky has no opinion at
+    /// all. So picking "Off" in kooky overrides a glassy ghostty config, while
+    /// a fresh kooky still inherits glass from ghostty. Reading
+    /// `KookySettingsModel.shared` registers the `@Observable` dependency so
+    /// SwiftUI re-renders the moment the dropdown changes.
+    static var effectiveBlurRaw: String? {
+        KookySettingsModel.shared.backgroundBlur ?? ghosttyFallback.blur
+    }
+
+    /// Whether glass is *actually rendering* — a style is configured AND we're
+    /// on macOS 26, where real Liquid Glass exists. Older systems render
+    /// nothing (opaque chrome), so this gates window transparency and panel
+    /// translucency; `glassStyle` alone only reflects the saved preference.
+    static var glassEnabled: Bool {
+        if #available(macOS 26.0, *) { return glassStyle != nil }
+        return false
+    }
+
+    /// Terminal opacity applied when a glass style is on but the user set no
+    /// explicit `background-opacity` — enough see-through for the glass to read
+    /// without washing out the text. Single source for both the libghostty
+    /// config injection (`KookySettings.apply`) and the `backgroundOpacity`
+    /// fallback below. `nonisolated` so the non-MainActor config builder can
+    /// read it. Tune on macOS 26 hardware.
+    nonisolated static let defaultGlassOpacity: Double = 0.82
+
+    /// `background-opacity` clamped to a visible range. Drives the glass tint;
+    /// also the value libghostty draws the terminal surface at. Defaults to
+    /// 0.82 when a glass mode is on but no opacity was set, so the effect
+    /// shows without the user also having to hand-set opacity.
+    static var backgroundOpacity: Double {
+        let raw = KookySettingsModel.shared.backgroundOpacity
+            ?? ghosttyFallback.opacity
+            ?? (glassEnabled ? defaultGlassOpacity : 1)
+        return max(0.001, min(1, raw))
+    }
+
+    /// Tint the window glass leans toward — the terminal background at
+    /// `backgroundOpacity`, mirroring ghostty so the glass reads as the
+    /// active theme's surface rather than a neutral frost.
+    static var glassTint: NSColor {
+        resolved.backgroundColor.withAlphaComponent(backgroundOpacity)
+    }
+
+    /// When a glass window resigns key, macOS washes the glass to a flat gray.
+    /// ghostty masks that by covering the glass with the (slightly saturated)
+    /// terminal background, so the inactive window reads as the theme color
+    /// instead of gray. This is that overlay color + opacity.
+    ///
+    /// `clear` glass is far more see-through than `regular`, so it gets a
+    /// lighter mask — covering it at the regular opacity would make clear look
+    /// like regular's frost when inactive. Heavier on dark themes, where the
+    /// gray is most obvious. Tune these on macOS 26 hardware.
+    static var glassInactiveTint: Color {
+        let saturated = resolved.backgroundColor.adjustingSaturation(by: 1.2)
+        let opacity: Double
+        switch glassStyle {
+        case .clear: opacity = resolved.isLight ? 0.20 : 0.50
+        default:     opacity = resolved.isLight ? 0.35 : 0.85
+        }
+        return Color(nsColor: saturated).opacity(opacity)
+    }
+
+    /// Chrome panels (sidebar, tab bar, status bar, menus) sit *in front* of
+    /// the single window-level glass layer, so in glass mode they use a
+    /// translucent chrome tint to let the glass read through instead of their
+    /// own opaque fill. `clear` glass shows more; `regular` stays a touch
+    /// more solid. Tune these on macOS 26 hardware.
+    static var glassPanelTint: Color {
+        let opacity: Double = glassStyle == .clear ? 0.40 : 0.60
+        return Color(nsColor: resolved.chromeBackgroundColor).opacity(opacity)
+    }
+
+    /// `~/.config/ghostty/config` `background-blur` / `background-opacity`,
+    /// read once. The fallback for users who configured glass only in ghostty
+    /// (issue #26) — kooky's own setting always wins over this. Ghostty-config
+    /// edits are rare enough that a process-lifetime cache (no re-read on every
+    /// SwiftUI body) is the right trade; toggle live via the Settings dropdown.
+    private static let ghosttyFallback: (blur: String?, opacity: Double?) = {
+        let url = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/ghostty/config")
+        guard let raw = try? String(contentsOf: url, encoding: .utf8) else { return (nil, nil) }
+        var blur: String?
+        var opacity: Double?
+        for line in raw.split(whereSeparator: \.isNewline) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.hasPrefix("#"), let eq = trimmed.firstIndex(of: "=") else { continue }
+            let key = trimmed[..<eq].trimmingCharacters(in: .whitespaces)
+            let val = String(trimmed[trimmed.index(after: eq)...]).trimmingCharacters(in: .whitespaces)
+            if key == "background-blur" { blur = val }
+            if key == "background-opacity" { opacity = Double(val) }
+        }
+        return (blur, opacity)
+    }()
+
     /// `Theme.resolved` reads `KookySettingsModel.shared.selectedTerminalTheme` so
     /// SwiftUI's `@Observable` machinery registers the dependency on every
     /// body that touches a chrome token — without that read, body
@@ -139,6 +265,18 @@ enum Theme {
 /// Linear interpolation between two NSColors in sRGB. Module-internal so
 /// `Theme.Resolved.init` can reach it without going through `Theme.` (the
 /// init is fileprivate already so the helper doesn't need to escape).
+extension NSColor {
+    /// Multiply saturation (clamped to 1). Mirrors ghostty's inactive-window
+    /// tint, which boosts the background's saturation so the masked-inactive
+    /// state reads as a deliberate tint rather than a dull wash.
+    func adjustingSaturation(by factor: CGFloat) -> NSColor {
+        guard let c = usingColorSpace(.sRGB) else { return self }
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        c.getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+        return NSColor(hue: h, saturation: min(1, s * factor), brightness: b, alpha: a)
+    }
+}
+
 private func mix(_ a: NSColor, _ b: NSColor, _ amount: CGFloat) -> NSColor {
     let ca = a.usingColorSpace(.sRGB) ?? a
     let cb = b.usingColorSpace(.sRGB) ?? b

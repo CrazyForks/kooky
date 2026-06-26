@@ -21,7 +21,7 @@ struct ContentView: View {
                 }
             }
         }
-        .background(chromeBackground)
+        .glassWindowBackground(fallback: chromeBackground)
         .preferredColorScheme(Theme.chromeColorScheme)
         .ignoresSafeArea(.all)
     }

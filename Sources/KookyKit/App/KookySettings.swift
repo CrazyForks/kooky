@@ -42,7 +42,10 @@ enum KookySettings {
       "terminal": {
         // "font-family": "JetBrains Mono",
         // "font-size": 13,
-        // "theme": "dracula"
+        // "theme": "dracula",
+        // "background-opacity": 0.85,
+        // macOS 26+: "macos-glass-regular" | "macos-glass-clear" for Liquid Glass
+        // "background-blur": "macos-glass-regular"
       }
     }
     """
@@ -86,6 +89,23 @@ enum KookySettings {
                 lines.append(contentsOf: formatGhosttyLines(key: key, value: value))
             }
         }
+        // Derive the terminal surface opacity from the glass blur when the user
+        // set no explicit `background-opacity`, so every path behaves the same
+        // (the Settings dropdown, hand-edited settings.json, and inherited
+        // ghostty config): a glass style needs a see-through terminal for the
+        // glass to read through, while kooky's "off" (`false`) forces it fully
+        // opaque — otherwise an inherited ghostty `background-opacity` would
+        // leave the terminal see-through with the glass gone.
+        if terminal["background-opacity"] == nil {
+            switch blurString(from: terminal["background-blur"]) {
+            case let blur? where blur.hasPrefix("macos-glass"):
+                lines.append("background-opacity = \(Theme.defaultGlassOpacity)")
+            case "false", "0":
+                lines.append("background-opacity = 1")
+            default:
+                break  // unset, or a ghostty-native blur — leave opacity alone
+            }
+        }
         let text = lines.joined(separator: "\n")
         guard !text.isEmpty else { return }
         text.withCString { cstr in
@@ -122,6 +142,21 @@ enum KookySettings {
                 ghostty_config_load_string(config, cstr, UInt(strlen(cstr)), source)
             }
         }
+    }
+
+    /// Normalize a raw `background-blur` JSON value to its ghostty string form.
+    /// Users can write it as a string (`"macos-glass-regular"`), a JSON bool
+    /// (`false` = off), or an integer radius — `as? String` alone would drop
+    /// the latter two to `nil`, which reads as "unset" and silently deletes the
+    /// key on the next save. Coercing here keeps every form round-tripping.
+    static func blurString(from value: Any?) -> String? {
+        if let str = value as? String { return str }
+        if let num = value as? NSNumber {
+            return CFGetTypeID(num) == CFBooleanGetTypeID()
+                ? (num.boolValue ? "true" : "false")
+                : num.stringValue
+        }
+        return nil
     }
 
     private static func formatGhosttyLines(key: String, value: Any) -> [String] {
