@@ -188,11 +188,11 @@ enum StatusBarItemKind: String, CaseIterable, Codable, Hashable, Sendable {
         case .toolCallActivity: return nil
         case .codexUsage: return nil
         case .pythonVenv: return "p.circle.fill"
-        case .nodeVersion: return "n.circle.fill"
+        case .nodeVersion: return "hexagon"
         case .proxy: return "network"
         case .remoteLogin: return "person.fill"
         case .gitBranch: return "arrow.triangle.branch"
-        case .gitDiff: return "line.3.horizontal.button.angledtop.vertical.right"
+        case .gitDiff: return "plusminus"
         }
     }
 
@@ -421,7 +421,7 @@ private struct PaneStatusBar: View {
         if let version = session.environment.nodeVersion {
             let nvmDir = session.environment.nvmDirectory
             SwitchableStatusSegment<String>(
-                systemImage: "n.circle.fill",
+                systemImage: "hexagon",
                 label: version,
                 helpText: "Switch Node version",
                 popoverWidth: 190,
@@ -479,7 +479,7 @@ private struct PaneStatusBar: View {
     private var diffSegment: some View {
         let s = session.gitStatus
         if s.branch != nil, s.filesChanged > 0 {
-            StatusSegment(systemImage: "line.3.horizontal.button.angledtop.vertical.right") {
+            StatusSegment(systemImage: "plusminus") {
                 // Order mirrors `git diff --shortstat` itself: files → +N → −N.
                 // File count in chromeMuted (it's a count, not a delta) so the
                 // saturated +/- pair pops as the actual change signal.

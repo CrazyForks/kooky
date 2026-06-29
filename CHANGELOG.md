@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.31.0 — 2026-06-29
+
+- Status-bar icons refreshed: the Node version slot now shows a hexagon (Node's logo) and the git diff slot a ± symbol, for clearer glyphs at a glance.
+
 ## v0.30.0 — 2026-06-29
 
 - New: Codex usage gauge — a Codex tab's status bar now shows how much of your 5-hour and weekly rate-limit windows are left (matching the Codex client), turning amber then red as you run low. Click it for the reset countdowns, your plan, and current context-window usage. Toggle it under Settings → Status Bar → Codex.
