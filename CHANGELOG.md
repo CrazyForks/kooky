@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.29.1 — 2026-06-29
+
+- Settings reorganized: theme, font, cursor, and Liquid Glass moved into a new "Appearance" section, and the rest regrouped so each section does one thing.
+
 ## v0.29.0 — 2026-06-29
 
 - New: "Open in" — a top-bar button opens the current tab's folder in your editor, terminal, or Finder. Click the icon to reopen in your last-used app, or the chevron to pick from any supported app installed on your Mac (VS Code, Cursor, Zed, iTerm, Ghostty, and more). Reorder or hide them under Settings → Open in.

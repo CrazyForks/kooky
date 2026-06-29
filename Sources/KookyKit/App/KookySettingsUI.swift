@@ -540,19 +540,19 @@ final class KookySettingsModel {
 }
 
 enum SettingsCategory: String, CaseIterable, Identifiable {
-    case general, terminalPresets, openIn, codingAgents, ssh, notifications, statusBar, advanced
+    case general, appearance, codingAgents, terminalPresets, openIn, statusBar, notifications, advanced
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .general: return "General"
+        case .appearance: return "Appearance"
+        case .codingAgents: return "Agents"
         case .terminalPresets: return "Terminals"
         case .openIn: return "Open in"
-        case .codingAgents: return "Agents"
-        case .ssh: return "SSH"
-        case .notifications: return "Notifications"
         case .statusBar: return "Status Bar"
+        case .notifications: return "Notifications"
         case .advanced: return "Advanced"
         }
     }
@@ -674,19 +674,19 @@ struct KookySettingsView: View {
                 .padding(.bottom, 18)
             switch selected {
             case .general: generalDetail
+            case .appearance: appearanceDetail
+            case .codingAgents: codingAgentsDetail
             case .terminalPresets: terminalPresetsDetail
             case .openIn: openInDetail
-            case .codingAgents: codingAgentsDetail
-            case .ssh: sshDetail
-            case .notifications: notificationsDetail
             case .statusBar: statusBarDetail
+            case .notifications: notificationsDetail
             case .advanced: advancedDetail
             }
             Spacer(minLength: 28)
         }
     }
 
-    private var generalDetail: some View {
+    private var appearanceDetail: some View {
         VStack(alignment: .leading, spacing: 0) {
             SettingsRow(label: "theme") {
                 themeControl
@@ -747,7 +747,12 @@ struct KookySettingsView: View {
                 .padding(.horizontal, 28)
                 .padding(.top, 6)
                 .padding(.bottom, 10)
-            SettingsHairline()
+            terminalRestartCallout
+        }
+    }
+
+    private var generalDetail: some View {
+        VStack(alignment: .leading, spacing: 0) {
             SettingsRow(label: "default-new-tab") {
                 Picker("", selection: $model.defaultAgentId) {
                     Text("Ask each time").tag(String?.none)
@@ -761,12 +766,20 @@ struct KookySettingsView: View {
                 .frame(minWidth: 180, alignment: .trailing)
             }
             SettingsHairline()
-            SettingsRow(label: "top bar search") {
+            SettingsRow(label: "top-bar-search") {
                 Toggle("", isOn: $model.showSearchPill)
                     .labelsHidden()
                     .toggleStyle(.switch)
             }
-            terminalRestartCallout
+            SettingsHairline()
+            // SSH remote agent detection lives here now (it was its own
+            // one-toggle category before). The settings.json key stays
+            // `ssh.remoteAgentDetection`; only the UI home moved.
+            SettingsRow(label: "remote-agent-detection") {
+                Toggle("", isOn: $model.sshRemoteAgentDetection)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+            }
         }
     }
 
@@ -788,16 +801,6 @@ struct KookySettingsView: View {
             SettingsHairline()
             SettingsRow(label: "resume-conversation-when-reopen") {
                 Toggle("", isOn: $model.resumeConversations)
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-            }
-        }
-    }
-
-    private var sshDetail: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            SettingsRow(label: "remote-agent-detection") {
-                Toggle("", isOn: $model.sshRemoteAgentDetection)
                     .labelsHidden()
                     .toggleStyle(.switch)
             }
@@ -1328,6 +1331,9 @@ final class KookySettingsWindowController: NSWindowController {
         self.host = host
         let window = NSWindow(contentViewController: host)
         window.title = "Settings"
+        // Keep the title set (Window menu / accessibility) but hide the text in
+        // the bar, matching the main window + About + the floating panels.
+        window.titleVisibility = .hidden
         window.styleMask = [.titled, .closable]
         window.setContentSize(NSSize(width: 680, height: 460))
         window.isReleasedWhenClosed = false
