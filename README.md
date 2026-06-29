@@ -48,6 +48,8 @@ A minimal modern terminal built for AI coding. Sidebar workspaces; horizontal / 
 
 **Agent panel.** A right-side sidebar — toggle in the top bar, three collapse states like the left one — lists every agent across all your windows at once, sorted by who needs you first: waiting on you, then failed, then running, then idle. Click any row to jump straight to that tab; compact mode shrinks it to a rail of status-tinted icons.
 
+**Open in your editor or terminal.** A split button in the top bar hands the current tab's directory to another app. Click the icon to reopen in your last-used app, or the chevron to pick from any supported app installed on your Mac: VS Code · Cursor · Windsurf · Zed · Sublime Text · Antigravity · Trae · Kiro · Xcode · IntelliJ IDEA · PyCharm · WebStorm · Terminal · iTerm · Ghostty · Warp · Finder. Reorder or hide them under Settings → Open in.
+
 **Live workspace state.** Pane status bar shows git branch + diff (`N files +X −Y`), Python venv, Node version, active proxy (`https_proxy` / `http_proxy` / `all_proxy`), and — when you SSH into a remote — the `user@host` you're logged into (turn it on under Settings → SSH). Auto-refreshes when an agent's Bash tool or another terminal switches branches. Click the Node or branch pill to switch versions / branches without typing; click the proxy pill to see and copy the full `name=value`.
 
 **SwiftUI-native, minimal chrome.** Onest + JetBrains Mono. Custom About panel, native menus with shortcut hints, full IME support.

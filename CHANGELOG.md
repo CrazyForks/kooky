@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.29.0 — 2026-06-29
+
+- New: "Open in" — a top-bar button opens the current tab's folder in your editor, terminal, or Finder. Click the icon to reopen in your last-used app, or the chevron to pick from any supported app installed on your Mac (VS Code, Cursor, Zed, iTerm, Ghostty, and more). Reorder or hide them under Settings → Open in.
+
 ## v0.28.2 — 2026-06-26
 
 - New: Liquid Glass on macOS 26 — kooky's windows can take on the system's translucent glass material. Turn it on in Settings → General → liquid-glass (Regular or Clear). (#26)

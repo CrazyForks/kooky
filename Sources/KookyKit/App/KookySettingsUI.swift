@@ -108,6 +108,16 @@ final class KookySettingsModel {
     /// Persisted under `notifications.attention` / `.failure` (non-default only).
     var notifyOnAttention: Bool = true
     var notifyOnFailure: Bool = true
+    /// "Open in" picker (top-chrome split button): user-customised order of
+    /// `OpenInApp` ids; installed apps absent from this list follow in catalog
+    /// order. Persisted under `openin.order`.
+    var openInAppOrder: [String] = []
+    /// Installed "Open in" apps the user suppressed from the picker. Sibling of
+    /// `hiddenAgents`. Persisted under `openin.hidden`.
+    var hiddenOpenInApps: Set<String> = []
+    /// Last app picked from the "Open in" control — drives the split button's
+    /// icon + plain-click target. Persisted under `openin.lastUsed`.
+    var lastOpenInAppId: String? = nil
 
     private var saveWork: DispatchWorkItem?
 
@@ -159,6 +169,11 @@ final class KookySettingsModel {
         notificationsEnabled = (notifications["enabled"] as? Bool) ?? true
         notifyOnAttention = (notifications["attention"] as? Bool) ?? true
         notifyOnFailure = (notifications["failure"] as? Bool) ?? true
+
+        let openin = parsed["openin"] as? [String: Any] ?? [:]
+        openInAppOrder = (openin["order"] as? [String]) ?? []
+        hiddenOpenInApps = Set((openin["hidden"] as? [String]) ?? [])
+        lastOpenInAppId = openin["lastUsed"] as? String
 
         let rawCustom = (agents["custom"] as? [[String: Any]]) ?? []
         let builtinIds = Set(AgentTemplate.builtin.map(\.id))
@@ -337,6 +352,16 @@ final class KookySettingsModel {
             parsed["notifications"] = notifications
         }
 
+        var openin = parsed["openin"] as? [String: Any] ?? [:]
+        openin["order"] = openInAppOrder.isEmpty ? nil : openInAppOrder
+        openin["hidden"] = hiddenOpenInApps.isEmpty ? nil : Array(hiddenOpenInApps).sorted()
+        openin["lastUsed"] = lastOpenInAppId
+        if openin.isEmpty {
+            parsed.removeValue(forKey: "openin")
+        } else {
+            parsed["openin"] = openin
+        }
+
         let serialisedPresets: [[String: Any]] = terminalPresets.compactMap { p in
             guard !p.id.isEmpty else { return nil }
             var dict: [String: Any] = ["id": p.id]
@@ -494,6 +519,14 @@ final class KookySettingsModel {
         scheduleSave()
     }
 
+    /// Clears "Open in" order + hidden customisation. Leaves `lastOpenInAppId`
+    /// so the split button keeps pointing at the app the user last used.
+    func resetOpenIn() {
+        openInAppOrder = []
+        hiddenOpenInApps = []
+        scheduleSave()
+    }
+
     func deleteTerminalPreset(id: String) {
         terminalPresets.removeAll { $0.id == id }
         hiddenPresets.remove(id)
@@ -507,7 +540,7 @@ final class KookySettingsModel {
 }
 
 enum SettingsCategory: String, CaseIterable, Identifiable {
-    case general, terminalPresets, codingAgents, ssh, notifications, statusBar, advanced
+    case general, terminalPresets, openIn, codingAgents, ssh, notifications, statusBar, advanced
 
     var id: String { rawValue }
 
@@ -515,6 +548,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "General"
         case .terminalPresets: return "Terminals"
+        case .openIn: return "Open in"
         case .codingAgents: return "Agents"
         case .ssh: return "SSH"
         case .notifications: return "Notifications"
@@ -560,6 +594,8 @@ struct KookySettingsView: View {
         .onChange(of: model.hiddenAgents) { _, _ in model.scheduleSave() }
         .onChange(of: model.agentOptions) { _, _ in model.scheduleSave() }
         .onChange(of: model.defaultAgentId) { _, _ in model.scheduleSave() }
+        .onChange(of: model.openInAppOrder) { _, _ in model.scheduleSave() }
+        .onChange(of: model.hiddenOpenInApps) { _, _ in model.scheduleSave() }
 
         return core
             .onChange(of: model.customAgents) { _, _ in model.scheduleSave() }
@@ -639,6 +675,7 @@ struct KookySettingsView: View {
             switch selected {
             case .general: generalDetail
             case .terminalPresets: terminalPresetsDetail
+            case .openIn: openInDetail
             case .codingAgents: codingAgentsDetail
             case .ssh: sshDetail
             case .notifications: notificationsDetail
@@ -735,6 +772,10 @@ struct KookySettingsView: View {
 
     private var terminalPresetsDetail: some View {
         TerminalPresetsList(model: model)
+    }
+
+    private var openInDetail: some View {
+        OpenInReorderList(model: model)
     }
 
     private var statusBarDetail: some View {
@@ -1817,5 +1858,161 @@ private struct StatusBarRow: View {
         } else {
             EmptyView()
         }
+    }
+}
+
+/// Settings → Open in. Lists the catalog apps installed on this Mac (Finder
+/// always present) with a visibility toggle + drag-reorder; the order + hidden
+/// set drive the top-chrome split button's picker. Uninstalled catalog apps
+/// are omitted — there's nothing to toggle. Mirrors `StatusBarReorderList`.
+private struct OpenInReorderList: View {
+    @Bindable var model: KookySettingsModel
+    @State private var draggingId: String?
+    @State private var endTargeted = false
+    /// Bumped in `onAppear` after invalidating the resolver cache, to force
+    /// `apps` to re-resolve this appearance (cache-clear alone isn't an
+    /// observable change). See `onAppear` below.
+    @State private var refreshTick = 0
+
+    private var apps: [OpenInApp] {
+        OpenInResolver.installedApps(model: model)
+    }
+
+    var body: some View {
+        // Reading `refreshTick` registers the dependency so its onAppear bump
+        // (below) invalidates this body and re-resolves `apps` against the
+        // freshly-cleared resolver cache.
+        let _ = refreshTick
+        return VStack(alignment: .leading, spacing: 0) {
+            Text("Apps installed on this Mac. The top-bar button opens the current tab's folder in your last-used one.")
+                .font(Theme.mono(11))
+                .foregroundStyle(Theme.chromeMuted)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 28)
+                .padding(.bottom, 14)
+
+            ForEach(Array(apps.enumerated()), id: \.element.id) { index, app in
+                if index > 0 { SettingsHairline() }
+                OpenInRow(
+                    app: app,
+                    visible: !model.hiddenOpenInApps.contains(app.id),
+                    isDragging: draggingId == app.id,
+                    onToggleVisible: { toggleVisible(app.id) },
+                    onBeginDrag: { draggingId = app.id },
+                    onDrop: { droppedId in
+                        defer { draggingId = nil }
+                        return reorder(draggedId: droppedId, before: app.id)
+                    }
+                )
+            }
+
+            Color.clear
+                .frame(height: 10)
+                .contentShape(Rectangle())
+                .dropIndicator(active: endTargeted, on: .top, offset: 4)
+                .dropDestination(for: String.self) { items, _ in
+                    defer { draggingId = nil }
+                    guard let id = items.first else { return false }
+                    return moveToEnd(id)
+                } isTargeted: { endTargeted = $0 }
+
+            HStack {
+                Spacer()
+                if hasCustomisation {
+                    Button("reset to defaults") { model.resetOpenIn() }
+                        .buttonStyle(.plain)
+                        .font(Theme.mono(11))
+                        .foregroundStyle(Theme.chromeMuted)
+                        .underline()
+                }
+            }
+            .padding(.horizontal, 28)
+            .padding(.top, 14)
+        }
+        // Drop any stale install/uninstall cache the top-bar button populated
+        // during this session, then bump `refreshTick` so the list re-resolves
+        // `apps` against the cleared cache on this same appearance — clearing
+        // the cache isn't observable, so without the bump a newly-installed app
+        // wouldn't show (or an uninstalled one wouldn't drop) until an unrelated
+        // re-render.
+        .onAppear {
+            OpenInResolver.invalidate()
+            refreshTick += 1
+        }
+    }
+
+    private var hasCustomisation: Bool {
+        !model.openInAppOrder.isEmpty || !model.hiddenOpenInApps.isEmpty
+    }
+
+    private func toggleVisible(_ id: String) {
+        if model.hiddenOpenInApps.contains(id) {
+            model.hiddenOpenInApps.remove(id)
+        } else {
+            model.hiddenOpenInApps.insert(id)
+        }
+    }
+
+    /// Rewrites `openInAppOrder` to the full installed sequence after the move
+    /// so the saved order is meaningful (rather than the sparse default).
+    private func reorder(draggedId: String, before targetId: String) -> Bool {
+        var order = apps.map(\.id)
+        guard let src = order.firstIndex(of: draggedId),
+              let dst = order.firstIndex(of: targetId),
+              src != dst else { return false }
+        let moved = order.remove(at: src)
+        let adjusted = src < dst ? dst - 1 : dst
+        order.insert(moved, at: adjusted)
+        persistOrder(order)
+        return true
+    }
+
+    private func moveToEnd(_ id: String) -> Bool {
+        var order = apps.map(\.id)
+        guard let src = order.firstIndex(of: id), src != order.count - 1 else { return false }
+        let moved = order.remove(at: src)
+        order.append(moved)
+        persistOrder(order)
+        return true
+    }
+
+    /// Persist a reordered *installed* sequence, keeping any previously-saved
+    /// ids that aren't currently installed (appended at the tail) so an
+    /// uninstall → reorder → reinstall round-trip doesn't drop that app's slot.
+    private func persistOrder(_ installedOrder: [String]) {
+        let installedSet = Set(installedOrder)
+        let preserved = model.openInAppOrder.filter { !installedSet.contains($0) }
+        withAnimation(.easeInOut(duration: 0.18)) {
+            model.openInAppOrder = installedOrder + preserved
+        }
+    }
+}
+
+private struct OpenInRow: View {
+    let app: OpenInApp
+    let visible: Bool
+    let isDragging: Bool
+    let onToggleVisible: () -> Void
+    let onBeginDrag: () -> Void
+    let onDrop: (String) -> Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ReorderHandle(payload: app.id, onBeginDrag: onBeginDrag)
+            OpenInAppIcon(app: app, size: 16)
+                .opacity(visible ? 1.0 : 0.4)
+            Text(app.title)
+                .font(Theme.mono(12.5))
+                .foregroundStyle(visible ? Theme.chromeForeground : Theme.chromeMuted)
+            Spacer(minLength: 14)
+            Toggle("", isOn: Binding(get: { visible }, set: { _ in onToggleVisible() }))
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .labelsHidden()
+        }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 10)
+        .background(ReorderDropZone(row: app.id, isDragging: isDragging, decode: { $0 }, onDrop: onDrop))
+        .opacity(isDragging ? 0.35 : 1.0)
     }
 }

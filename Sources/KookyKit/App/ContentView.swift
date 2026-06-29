@@ -58,6 +58,8 @@ struct ContentView: View {
                         }
                     }
                 }
+            OpenInButton(store: store)
+                .padding(.trailing, 2)
             HoverableIconButton(
                 systemName: "square.grid.2x2",
                 fontSize: 12,
