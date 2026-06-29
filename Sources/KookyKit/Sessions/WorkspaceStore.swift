@@ -134,6 +134,11 @@ final class WorkspaceStore {
     /// the outer shell, so an agent running its own subprocess shell never
     /// trips them; the filesystem layer catches everyone.
     private var gitWatchers: [UUID: GitWatcher] = [:]
+    /// Watches each Codex session's rollout file and republishes its latest
+    /// rate-limit usage to `Session.codexUsage` for the status-bar gauge.
+    /// Codex blocks the shell while running, so the file is the only live
+    /// signal — torn down alongside `gitWatchers` at every close site.
+    private let codexUsageMonitor = CodexUsageMonitor()
 
     /// Snapshot of a closed tab's reopenable state. Workspace + pane IDs
     /// are best-effort routing — if either is gone by the time the user
@@ -516,6 +521,7 @@ final class WorkspaceStore {
         for pane in workspace.root.allPanes {
             for tab in pane.tabs {
                 gitWatchers.removeValue(forKey: tab.id)?.cancel()
+                codexUsageMonitor.stop(sessionId: tab.id)
                 tab.engine.terminate()
             }
         }
@@ -791,6 +797,7 @@ final class WorkspaceStore {
         // its own. Clear ours so this window's drop indicators reset.
         draggingTabId = nil
         gitWatchers.removeValue(forKey: id)?.cancel()
+        codexUsageMonitor.stop(sessionId: id)
         detachSession(session, from: pane, at: idx, in: workspace)
         return session
     }
@@ -846,6 +853,7 @@ final class WorkspaceStore {
             recordClosedTab(session, pane: pane, workspace: workspace)
         }
         gitWatchers.removeValue(forKey: session.id)?.cancel()
+        codexUsageMonitor.stop(sessionId: session.id)
         session.engine.terminate()
         detachSession(session, from: pane, at: idx, in: workspace)
     }
@@ -1018,7 +1026,16 @@ final class WorkspaceStore {
             return
         }
         if workspace.zoomedPaneId == pane.id { workspace.zoomedPaneId = nil }
-        for tab in pane.tabs { tab.engine.terminate() }
+        // Tear down per-session watchers before terminating engines — same
+        // contract as closeTab / closeWorkspace. The non-root collapse path
+        // below returns without routing through those, so without this the
+        // closed pane's git + Codex-usage watchers (DispatchSource fds) leak.
+        // Idempotent: the root path re-stops via closeWorkspace (no-op).
+        for tab in pane.tabs {
+            gitWatchers.removeValue(forKey: tab.id)?.cancel()
+            codexUsageMonitor.stop(sessionId: tab.id)
+            tab.engine.terminate()
+        }
         // Object identity, not id equality. After `splitPane`, the workspace
         // root keeps its original id but its content becomes a `.split`, while
         // a freshly-constructed child `PaneNode(pane: existing)` reuses the
@@ -1106,6 +1123,10 @@ final class WorkspaceStore {
             if event.activityState == .attention { onSessionAlert(session.id, .attention) }
         }
         if session.agent.id != agentBefore { scheduleSave() }
+        // A non-`ended` event means the agent just (re)started — for Codex,
+        // (re)point the usage watcher so a manually-typed `codex` lights up
+        // and a relaunch follows the freshly-created rollout file.
+        if event != .ended { startCodexUsageIfNeeded(for: session) }
     }
 
     func applyShellEnvironment(_ env: [String: String], sessionId: UUID) {
@@ -1201,6 +1222,7 @@ final class WorkspaceStore {
         }
         for watcher in gitWatchers.values { watcher.cancel() }
         gitWatchers.removeAll()
+        codexUsageMonitor.stopAll()
     }
 
     // MARK: - Internals
@@ -1321,6 +1343,7 @@ final class WorkspaceStore {
         refreshGitStatus(for: session)
         refreshEnvironment(for: session)
         installGitWatcher(for: session)
+        startCodexUsageIfNeeded(for: session)
         engine.onPwdChange = { [weak self, weak session, weak workspace] pwd in
             guard let session else { return }
             let url = URL(fileURLWithPath: pwd)
@@ -1384,6 +1407,16 @@ final class WorkspaceStore {
                 session.activityState = .idle
             }
             session.remoteHost = nil
+            // Codex blocks the shell while it runs, so this firing means Codex
+            // exited (or any other command finished) — drop the usage gauge and
+            // stop watching the now-static rollout. Reliable even on an abnormal
+            // codex exit where the `ended` hook never fires, since the shell
+            // always returns to the prompt. stop() is unconditional (a true
+            // no-op for sessions that never started a watcher) so it also frees
+            // the fd when codex exited before its first `token_count` — e.g. an
+            // auth failure or `codex --help`, where `codexUsage` stayed nil.
+            if session.codexUsage != nil { session.codexUsage = nil }
+            self?.codexUsageMonitor.stop(sessionId: session.id)
             session.lastCommandExit = exit
             session.lastCommandDuration = duration
             // A non-zero exit on a backgrounded tab is worth a nudge;
@@ -1458,6 +1491,29 @@ final class WorkspaceStore {
         gitStatusFetcher.fetch(sessionId: session.id, cwd: session.currentDirectory) { [weak session] status in
             guard let session, session.gitStatus != status else { return }
             session.gitStatus = status
+        }
+    }
+
+    /// Starts (or re-points) the Codex usage watcher for a Codex session.
+    /// No-op for every other agent. Called on session wire-up (covers a tab
+    /// launched as Codex or restored as one) and on the `running` lifecycle
+    /// event (covers a manually-typed `codex`, and a relaunch that opens a
+    /// fresh rollout file). `start` is idempotent for an unchanged resolution.
+    private func startCodexUsageIfNeeded(for session: Session) {
+        let key = session.displayAgent.baseAgentId ?? session.displayAgent.id
+        guard key == AgentTemplate.codex.id else { return }
+        // Resolve CODEX_HOME from the session's live shell env (a Dock-launched
+        // kooky doesn't inherit it; the codex child does). The monitor snapshots
+        // existing rollouts on this first call to tell this session's own file
+        // apart from a prior/concurrent run's.
+        let root = CodexUsageMonitor.sessionsRoot(shellEnv: session.shellEnvironment)
+        codexUsageMonitor.start(
+            sessionId: session.id,
+            cwd: session.currentDirectory,
+            sessionsRoot: root
+        ) { [weak session] usage in
+            guard let session, session.codexUsage != usage else { return }
+            session.codexUsage = usage
         }
     }
 

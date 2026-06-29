@@ -154,6 +154,11 @@ enum StatusBarItemKind: String, CaseIterable, Codable, Hashable, Sendable {
     /// visibility; reordering this kind has no visible effect because
     /// rendering bypasses `visibleItems`.
     case toolCallActivity = "tool-call-activity"
+    /// Codex account rate-limit gauge (5-hour + weekly windows). Like
+    /// `.toolCallActivity` it's agent-specific (Codex only) and rendered in a
+    /// hardcoded slot rather than the right-aligned `FlowLayout`; its Settings
+    /// row lives under a per-agent "Codex" section (`hiddenUsageAgents`).
+    case codexUsage = "codex-usage"
     case pythonVenv = "python-venv"
     case nodeVersion = "node-version"
     case proxy
@@ -164,6 +169,7 @@ enum StatusBarItemKind: String, CaseIterable, Codable, Hashable, Sendable {
     var displayName: String {
         switch self {
         case .toolCallActivity: return "Tool calls"
+        case .codexUsage: return "Usage remaining"
         case .pythonVenv: return "Python venv"
         case .nodeVersion: return "Node version"
         case .proxy: return "Proxy"
@@ -180,6 +186,7 @@ enum StatusBarItemKind: String, CaseIterable, Codable, Hashable, Sendable {
     var symbol: String? {
         switch self {
         case .toolCallActivity: return nil
+        case .codexUsage: return nil
         case .pythonVenv: return "p.circle.fill"
         case .nodeVersion: return "n.circle.fill"
         case .proxy: return "network"
@@ -189,11 +196,17 @@ enum StatusBarItemKind: String, CaseIterable, Codable, Hashable, Sendable {
         }
     }
 
+    /// Kinds rendered in a hardcoded left slot (an agent's live signal —
+    /// tool-call pill, Codex usage gauge) rather than the right-aligned,
+    /// reorderable `FlowLayout`. Their Settings rows live under a per-agent
+    /// section, so they're excluded from `visibleItems` / `reorderableItems`.
+    var isHardcodedSlot: Bool { self == .toolCallActivity || self == .codexUsage }
+
     /// Default order shipped with kooky — used when the user hasn't
     /// touched Settings → Status Bar. Tool-call activity goes first so a
     /// fresh Settings → Status Bar list renders it at the top.
     static let defaultOrder: [StatusBarItemKind] = [
-        .toolCallActivity, .remoteLogin, .pythonVenv, .nodeVersion, .proxy, .gitBranch, .gitDiff,
+        .toolCallActivity, .codexUsage, .remoteLogin, .pythonVenv, .nodeVersion, .proxy, .gitBranch, .gitDiff,
     ]
 }
 
@@ -213,6 +226,7 @@ func paneStatusBarHasData(session: Session) -> Bool {
         // gate already lives in the loop predicate.
         switch item {
         case .toolCallActivity: if sessionWantsToolCallActivity(session) { return true }
+        case .codexUsage: if sessionWantsCodexUsage(session) { return true }
         case .pythonVenv: if session.environment.pythonVenv != nil { return true }
         case .nodeVersion: if session.environment.nodeVersion != nil { return true }
         case .proxy: if session.environment.proxy != nil { return true }
@@ -237,6 +251,23 @@ func sessionWantsToolCallActivity(_ session: Session) -> Bool {
     guard session.agent.reportsToolCalls, session.activityState != .idle else { return false }
     let agentKey = session.agent.baseAgentId ?? session.agent.id
     return !KookySettingsModel.shared.hiddenToolCallAgents.contains(agentKey)
+}
+
+/// Codex usage-gauge visibility predicate — `true` when the Codex usage
+/// monitor has parsed at least one quota window for this tab AND the user
+/// hasn't hidden it in Settings → Status Bar (per-agent toggle,
+/// `hiddenUsageAgents`, keyed by base id so a custom follows its base). The
+/// monitor only populates `codexUsage` for Codex sessions, so no agent
+/// re-check is needed here.
+@MainActor
+func sessionWantsCodexUsage(_ session: Session) -> Bool {
+    guard let usage = session.codexUsage, usage.hasQuota else { return false }
+    // Only on an actual Codex tab — once Codex exits the agent reverts to
+    // `.terminal`, so this also hides a stale gauge the moment the session
+    // is no longer Codex (belt-and-suspenders with the onCommandFinished clear).
+    let agentKey = session.displayAgent.baseAgentId ?? session.displayAgent.id
+    guard agentKey == AgentTemplate.codex.id else { return false }
+    return !KookySettingsModel.shared.hiddenUsageAgents.contains(agentKey)
 }
 
 /// A status-bar icon button: bracket-bordered pill with hover + engaged
@@ -329,6 +360,12 @@ private struct PaneStatusBar: View {
             if showToolCallActivityPill(for: session) {
                 ToolCallActivityPill(session: session)
             }
+            // Codex account quota gauge — Codex-only, sits on the left next to
+            // the activity-pill slot (Codex feeds no tool calls, so the slot is
+            // free) since it's this agent's live signal, not a static env one.
+            if sessionWantsCodexUsage(session), let usage = session.codexUsage {
+                CodexUsagePill(usage: usage)
+            }
             // Flow wraps overflowing segments to a new row instead of hiding
             // them — narrow panes still surface every status at the cost of
             // a taller chrome row. Each row is right-aligned so the visual
@@ -352,7 +389,7 @@ private struct PaneStatusBar: View {
     /// honors the kind's hidden/visible state).
     private var visibleItems: [StatusBarItemKind] {
         model.statusBarItems.filter {
-            $0 != .toolCallActivity && !model.hiddenStatusBarItems.contains($0)
+            !$0.isHardcodedSlot && !model.hiddenStatusBarItems.contains($0)
         }
     }
 
@@ -360,6 +397,7 @@ private struct PaneStatusBar: View {
     private func segment(for item: StatusBarItemKind) -> some View {
         switch item {
         case .toolCallActivity: EmptyView()  // rendered separately on the left
+        case .codexUsage: EmptyView()  // rendered separately on the left
         case .pythonVenv: pythonSegment
         case .nodeVersion: nodeSegment
         case .proxy: proxySegment

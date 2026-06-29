@@ -84,6 +84,12 @@ final class KookySettingsModel {
     /// base id, so a Claude-based custom honours the `claude-code` entry.
     /// Persisted under `statusbar.toolCallHidden`.
     var hiddenToolCallAgents: Set<String> = []
+    /// Per-agent visibility of the usage gauge (Codex's account rate-limit
+    /// windows), keyed like `hiddenToolCallAgents`. Empty = every usage-
+    /// reporting agent shows its gauge (the default; currently only Codex).
+    /// Persisted under `statusbar.usageHidden`. An open `Set` (not a closed
+    /// enum) so a future usage-reporting agent's id round-trips untouched.
+    var hiddenUsageAgents: Set<String> = []
     /// When true, kooky launches Claude tabs with `--resume <id>` using the
     /// conversation id persisted on each tab (captured via Claude's hook
     /// payload). When false, every Claude tab starts fresh — but the
@@ -233,6 +239,7 @@ final class KookySettingsModel {
         let rawHiddenStatus = (statusbar["hidden"] as? [String]) ?? []
         hiddenStatusBarItems = Set(rawHiddenStatus.compactMap(StatusBarItemKind.init(rawValue:)))
         hiddenToolCallAgents = Set((statusbar["toolCallHidden"] as? [String]) ?? [])
+        hiddenUsageAgents = Set((statusbar["usageHidden"] as? [String]) ?? [])
 
         let terminals = parsed["terminals"] as? [String: Any] ?? [:]
         hiddenPresets = Set((terminals["hidden"] as? [String]) ?? [])
@@ -379,13 +386,14 @@ final class KookySettingsModel {
         }
 
         let statusOrderIsDefault = statusBarItems == StatusBarItemKind.defaultOrder
-        if statusOrderIsDefault && hiddenStatusBarItems.isEmpty && hiddenToolCallAgents.isEmpty {
+        if statusOrderIsDefault && hiddenStatusBarItems.isEmpty && hiddenToolCallAgents.isEmpty && hiddenUsageAgents.isEmpty {
             parsed.removeValue(forKey: "statusbar")
         } else {
             var statusbar = parsed["statusbar"] as? [String: Any] ?? [:]
             statusbar["order"] = statusOrderIsDefault ? nil : statusBarItems.map(\.rawValue)
             statusbar["hidden"] = hiddenStatusBarItems.isEmpty ? nil : hiddenStatusBarItems.map(\.rawValue).sorted()
             statusbar["toolCallHidden"] = hiddenToolCallAgents.isEmpty ? nil : Array(hiddenToolCallAgents).sorted()
+            statusbar["usageHidden"] = hiddenUsageAgents.isEmpty ? nil : Array(hiddenUsageAgents).sorted()
             parsed["statusbar"] = statusbar
         }
 
@@ -516,6 +524,7 @@ final class KookySettingsModel {
         statusBarItems = StatusBarItemKind.defaultOrder
         hiddenStatusBarItems = []
         hiddenToolCallAgents = []
+        hiddenUsageAgents = []
         scheduleSave()
     }
 
@@ -607,6 +616,7 @@ struct KookySettingsView: View {
             .onChange(of: model.statusBarItems) { _, _ in model.scheduleSave() }
             .onChange(of: model.hiddenStatusBarItems) { _, _ in model.scheduleSave() }
             .onChange(of: model.hiddenToolCallAgents) { _, _ in model.scheduleSave() }
+            .onChange(of: model.hiddenUsageAgents) { _, _ in model.scheduleSave() }
             .onChange(of: model.notificationsEnabled) { _, _ in model.scheduleSave() }
             .onChange(of: model.notifyOnAttention) { _, _ in model.scheduleSave() }
             .onChange(of: model.notifyOnFailure) { _, _ in model.scheduleSave() }
@@ -1668,15 +1678,20 @@ private struct StatusBarReorderList: View {
     /// anything visible. It still appears in the list under the "claude
     /// code" section, but without a drag handle.
     private var reorderableItems: [StatusBarItemKind] {
-        model.statusBarItems.filter { $0 != .toolCallActivity }
+        model.statusBarItems.filter { !$0.isHardcodedSlot }
     }
 
-    /// Builtin agents that feed tool-call activity — each gets its own
-    /// section (header + tool-call toggle) in Settings → Status Bar. Derived
-    /// from `reportsToolCalls` so a future tool-reporting agent appears here
-    /// automatically.
-    private var toolCallAgents: [AgentTemplate] {
-        AgentTemplate.builtin.filter { $0.reportsToolCalls }
+    /// Builtin agents that report account usage (Codex). Their section shows a
+    /// usage-gauge toggle.
+    private var usageAgentIds: Set<String> { [AgentTemplate.codex.id] }
+
+    /// Builtin agents with any status-bar feature (tool-call activity and/or a
+    /// usage gauge), in builtin order — so the per-agent sections read
+    /// Claude Code → Codex → Pi. Each renders one section (header + the
+    /// feature toggles that apply to it); a future agent slots in by its
+    /// builtin position automatically.
+    private var statusAgents: [AgentTemplate] {
+        AgentTemplate.builtin.filter { $0.reportsToolCalls || usageAgentIds.contains($0.id) }
     }
 
     var body: some View {
@@ -1697,21 +1712,35 @@ private struct StatusBarReorderList: View {
                     }
                 )
             }
-            // One section per tool-reporting agent — header is the agent
-            // (icon + name), the row under it is that agent's tool-call pill
-            // toggle. Grouped by agent, not by feature.
-            ForEach(toolCallAgents) { agent in
+            // One section per agent (header = icon + name), grouped by agent,
+            // not by feature. Each agent's section shows the toggles for the
+            // status-bar features it supports — tool-call pill and/or usage
+            // gauge. Ordered Claude Code → Codex → Pi via `statusAgents`.
+            ForEach(statusAgents) { agent in
                 SettingsHairline()
                 sectionHeader(agent.title, agentAsset: agent.iconAsset)
-                StatusBarRow(
-                    item: .toolCallActivity,
-                    visible: !model.hiddenToolCallAgents.contains(agent.id),
-                    isDragging: false,
-                    reorderable: false,
-                    onToggleVisible: { toggleToolCallAgent(agent.id) },
-                    onBeginDrag: nil,
-                    onDrop: nil
-                )
+                if agent.reportsToolCalls {
+                    StatusBarRow(
+                        item: .toolCallActivity,
+                        visible: !model.hiddenToolCallAgents.contains(agent.id),
+                        isDragging: false,
+                        reorderable: false,
+                        onToggleVisible: { model.hiddenToolCallAgents.formSymmetricDifference([agent.id]) },
+                        onBeginDrag: nil,
+                        onDrop: nil
+                    )
+                }
+                if usageAgentIds.contains(agent.id) {
+                    StatusBarRow(
+                        item: .codexUsage,
+                        visible: !model.hiddenUsageAgents.contains(agent.id),
+                        isDragging: false,
+                        reorderable: false,
+                        onToggleVisible: { model.hiddenUsageAgents.formSymmetricDifference([agent.id]) },
+                        onBeginDrag: nil,
+                        onDrop: nil
+                    )
+                }
             }
             Color.clear
                 .frame(height: 10)
@@ -1721,7 +1750,7 @@ private struct StatusBarReorderList: View {
                     defer { draggingItem = nil }
                     guard let raw = items.first,
                           let dropped = StatusBarItemKind(rawValue: raw),
-                          dropped != .toolCallActivity
+                          !dropped.isHardcodedSlot
                     else { return false }
                     return moveToEnd(dropped)
                 } isTargeted: { endTargeted = $0 }
@@ -1763,6 +1792,7 @@ private struct StatusBarReorderList: View {
         model.statusBarItems != StatusBarItemKind.defaultOrder
             || !model.hiddenStatusBarItems.isEmpty
             || !model.hiddenToolCallAgents.isEmpty
+            || !model.hiddenUsageAgents.isEmpty
     }
 
     private func toggleVisible(_ item: StatusBarItemKind) {
@@ -1773,13 +1803,6 @@ private struct StatusBarReorderList: View {
         }
     }
 
-    private func toggleToolCallAgent(_ id: String) {
-        if model.hiddenToolCallAgents.contains(id) {
-            model.hiddenToolCallAgents.remove(id)
-        } else {
-            model.hiddenToolCallAgents.insert(id)
-        }
-    }
 
     private func reorder(draggedItem: StatusBarItemKind, before target: StatusBarItemKind) -> Bool {
         var order = model.statusBarItems
