@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.31.1 — 2026-06-30
+
+- Fixed: scrolling Claude Code / Codex no longer stutters or tears on high-refresh (ProMotion / 120Hz) displays — rendering is now synced to the screen's refresh rate. (#29)
+
 ## v0.31.0 — 2026-06-29
 
 - Status-bar icons refreshed: the Node version slot now shows a hexagon (Node's logo) and the git diff slot a ± symbol, for clearer glyphs at a glance.

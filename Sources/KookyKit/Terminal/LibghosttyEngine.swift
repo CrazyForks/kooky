@@ -172,6 +172,20 @@ private let kookyActionCb: ghostty_runtime_action_cb = { _, target, action in
         let selected = Int(action.action.search_selected.selected)
         dispatchToView(userdata) { $0.onSearchSelected?(selected) }
         return true
+    case GHOSTTY_ACTION_RENDER:
+        // libghostty marked content dirty — wake the per-surface render link so
+        // the next vsync presents it. This is the whole render loop now that the
+        // polling Timer is gone (issue #29); without it nothing would ever draw.
+        dispatchToView(userdata) { $0.setNeedsRender() }
+        return true
+    case GHOSTTY_ACTION_RENDERER_HEALTH:
+        // Diagnostic only (NOT part of the frame loop): surfaces a degraded GPU /
+        // Metal state that would otherwise be silent — the blind spot to check
+        // first if any visual corruption survives the render-loop fix.
+        if action.action.renderer_health == GHOSTTY_RENDERER_HEALTH_UNHEALTHY {
+            NSLog("kooky: ghostty renderer reported UNHEALTHY")
+        }
+        return true
     default:
         return false
     }
@@ -337,7 +351,19 @@ private enum GhosttySurfaceRegistry {
 /// the Metal layer and draws into it.
 @MainActor
 final class GhosttySurfaceView: NSView {
-    private var drawTimer: Timer?
+    /// Vsync-aligned render driver. Replaces the old free-running 60Hz `Timer`,
+    /// which presented off-vsync into the IOSurfaceLayer → beat-frequency judder
+    /// + torn frames on a ProMotion (120Hz) display, most visible while scrolling
+    /// a full-screen TUI (Claude Code / Codex) where every frame is a fresh full
+    /// repaint (issue #29). The link self-pauses when there's nothing to draw and
+    /// resumes on the next `GHOSTTY_ACTION_RENDER` (or a seed event), so an idle
+    /// terminal costs zero GPU work.
+    private var renderLink: CADisplayLink?
+    /// Set by `GHOSTTY_ACTION_RENDER` and seeded after every surface mutation we
+    /// drive ourselves (size / scale / config / first frame / focus). Read on each
+    /// link tick: render exactly when dirty, otherwise pause until the next
+    /// request. Writer and reader both end up on main, so a plain `Bool` is safe.
+    private var needsRender = true
     private let scrollIndicator = ScrollIndicator()
     private var lastScrollbar: (total: UInt64, offset: UInt64, len: UInt64)?
     /// Whether the viewport is currently pinned to the bottom (latest output).
@@ -380,7 +406,7 @@ final class GhosttySurfaceView: NSView {
     private(set) var surface: ghostty_surface_t? {
         didSet {
             if surface != nil { propagateSizeToSurface() }
-            updateDrawTimer()
+            updateRenderLink()
         }
     }
     /// In-progress IME preedit string. `setMarkedText` writes it,
@@ -527,17 +553,26 @@ final class GhosttySurfaceView: NSView {
                 if reattaching { self.propagateSizeToSurface() }
             }
         }
-        updateDrawTimer()
+        updateRenderLink()
     }
 
-    /// Draw timer runs only when the surface exists AND the view is in a window.
-    /// Without the window guard, hidden sessions keep driving 60Hz
-    /// `ghostty_surface_draw` into a detached IOSurfaceLayer.
-    private func updateDrawTimer() {
+    /// Mark the surface dirty and wake the render link so the next vsync presents
+    /// the new frame. Idempotent + cheap — call it from `GHOSTTY_ACTION_RENDER`
+    /// and after any surface mutation we initiate, so a frame is never stranded
+    /// waiting for an action that may have already fired before the link ran.
+    func setNeedsRender() {
+        needsRender = true
+        renderLink?.isPaused = false
+    }
+
+    /// Render link runs only when the surface exists AND the view is in a window.
+    /// Without the window guard, hidden sessions (an inactive tab is detached from
+    /// the window) would keep ticking against a detached IOSurfaceLayer.
+    private func updateRenderLink() {
         if surface != nil, window != nil {
-            startDrawTimer()
+            startRenderLink()
         } else {
-            stopDrawTimer()
+            stopRenderLink()
         }
     }
 
@@ -611,23 +646,49 @@ final class GhosttySurfaceView: NSView {
         }
         ghostty_surface_update_config(surface, config)
         ghostty_surface_refresh(surface)
+        setNeedsRender()
     }
 
-    private func startDrawTimer() {
-        stopDrawTimer()
-        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, let surface = self.surface else { return }
-                ghostty_surface_draw(surface)
-            }
+    private func startRenderLink() {
+        guard renderLink == nil else {
+            // Already running (e.g. a workspace-switch remount) — just make sure
+            // the first frame back on screen actually draws.
+            setNeedsRender()
+            return
         }
-        RunLoop.main.add(timer, forMode: .common)
-        drawTimer = timer
+        // `NSView.displayLink(target:selector:)` (macOS 14+) is the only display
+        // link variant that auto-retargets to whichever display the view occupies
+        // and follows the window across displays (Retina 120Hz ↔ external 60Hz),
+        // so we never hand-track `NSScreen.maximumFramesPerSecond`. The frame-rate
+        // range lets ProMotion run up to 120 while the system throttles for power.
+        let link = displayLink(target: self, selector: #selector(renderTick(_:)))
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
+        link.add(to: .main, forMode: .common)
+        renderLink = link
+        setNeedsRender()
     }
 
-    private func stopDrawTimer() {
-        drawTimer?.invalidate()
-        drawTimer = nil
+    private func stopRenderLink() {
+        renderLink?.invalidate()
+        renderLink = nil
+    }
+
+    /// Vsync tick — render exactly when there's a pending change, otherwise pause
+    /// the link so an idle terminal costs nothing. Runs on main (the link is added
+    /// to `RunLoop.main`); `render_now` is the synchronous encode+present, so it
+    /// must run inline here — deferring it through a `Task` would re-add the
+    /// one-frame phase error this whole change exists to remove (issue #29).
+    @objc private func renderTick(_ link: CADisplayLink) {
+        guard let surface else { return }
+        guard needsRender else {
+            // Nothing pending — sleep until the next setNeedsRender() wakes us.
+            // Any source that changes pixels (RENDER action, resize, focus) also
+            // un-pauses, so we can never strand a frame here.
+            link.isPaused = true
+            return
+        }
+        needsRender = false
+        ghostty_surface_render_now(surface)
     }
 
     override var acceptsFirstResponder: Bool { true }
@@ -674,7 +735,7 @@ final class GhosttySurfaceView: NSView {
     override func becomeFirstResponder() -> Bool {
         let became = super.becomeFirstResponder()
         if became {
-            if let surface { ghostty_surface_set_focus(surface, true) }
+            if let surface { ghostty_surface_set_focus(surface, true); setNeedsRender() }
             onFocus?()
         }
         return became
@@ -684,6 +745,7 @@ final class GhosttySurfaceView: NSView {
         let resigned = super.resignFirstResponder()
         if resigned, let surface {
             ghostty_surface_set_focus(surface, false)
+            setNeedsRender()
         }
         return resigned
     }
@@ -1172,6 +1234,10 @@ final class GhosttySurfaceView: NSView {
             let action = "scroll_to_bottom"
             action.withCString { _ = ghostty_surface_binding_action(surface, $0, UInt(action.utf8.count)) }
         }
+        // Render the resized frame on the next vsync without waiting for
+        // libghostty's async RENDER action — removes the ordering dependency
+        // between set_size and the render loop.
+        setNeedsRender()
     }
 }
 
