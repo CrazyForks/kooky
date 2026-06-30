@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.31.2 — 2026-06-30
+
+- Performance: trims redundant per-prompt work — kooky skips re-detecting the project environment and re-saving state on shell prompts that don't change directory (git status and live change-tracking still refresh every prompt).
+
 ## v0.31.1 — 2026-06-30
 
 - Fixed: scrolling Claude Code / Codex no longer stutters or tears on high-refresh (ProMotion / 120Hz) displays — rendering is now synced to the screen's refresh rate. (#29)

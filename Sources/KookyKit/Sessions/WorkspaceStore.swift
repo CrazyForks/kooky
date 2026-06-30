@@ -1347,16 +1347,43 @@ final class WorkspaceStore {
         engine.onPwdChange = { [weak self, weak session, weak workspace] pwd in
             guard let session else { return }
             let url = URL(fileURLWithPath: pwd)
-            if session.currentDirectory.path != pwd {
+            // Compare against the URL's normalized path (what actually gets
+            // stored) — not raw `pwd` — so a shell that reports a trailing-slash
+            // cwd doesn't read as a change every prompt and defeat the gate below.
+            let path = url.path
+            let cwdChanged = session.currentDirectory.path != path
+            if cwdChanged {
                 session.currentDirectory = url
             }
-            if let workspace, workspace.activeSession?.id == session.id, workspace.workingDirectory.path != pwd {
+            var workspaceCwdChanged = false
+            if let workspace, workspace.activeSession?.id == session.id, workspace.workingDirectory.path != path {
                 workspace.workingDirectory = url
+                workspaceCwdChanged = true
             }
+            // Git status AND the filesystem watcher refresh on EVERY prompt, even
+            // an unchanged cwd — neither is safe to gate on cwdChanged:
+            //  • refreshGitStatus: an external editor can change the working
+            //    tree's uncommitted-file count without touching .git, which the
+            //    watcher's fs source never sees; this per-prompt fetch (which
+            //    result-dedups) is the only catch.
+            //  • watch(): GitWatcher.watch self-dedups for an already-watched
+            //    repo, but when the cwd had no .git at install time it re-runs
+            //    findGitDir on every call — so this is what finally attaches the
+            //    watcher when a repo is created in place (`git init` / `clone .`)
+            //    with no cd. Gating it would strand that case (issue #29 review).
             self?.refreshGitStatus(for: session)
-            self?.refreshEnvironment(for: session)
             self?.gitWatchers[session.id]?.watch(cwd: session.currentDirectory)
-            self?.scheduleSave()
+            // Environment + persistence DO only move with the cwd. venv / node
+            // changes are pushed by the separate `_kooky_env_status` precmd IPC
+            // (which updates shellEnvironment → refreshEnvironment), and the only
+            // state this closure persists is the two cwd fields — so on an
+            // unchanged cwd both refreshEnvironment and scheduleSave are redundant.
+            if cwdChanged {
+                self?.refreshEnvironment(for: session)
+            }
+            if cwdChanged || workspaceCwdChanged {
+                self?.scheduleSave()
+            }
         }
         engine.onTitleChange = { [weak self, weak session] title in
             guard let session else { return }

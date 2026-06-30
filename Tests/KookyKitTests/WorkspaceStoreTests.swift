@@ -1536,6 +1536,81 @@ final class WorkspaceStoreTests: XCTestCase {
         XCTAssertTrue(engineA.suspendsSizePropagation, "every engine in the workspace gets suspended")
         XCTAssertTrue(engineB.suspendsSizePropagation)
     }
+
+    // MARK: - onPwdChange refresh gating (issue #29 follow-up: env/save run only
+    // on a real cwd change; git status still refreshes every prompt)
+
+    func testPwdChangeUpdatesSessionAndWorkspaceDirectories() {
+        let store = makeStore()
+        guard let ws = store.active, let session = ws.activeSession else {
+            return XCTFail("expected an active session")
+        }
+        engine(session).emitPwd("/tmp/projectB")
+        XCTAssertEqual(session.currentDirectory.path, "/tmp/projectB")
+        XCTAssertEqual(ws.workingDirectory.path, "/tmp/projectB",
+                       "active session's cwd drives the workspace working directory")
+    }
+
+    func testSamePwdLeavesDirectoriesUnchanged() {
+        let store = makeStore()
+        guard let ws = store.active, let session = ws.activeSession else {
+            return XCTFail("expected an active session")
+        }
+        let e = engine(session)
+        e.emitPwd("/tmp/projectA")
+        // Re-emitting the same cwd (every prompt re-fires OSC 7) must be a no-op
+        // on the directories — the gate keys off this exact comparison.
+        e.emitPwd("/tmp/projectA")
+        XCTAssertEqual(session.currentDirectory.path, "/tmp/projectA")
+        XCTAssertEqual(ws.workingDirectory.path, "/tmp/projectA")
+    }
+
+    func testPwdChangeIsStillPersisted() {
+        let persistence = InMemoryPersistence()
+        let store = WorkspaceStore(
+            persistence: persistence,
+            engineFactory: { TestEngine() },
+            optionsProvider: { _ in nil },
+            resumeProvider: { true }
+        )
+        guard let session = store.active?.activeSession else {
+            return XCTFail("expected an active session")
+        }
+        engine(session).emitPwd("/tmp/projectB")
+        store.flushPersistence()
+        // Gating scheduleSave on cwd-change must NOT drop the new directory from
+        // persistence, otherwise a restored tab would reopen in the wrong place.
+        XCTAssertEqual(persistence.saved?.workspaces.first?.workingDirectoryPath, "/tmp/projectB")
+        XCTAssertEqual(persistence.saved?.workspaces.first?.root.allTabs.first?.currentDirectoryPath,
+                       "/tmp/projectB")
+    }
+
+    /// Directly exercises the scheduleSave gating: a real cwd change persists,
+    /// re-emitting the SAME cwd (every prompt re-fires OSC 7) must NOT schedule
+    /// a redundant save. Timing-based because scheduleSave debounces ~1s.
+    func testSamePwdDoesNotScheduleRedundantSave() async {
+        let persistence = InMemoryPersistence()
+        let store = WorkspaceStore(
+            persistence: persistence,
+            engineFactory: { TestEngine() },
+            optionsProvider: { _ in nil },
+            resumeProvider: { true }
+        )
+        guard let session = store.active?.activeSession else {
+            return XCTFail("expected an active session")
+        }
+        let e = engine(session)
+        // A real change schedules a save; let it (and the bootstrap save) settle.
+        e.emitPwd("/tmp/projectB")
+        try? await Task.sleep(nanoseconds: 1_300_000_000)
+        let baseline = persistence.saveCount
+        XCTAssertGreaterThan(baseline, 0, "a real cwd change must persist")
+        // Same cwd — the gate must skip scheduleSave entirely, so no new save.
+        e.emitPwd("/tmp/projectB")
+        try? await Task.sleep(nanoseconds: 1_300_000_000)
+        XCTAssertEqual(persistence.saveCount, baseline,
+                       "re-emitting an unchanged cwd must not re-persist")
+    }
 }
 
 private extension PersistedPaneNode {
