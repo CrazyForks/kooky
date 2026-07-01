@@ -162,12 +162,6 @@ final class WorkspaceStore {
     private static let closedTabHistoryLimit = 50
 
     private var pendingSave: Task<Void, Never>?
-    /// Monotonic counter bumped on every `toggleZoom`. The async restore
-    /// Task captures the value at toggle time and bails if the counter has
-    /// moved by the time it fires — keeps a rapid second toggle's
-    /// in-flight animation from being prematurely un-suspended by the
-    /// previous toggle's stale Task.
-    private var zoomSuspensionGeneration: Int = 0
     private static let saveDebounce: UInt64 = 1_000_000_000
 
     var active: Workspace? {
@@ -956,34 +950,29 @@ final class WorkspaceStore {
     /// operate on the visibly-zoomed pane).
     func toggleZoom(in workspace: Workspace, paneId: UUID) {
         guard workspace.canZoom else { return }
-        // Suspend per-frame `set_size` propagation across every surface in
-        // this workspace for the duration of the SwiftUI frame animation.
-        // Otherwise each of the ~12-24 intermediate frame sizes fires its
-        // own SIGWINCH, triggering the conda-init scrollback wipe (the
-        // documented known issue). After the animation settles we push
-        // one final size sync.
+        // Suspend per-frame `set_size` across every surface in this workspace for
+        // the SwiftUI frame animation — otherwise each of the ~12-24 intermediate
+        // sizes fires its own SIGWINCH → conda-init scrollback wipe (known issue).
+        // Refcounted (issue #29 review): `begin` now, `end` after the settle, on a
+        // LOCAL engine capture (robust — no shared/token state to strand). A rapid
+        // second toggle just adds another balanced begin/end pair; suspension holds
+        // until the last pair's `end`, so the old generation token is unnecessary.
+        // Flush only when an engine's count hits 0 (its last owner released) — so a
+        // concurrent status-bar / divider suspension on a shared engine isn't
+        // defeated by this restore, and N overlapping toggles flush once.
         let engines = workspace.root.allPanes.flatMap { $0.tabs }.map(\.engine)
-        for engine in engines { engine.suspendsSizePropagation = true }
+        for engine in engines { engine.beginSizePropagationSuspension() }
 
         workspace.activePaneId = paneId
         workspace.zoomedPaneId = workspace.isZoomed(paneId) ? nil : paneId
         scheduleSave()
 
-        // Generation token: a rapid second toggle bumps the counter
-        // before the first Task fires, so the stale restore bails out
-        // and only the latest toggle's restore actually clears
-        // suspension. Without this, a double-tap inside the 0.25s window
-        // re-opens the per-frame `set_size` window mid-animation and the
-        // SIGWINCH burst (conda scrollback wipe) comes back.
-        zoomSuspensionGeneration &+= 1
-        let token = zoomSuspensionGeneration
         let restoreDelay: TimeInterval = 0.25
-        Task { @MainActor [weak self] in
+        Task { @MainActor in
             try? await Task.sleep(nanoseconds: UInt64(restoreDelay * 1_000_000_000))
-            guard let self, self.zoomSuspensionGeneration == token else { return }
             for engine in engines {
-                engine.suspendsSizePropagation = false
-                engine.flushSize()
+                engine.endSizePropagationSuspension()
+                if !engine.suspendsSizePropagation { engine.flushSize() }
             }
         }
     }

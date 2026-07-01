@@ -291,10 +291,9 @@ final class LibghosttyEngine: TerminalEngine {
         surfaceView.releaseSurface()
     }
 
-    var suspendsSizePropagation: Bool {
-        get { surfaceView.suspendsSizePropagation }
-        set { surfaceView.suspendsSizePropagation = newValue }
-    }
+    var suspendsSizePropagation: Bool { surfaceView.suspendsSizePropagation }
+    func beginSizePropagationSuspension() { surfaceView.beginSizePropagationSuspension() }
+    func endSizePropagationSuspension() { surfaceView.endSizePropagationSuspension() }
 
     var grabsFocusOnMount: Bool {
         get { surfaceView.grabsFocusOnMount }
@@ -706,11 +705,17 @@ final class GhosttySurfaceView: NSView {
 
     override var acceptsFirstResponder: Bool { true }
 
-    /// Toggled true around animated layout changes (pane zoom). Per-frame
-    /// `setFrameSize` callbacks then skip the SIGWINCH-propagating
-    /// `ghostty_surface_set_size` and the caller pushes one final size
-    /// sync via `flushPropagateSize` after the animation settles.
-    var suspendsSizePropagation: Bool = false
+    /// Refcount of active size-propagation suspenders — pane zoom, status-bar
+    /// height change, split-divider drag can overlap. Per-frame `setFrameSize` /
+    /// `viewDidEndLiveResize` skip the SIGWINCH-propagating `ghostty_surface_set_size`
+    /// while this is > 0; each owner pushes one final size via `flushPropagateSize`
+    /// after its `end`. A plain shared Bool let a second owner's un-suspend clobber
+    /// a first owner's still-active suspend mid-interaction (issue #29 review); the
+    /// count composes N overlapping owners so suspension holds until the LAST ends.
+    private var sizePropagationSuspendCount = 0
+    var suspendsSizePropagation: Bool { sizePropagationSuspendCount > 0 }
+    func beginSizePropagationSuspension() { sizePropagationSuspendCount += 1 }
+    func endSizePropagationSuspension() { sizePropagationSuspendCount = max(0, sizePropagationSuspendCount - 1) }
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)

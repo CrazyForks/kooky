@@ -30,7 +30,10 @@ final class TestEngine: TerminalEngine {
         terminateCount += 1
     }
 
-    var suspendsSizePropagation: Bool = false
+    private var sizeSuspendCount = 0
+    var suspendsSizePropagation: Bool { sizeSuspendCount > 0 }
+    func beginSizePropagationSuspension() { sizeSuspendCount += 1 }
+    func endSizePropagationSuspension() { sizeSuspendCount = max(0, sizeSuspendCount - 1) }
     var grabsFocusOnMount: Bool = true
     private(set) var flushSizeCount: Int = 0
     func flushSize() { flushSizeCount += 1 }

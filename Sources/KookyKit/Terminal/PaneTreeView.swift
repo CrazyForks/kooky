@@ -34,13 +34,6 @@ private struct PaneView: View {
 
     @State private var contextMenuOpen = false
     @State private var contextMenuAnchor: UnitPoint = .center
-    /// Bumped on each status-bar visibility transition so rapid back-to-back
-    /// toggles don't have an earlier restore Task prematurely clear a still-
-    /// in-flight suspension window. Same pattern as `WorkspaceStore.toggleZoom`
-    /// (per CLAUDE.md M5.ddd) — without this token, two toggles within 250ms
-    /// produce two restore Tasks where the first un-suspends mid-second
-    /// animation and the documented conda-scrollback-wipe regression returns.
-    @State private var sigwinchSuspensionGeneration = 0
 
     var body: some View {
         let paneOpacity = isFocused ? 1.0 : Self.inactivePaneOpacity
@@ -116,24 +109,22 @@ private struct PaneView: View {
             // to another row — not when the whole bar shows/hides. That still
             // moves chrome height → libghostty re-frames the surface →
             // SIGWINCH burst → conda init's precmd hook would wipe scrollback
-            // (CLAUDE.md Known issues). Reuse v0.17.0 (M5.ddd) pane-zoom
-            // pattern: suspend SIGWINCH on EVERY tab's engine in the pane
-            // (background tabs share the parent NSView geometry, not just
-            // the active one), then flush once stable, gated on a
-            // generation token so a rapid second toggle doesn't have its
-            // in-flight animation prematurely un-suspended by a stale Task.
+            // (CLAUDE.md Known issues). Reuse the pane-zoom pattern: suspend
+            // SIGWINCH on EVERY tab's engine in the pane (background tabs share
+            // the parent NSView geometry, not just the active one), then flush
+            // after the transition settles. Refcounted (issue #29 review): begin
+            // now, end after 250ms, on a LOCAL engine capture — each height change
+            // is a self-balanced begin/end pair, so overlapping changes / a zoom /
+            // a divider drag on the same engines compose, and the old generation
+            // token is unnecessary. Flush only when the engine's count hits 0 (its
+            // last owner released) so a concurrent suspender isn't defeated.
             let engines = pane.tabs.map(\.engine)
-            for engine in engines { engine.suspendsSizePropagation = true }
-
-            sigwinchSuspensionGeneration &+= 1
-            let token = sigwinchSuspensionGeneration
-
+            for engine in engines { engine.beginSizePropagationSuspension() }
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 250_000_000)  // covers Theme.chromeTransition
-                guard token == sigwinchSuspensionGeneration else { return }
                 for engine in engines {
-                    engine.suspendsSizePropagation = false
-                    engine.flushSize()
+                    engine.endSizePropagationSuspension()
+                    if !engine.suspendsSizePropagation { engine.flushSize() }
                 }
             }
         }
@@ -1207,6 +1198,16 @@ private struct SplitContainer: View {
     let store: WorkspaceStore
 
     @State private var dragStartFraction: Double?
+    /// True while a divider drag is actively resizing (a real fraction change has
+    /// occurred). Gates the SIGWINCH-suspend so a bare click on the handle — which
+    /// still fires `onChanged` under `minimumDistance: 0` but changes nothing —
+    /// doesn't suspend the subtree for no reason. Also gates begin/end so the
+    /// refcount stays balanced (one begin per drag, one end).
+    @State private var dividerResizeSuspended = false
+    /// The exact engines this drag incremented, captured at drag start so onEnded /
+    /// onDisappear `end` the SAME set — a re-walk could diverge on a mid-drag
+    /// teardown and leave the refcount stuck > 0 (issue #29 review).
+    @State private var dividerSuspendedEngines: [any TerminalEngine] = []
 
     private static let dividerThickness: CGFloat = 1
     private static let handleHitSize: CGFloat = 6
@@ -1299,6 +1300,22 @@ private struct SplitContainer: View {
                     }
                 }
                 .clipped()
+                .onDisappear {
+                    // Teardown backstop for the divider-drag suspend. `onEnded` is
+                    // the normal un-suspend, but if this split is torn down MID-drag
+                    // (workspace switch's `.id` rebuild, or a pane close collapsing
+                    // the split) onEnded never fires and the subtree's engines would
+                    // stay `suspendsSizePropagation == true` — silently degrading
+                    // their per-frame resize propagation until some later force-push
+                    // push, so no flush needed). A normal fraction change keeps this
+                    // view's identity, so this only fires on a real removal. `end` the
+                    // captured engines (not a re-walk) so the refcount stays balanced.
+                    if dividerResizeSuspended {
+                        dividerResizeSuspended = false
+                        for engine in dividerSuspendedEngines { engine.endSizePropagationSuspension() }
+                        dividerSuspendedEngines = []
+                    }
+                }
                 // Animation now driven by `withAnimation(Theme.chromeTransition)`
                 // at the toggle call sites — that propagates to the outer
                 // PaneStatusBar visibility too, so the chrome row that
@@ -1318,10 +1335,35 @@ private struct SplitContainer: View {
                 let proposed = (dragStartFraction ?? current) + delta
                 let clamped = min(max(proposed, Self.minFraction), Self.maxFraction)
                 guard abs(clamped - current) > .ulpOfOne else { return }
+                // A real fraction change re-lays out every pane under this split on
+                // each frame → a SIGWINCH-per-frame burst (conda scrollback-wipe /
+                // prompt flicker, issue #29). This is a SwiftUI drag, not a window
+                // live-resize, so setFrameSize's inLiveResize defer doesn't cover
+                // it — suspend size propagation on the subtree's engines for the
+                // drag, then flush once on release (mirrors pane zoom / status-bar
+                // height). Background tabs share the pane's NSView geometry, so
+                // suspend every tab's engine. begin once per drag (gated), capturing
+                // the engines so onEnded/onDisappear end the SAME set (balanced).
+                if !dividerResizeSuspended {
+                    dividerResizeSuspended = true
+                    dividerSuspendedEngines = node.allPanes.flatMap { $0.tabs.map(\.engine) }
+                    for engine in dividerSuspendedEngines { engine.beginSizePropagationSuspension() }
+                }
                 node.content = .split(orientation: orient, first: f, second: s, fraction: clamped)
             }
             .onEnded { _ in
                 dragStartFraction = nil
+                // End the suspension + push each engine's final size once. Flush only
+                // when the engine's count hits 0 (a concurrent zoom / status-bar
+                // suspension on the same engine will flush when ITS end releases it).
+                if dividerResizeSuspended {
+                    dividerResizeSuspended = false
+                    for engine in dividerSuspendedEngines {
+                        engine.endSizePropagationSuspension()
+                        if !engine.suspendsSizePropagation { engine.flushSize() }
+                    }
+                    dividerSuspendedEngines = []
+                }
                 store.flushPersistence()
             }
     }

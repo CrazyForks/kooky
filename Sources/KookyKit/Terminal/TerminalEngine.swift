@@ -91,14 +91,20 @@ protocol TerminalEngine: AnyObject {
     var onProcessExitedCleanly: (() -> Void)? { get set }
     func start(config: TerminalSessionConfig)
     func terminate()
-    /// When true, AppKit `setFrameSize` callbacks skip `ghostty_surface_set_size`.
-    /// Set during animated workspace-layout changes (pane zoom) so each
-    /// intermediate animation frame doesn't fire its own SIGWINCH burst —
-    /// the documented "12-24 set_size calls per toggle" scrollback-wipe
-    /// problem that hits conda init users (see CLAUDE.md known issues).
-    /// Pair every `true` assignment with `flushSize()` once the layout
-    /// settles so libghostty's grid catches up to the final dimensions.
-    var suspendsSizePropagation: Bool { get set }
+    /// True while ANY owner holds a size-propagation suspension. While set, AppKit
+    /// `setFrameSize` callbacks skip `ghostty_surface_set_size` so an animated /
+    /// interactive layout change (pane zoom, status-bar height, split-divider drag)
+    /// doesn't fire a SIGWINCH burst per intermediate frame — the documented
+    /// "12-24 set_size calls per toggle" scrollback-wipe that hits conda users
+    /// (see CLAUDE.md known issues). **Refcounted**: three owners can overlap, so
+    /// a plain shared Bool let one owner's un-suspend clobber another's still-active
+    /// suspend (issue #29 review). Mutate through the balanced begin/end pair —
+    /// each owner must pair its own `begin` with exactly one `end` (gate re-arms
+    /// behind a per-owner flag/token so you don't double-count), and follow the
+    /// `end` with `flushSize()` so libghostty's grid catches up to the final size.
+    var suspendsSizePropagation: Bool { get }
+    func beginSizePropagationSuspension()
+    func endSizePropagationSuspension()
     /// Gates whether the engine's view grabs keyboard first-responder when it
     /// mounts into a window. The SwiftUI layer sets it from the pane's active
     /// state so a workspace switch — which re-mounts every pane's surface —

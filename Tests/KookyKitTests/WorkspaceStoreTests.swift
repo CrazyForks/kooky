@@ -1537,6 +1537,28 @@ final class WorkspaceStoreTests: XCTestCase {
         XCTAssertTrue(engineB.suspendsSizePropagation)
     }
 
+    func testSizePropagationSuspensionIsRefcounted() {
+        // Zoom / status-bar / divider-drag can overlap on the same engine, so
+        // suspension must be a refcount: it holds until the LAST owner ends, and a
+        // stray extra end can't drive it negative (issue #29 review — the fix for
+        // the shared-Bool clobber race).
+        let store = makeStore()
+        guard let session = store.active?.activeSession else {
+            return XCTFail("expected an active session")
+        }
+        let e = engine(session)
+        XCTAssertFalse(e.suspendsSizePropagation)
+        e.beginSizePropagationSuspension()   // owner A
+        e.beginSizePropagationSuspension()   // owner B
+        XCTAssertTrue(e.suspendsSizePropagation)
+        e.endSizePropagationSuspension()     // A ends
+        XCTAssertTrue(e.suspendsSizePropagation, "still suspended while owner B holds it")
+        e.endSizePropagationSuspension()     // B ends
+        XCTAssertFalse(e.suspendsSizePropagation, "un-suspended only after the last owner ends")
+        e.endSizePropagationSuspension()     // underflow guard
+        XCTAssertFalse(e.suspendsSizePropagation)
+    }
+
     // MARK: - onPwdChange refresh gating (issue #29 follow-up: env/save run only
     // on a real cwd change; git status still refreshes every prompt)
 

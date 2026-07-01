@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.31.4 — 2026-07-01
+
+- Fixed: dragging a split divider to resize panes no longer flickers the prompt or clears scrollback on every frame — the resize fix now covers split dividers too, not just the window edge. (#29)
+
 ## v0.31.3 — 2026-07-01
 
 - Fixed: resizing the window by dragging its edge no longer flickers the prompt or clears scrollback on every frame — the terminal now reflows once when you release the drag. (#29)
