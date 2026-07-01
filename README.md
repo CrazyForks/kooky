@@ -58,7 +58,7 @@ A minimal modern terminal built for AI coding. Sidebar workspaces; horizontal / 
 
 **Local by default.** No accounts, no telemetry, no cloud sync. Kooky keeps its own state on your device.
 
-**libghostty-powered.** GPU-accelerated cell rendering, same engine as ghostty. Fast.
+**libghostty-powered.** GPU-accelerated cell rendering, same engine as ghostty — synced to your display's refresh rate, so scrolling stays smooth and tear-free on 120Hz / ProMotion screens.
 
 ## Install
 

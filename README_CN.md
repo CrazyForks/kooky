@@ -58,7 +58,7 @@
 
 **默认本地。** 不需要账号，不做遥测，没有云同步。kooky 的状态都留在本机。
 
-**基于 libghostty。** 使用和 ghostty 同源的 GPU 终端渲染引擎。
+**基于 libghostty。** 使用和 ghostty 同源的 GPU 终端渲染引擎，渲染跟随屏幕刷新率，在 120Hz / ProMotion 屏上滚动顺滑、不撕裂。
 
 ## 安装
 
