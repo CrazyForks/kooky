@@ -71,15 +71,21 @@ final class WorkspaceStore {
     /// this to close its window — a window with zero workspaces is empty.
     var onBecameEmpty: (() -> Void)?
 
-    /// Mutate + schedule save. UI sites wrap in `withAnimation(Theme.chromeTransition)`.
+    /// Mutate + schedule save. UI sites wrap in `withAnimation(Theme.chromeTransition)`,
+    /// which animates the terminal area's width → per-frame `setFrameSize` on every
+    /// surface. Suspend size propagation for the animation (same as pane zoom) so
+    /// that burst doesn't SIGWINCH-wipe conda scrollback / flicker the terminal
+    /// (issue #29). Gated on a real mode change above, so no-op sets don't suspend.
     func setSidebarMode(_ mode: SidebarMode) {
         guard sidebarMode != mode else { return }
+        suspendSizePropagationForLayoutAnimation(active?.root.allPanes.flatMap { $0.tabs }.map(\.engine) ?? [])
         sidebarMode = mode
         scheduleSave()
     }
 
     func setRightSidebarMode(_ mode: SidebarMode) {
         guard rightSidebarMode != mode else { return }
+        suspendSizePropagationForLayoutAnimation(active?.root.allPanes.flatMap { $0.tabs }.map(\.engine) ?? [])
         rightSidebarMode = mode
         scheduleSave()
     }
@@ -950,26 +956,29 @@ final class WorkspaceStore {
     /// operate on the visibly-zoomed pane).
     func toggleZoom(in workspace: Workspace, paneId: UUID) {
         guard workspace.canZoom else { return }
-        // Suspend per-frame `set_size` across every surface in this workspace for
-        // the SwiftUI frame animation — otherwise each of the ~12-24 intermediate
-        // sizes fires its own SIGWINCH → conda-init scrollback wipe (known issue).
-        // Refcounted (issue #29 review): `begin` now, `end` after the settle, on a
-        // LOCAL engine capture (robust — no shared/token state to strand). A rapid
-        // second toggle just adds another balanced begin/end pair; suspension holds
-        // until the last pair's `end`, so the old generation token is unnecessary.
-        // Flush only when an engine's count hits 0 (its last owner released) — so a
-        // concurrent status-bar / divider suspension on a shared engine isn't
-        // defeated by this restore, and N overlapping toggles flush once.
-        let engines = workspace.root.allPanes.flatMap { $0.tabs }.map(\.engine)
-        for engine in engines { engine.beginSizePropagationSuspension() }
-
+        // Suspend per-frame `set_size` across the workspace for the zoom animation
+        // (see suspendSizePropagationForLayoutAnimation).
+        suspendSizePropagationForLayoutAnimation(workspace.root.allPanes.flatMap { $0.tabs }.map(\.engine))
         workspace.activePaneId = paneId
         workspace.zoomedPaneId = workspace.isZoomed(paneId) ? nil : paneId
         scheduleSave()
+    }
 
-        let restoreDelay: TimeInterval = 0.25
+    /// Suspend per-frame `ghostty_surface_set_size` across `engines` for the
+    /// duration of a `withAnimation(Theme.chromeTransition)` layout change (pane
+    /// zoom, sidebar / agent-panel show-hide), then end + flush once it settles.
+    /// Without this, SwiftUI re-frames each surface every animation frame → a
+    /// SIGWINCH burst (conda scrollback wipe) AND — since the vsync render loop is
+    /// driven by those per-frame `setNeedsRender`s racing the display-link tick —
+    /// visible flicker (issue #29). Refcounted begin/end (self-balanced, so
+    /// overlapping animations compose; flush only when an engine's count hits 0);
+    /// the local capture is robust (no shared/token state to strand). ~0.25s
+    /// covers `Theme.chromeTransition`.
+    private func suspendSizePropagationForLayoutAnimation(_ engines: [any TerminalEngine]) {
+        guard !engines.isEmpty else { return }
+        for engine in engines { engine.beginSizePropagationSuspension() }
         Task { @MainActor in
-            try? await Task.sleep(nanoseconds: UInt64(restoreDelay * 1_000_000_000))
+            try? await Task.sleep(nanoseconds: 250_000_000)
             for engine in engines {
                 engine.endSizePropagationSuspension()
                 if !engine.suspendsSizePropagation { engine.flushSize() }

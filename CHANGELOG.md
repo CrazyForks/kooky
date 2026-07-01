@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.31.5 — 2026-07-01
+
+- Fixed: showing or hiding the sidebar or agent panel no longer flickers the terminal while it resizes. (#29)
+
 ## v0.31.4 — 2026-07-01
 
 - Fixed: dragging a split divider to resize panes no longer flickers the prompt or clears scrollback on every frame — the resize fix now covers split dividers too, not just the window edge. (#29)
