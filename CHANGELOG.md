@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.31.3 — 2026-07-01
+
+- Fixed: resizing the window by dragging its edge no longer flickers the prompt or clears scrollback on every frame — the terminal now reflows once when you release the drag. (#29)
+
 ## v0.31.2 — 2026-06-30
 
 - Performance: trims redundant per-prompt work — kooky skips re-detecting the project environment and re-saving state on shell prompts that don't change directory (git status and live change-tracking still refresh every prompt).

@@ -388,6 +388,13 @@ final class GhosttySurfaceView: NSView {
     /// gratuitous resize. Seeded at surface creation.
     private var lastBackingScale: CGFloat?
 
+    /// Last pixel size pushed to libghostty via `ghostty_surface_set_size`. Lets
+    /// `propagateSizeToSurface` drop a redundant push of an identical size — each
+    /// push is a SIGWINCH that thrashes the shell (conda scrollback-wipe +
+    /// prompt-reflow flicker, issue #29 audit). Reset on surface teardown so a
+    /// re-created surface always re-syncs.
+    private var lastPushedSizePx: (UInt32, UInt32)?
+
     var pendingConfig: TerminalSessionConfig?
     var onPwdChange: ((String) -> Void)?
     var onTitleChange: ((String) -> Void)?
@@ -405,7 +412,9 @@ final class GhosttySurfaceView: NSView {
     var grabsFocusOnMount = true
     private(set) var surface: ghostty_surface_t? {
         didSet {
-            if surface != nil { propagateSizeToSurface() }
+            // force: a fresh surface must be sized even if the pixel size matches
+            // what a prior surface on this view was last sent (dedup would skip).
+            if surface != nil { propagateSizeToSurface(force: true) }
             updateRenderLink()
         }
     }
@@ -525,6 +534,7 @@ final class GhosttySurfaceView: NSView {
         // Null first so any guard-on-surface check post-free sees the cleared
         // state immediately; the local `dying` keeps the handle for free.
         surface = nil
+        lastPushedSizePx = nil
         ghostty_surface_free(dying)
     }
 
@@ -549,8 +559,11 @@ final class GhosttySurfaceView: NSView {
                 }
                 // Re-sync size on reattach: propagateSizeToSurface no-ops while
                 // detached, and a same-display / unchanged-frame reattach fires
-                // neither viewDidChangeBackingProperties nor setFrameSize.
-                if reattaching { self.propagateSizeToSurface() }
+                // neither viewDidChangeBackingProperties nor setFrameSize. force:
+                // the frame is usually unchanged across the detach, which the
+                // pixel-dedup would otherwise skip — but libghostty needs the
+                // re-push to recover (issue #8).
+                if reattaching { self.propagateSizeToSurface(force: true) }
             }
         }
         updateRenderLink()
@@ -702,15 +715,44 @@ final class GhosttySurfaceView: NSView {
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         // AppKit calls this whenever this view's own frame changes — single
-        // canonical hook. The legacy `resizeSubviews(withOldSize:)` would
-        // double-propagate.
-        if !suspendsSizePropagation {
-            propagateSizeToSurface()
-        }
+        // canonical hook (the legacy `resizeSubviews(withOldSize:)` would
+        // double-propagate). Two paths defer the libghostty push rather than fire
+        // it per frame:
+        //  • suspendsSizePropagation — pane-zoom animation; flushPropagateSize
+        //    settles it.
+        //  • window live-resize — a window-edge drag fires setFrameSize on every
+        //    frame, each a set_size → SIGWINCH, thrashing the shell (conda
+        //    scrollback wipe + prompt-reflow flicker, issue #29 audit).
+        //    viewDidEndLiveResize pushes once with the final size.
+        if suspendsSizePropagation { return }
+        if window?.inLiveResize == true { return }
+        propagateSizeToSurface()
+    }
+
+    override func viewDidEndLiveResize() {
+        super.viewDidEndLiveResize()
+        // If a pane-zoom / status-bar animation is mid-flight, its own flush
+        // (after the suspend window clears) is the authoritative settle — don't
+        // leak a set_size here inside the very window the suspend exists to
+        // silence (the drag has ended by then, so that flush is no longer gated).
+        if suspendsSizePropagation { return }
+        // Push the final size once the window-drag settles. Pixel-dedup makes a
+        // drag that returns to the original size a no-op, so the shell sees at
+        // most ONE SIGWINCH per resize (a genuine cell-count change) instead of
+        // the per-frame burst.
+        propagateSizeToSurface()
     }
 
     func flushPropagateSize() {
-        propagateSizeToSurface()
+        // If a window-edge live-resize is in progress, defer to viewDidEndLiveResize
+        // for the settle — pushing here would leak a set_size mid-drag (the exact
+        // SIGWINCH the live-resize defer exists to suppress). The drag-end push
+        // re-syncs the final size regardless.
+        if window?.inLiveResize == true { return }
+        // force: the pane-zoom path suspended per-frame pushes during the
+        // animation, so libghostty may be a frame behind; re-sync unconditionally
+        // even if the settled pixel size matches the last one we sent.
+        propagateSizeToSurface(force: true)
     }
 
     /// Fires when the window moves to a display with a different backing scale
@@ -729,7 +771,10 @@ final class GhosttySurfaceView: NSView {
         lastBackingScale = scale
         layer?.contentsScale = scale
         ghostty_surface_set_content_scale(surface, scale, scale)
-        propagateSizeToSurface()
+        // A scale change already shifts the pixel size (px = points × scale) so
+        // the dedup wouldn't skip it; force is belt-and-suspenders so the grid is
+        // guaranteed to relearn the new DPI (issue #8) right after set_content_scale.
+        propagateSizeToSurface(force: true)
     }
 
     override func becomeFirstResponder() -> Bool {
@@ -1203,7 +1248,7 @@ final class GhosttySurfaceView: NSView {
         return ghostty_input_mods_e(rawValue: raw)
     }
 
-    private func propagateSizeToSurface() {
+    private func propagateSizeToSurface(force: Bool = false) {
         // Require a live window — never propagate while detached. A workspace
         // switch briefly removes the session's NSView from the window
         // (ContentView's `.id(workspace.id)` rebuild); the old `?? 2.0` scale
@@ -1219,6 +1264,17 @@ final class GhosttySurfaceView: NSView {
         // layout completes; pushing 0 to libghostty shrinks its row count and
         // never fully recovers, so the visible buffer creeps upward each swap.
         guard widthPx > 0, heightPx > 0 else { return }
+        // Drop a redundant push of an identical pixel size. SwiftUI re-layouts,
+        // sub-cell setFrameSize nudges, and the viewDidEndLiveResize flush all
+        // re-enter with the same frame; each ghostty_surface_set_size is a
+        // SIGWINCH that thrashes the shell (conda scrollback-wipe, prompt-reflow
+        // flicker — issue #29 audit). Keyed on PIXELS (bounds × scale), NOT
+        // cols×rows, so a cross-display DPI change still pushes (px = points ×
+        // scale shifts with the scale); only a true no-op is dropped. `force`
+        // covers the paths that must re-sync even an unchanged size — surface
+        // create, reattach, post-zoom flush, DPI change.
+        if !force, let last = lastPushedSizePx, last == (widthPx, heightPx) { return }
+        lastPushedSizePx = (widthPx, heightPx)
         ghostty_surface_set_size(surface, widthPx, heightPx)
         // ghostty does NOT re-pin the viewport to the bottom on resize — it only
         // follows the latest output when a PTY write or keystroke calls
