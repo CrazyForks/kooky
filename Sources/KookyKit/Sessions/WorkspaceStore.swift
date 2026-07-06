@@ -52,6 +52,14 @@ enum SidebarMode: String, Codable, Equatable, Sendable {
     }
 }
 
+/// What the left sidebar's middle area shows — the workspace list or the
+/// active workspace's file tree. The footer toggle switches between them;
+/// the brand header and footer stay visible in both.
+enum SidebarContent: String, Codable, Equatable, Sendable {
+    case workspaces
+    case files
+}
+
 @MainActor
 @Observable
 final class WorkspaceStore {
@@ -67,6 +75,14 @@ final class WorkspaceStore {
     /// the global `AgentMonitor`; each window toggles its own panel. Defaults
     /// to hidden since it's opt-in.
     var rightSidebarMode: SidebarMode = .hidden
+    /// Left sidebar's middle content — workspace list or file tree. Persisted
+    /// like `sidebarMode`; the footer toggle in `SidebarView` flips it.
+    var sidebarContent: SidebarContent = .workspaces
+    /// File-tree state for the sidebar's files mode. Store-owned (not view
+    /// `@State`) because it holds kqueue fds needing explicit teardown and
+    /// the sidebar unmounts whole while hidden — `terminate()` is the
+    /// window-close backstop, `FileTreeView` pauses it via on(Dis)appear.
+    let fileTree = FileTreeModel()
     /// Fired when the last workspace closes. `KookyWindowController` wires
     /// this to close its window — a window with zero workspaces is empty.
     var onBecameEmpty: (() -> Void)?
@@ -90,6 +106,14 @@ final class WorkspaceStore {
         scheduleSave()
     }
 
+    /// Content-only swap — the sidebar keeps its width, so no size-propagation
+    /// suspension is needed (that dance is for width-animating mode changes).
+    func setSidebarContent(_ content: SidebarContent) {
+        guard sidebarContent != content else { return }
+        sidebarContent = content
+        scheduleSave()
+    }
+
     /// Open the rename popover on the active tab (⌘R). Sets a runtime flag the
     /// active `TabBarItem` observes; the active tab is always present in its
     /// pane's tab bar, so the popover can anchor.
@@ -105,6 +129,10 @@ final class WorkspaceStore {
     /// sidebar first so `SidebarView` exists to observe the parked request.
     func requestRenameActiveWorkspace() {
         if sidebarMode == .hidden { setSidebarMode(.full) }
+        // The rename popover anchors to a workspace row — flip the sidebar
+        // back to the list, or the parked request sits unconsumed in files
+        // mode and fires stale on the next toggle.
+        if sidebarContent == .files { setSidebarContent(.workspaces) }
         pendingRenameWorkspace = active
     }
 
@@ -1221,6 +1249,7 @@ final class WorkspaceStore {
         for watcher in gitWatchers.values { watcher.cancel() }
         gitWatchers.removeAll()
         codexUsageMonitor.stopAll()
+        fileTree.cancel()
     }
 
     // MARK: - Internals
@@ -1261,6 +1290,7 @@ final class WorkspaceStore {
             : workspaces.first?.id
         sidebarMode = state.sidebarMode ?? .full
         rightSidebarMode = state.rightSidebarMode ?? .hidden
+        sidebarContent = state.sidebarContent ?? .workspaces
     }
 
     private func restorePane(_ persisted: PersistedPaneNode, fm: FileManager) -> PaneNode? {
@@ -1581,7 +1611,8 @@ final class WorkspaceStore {
             workspaces: workspaces.map(PersistedWorkspace.init),
             activeWorkspaceId: activeWorkspaceId,
             sidebarMode: sidebarMode,
-            rightSidebarMode: rightSidebarMode
+            rightSidebarMode: rightSidebarMode,
+            sidebarContent: sidebarContent
         )
     }
 }

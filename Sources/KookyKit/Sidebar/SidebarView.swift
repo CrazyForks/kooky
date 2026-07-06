@@ -45,10 +45,17 @@ struct SidebarView: View {
         let isCompact = store.sidebarMode == .compact
         VStack(spacing: 0) {
             brand(isCompact: isCompact)
-            ScrollViewReader { proxy in
-                list(isCompact: isCompact, proxy: proxy)
+            // Compact always shows the icon list — 52pt can't fit a tree;
+            // the footer's files segment expands to full first.
+            if store.sidebarContent == .files && !isCompact {
+                FileTreeView(store: store, model: store.fileTree)
+            } else {
+                ScrollViewReader { proxy in
+                    list(isCompact: isCompact, proxy: proxy)
+                }
             }
             Spacer(minLength: 0)
+            footer(isCompact: isCompact)
         }
         .frame(width: isCompact ? Self.compactWidth : Self.fullWidth)
         .glassChromeBackground()
@@ -259,6 +266,60 @@ struct SidebarView: View {
         }
     }
 
+    /// Pinned bottom bar: a two-segment toggle between the workspace list
+    /// and the active workspace's file tree. Mirrors `brand`'s compact/full
+    /// handling — compact stacks the segments in the narrow column.
+    @ViewBuilder
+    private func footer(isCompact: Bool) -> some View {
+        Rectangle().fill(Theme.chromeHairline).frame(height: 1)
+        Group {
+            if isCompact {
+                VStack(spacing: 2) {
+                    workspacesSegment(isCompact: true)
+                    filesSegment(isCompact: true)
+                }
+                .frame(maxWidth: .infinity)
+            } else {
+                HStack(spacing: Theme.space1) {
+                    workspacesSegment(isCompact: false)
+                    filesSegment(isCompact: false)
+                }
+            }
+        }
+        .padding(.horizontal, isCompact ? Theme.space2 : Theme.space3)
+        .padding(.vertical, Theme.space2)
+    }
+
+    private func workspacesSegment(isCompact: Bool) -> some View {
+        FooterSegment(
+            systemName: "rectangle.stack",
+            isActive: store.sidebarContent == .workspaces,
+            isCompact: isCompact,
+            help: "Workspaces"
+        ) {
+            withAnimation(Theme.chromeTransition) {
+                store.setSidebarContent(.workspaces)
+            }
+        }
+    }
+
+    private func filesSegment(isCompact: Bool) -> some View {
+        FooterSegment(
+            systemName: "folder",
+            isActive: store.sidebarContent == .files,
+            isCompact: isCompact,
+            help: "Files"
+        ) {
+            withAnimation(Theme.chromeTransition) {
+                // A 52pt column can't render the tree — showing files from
+                // compact expands the sidebar first (the mode setter handles
+                // the width-animation size-propagation dance).
+                if store.sidebarMode == .compact { store.setSidebarMode(.full) }
+                store.setSidebarContent(.files)
+            }
+        }
+    }
+
     private func list(isCompact: Bool, proxy: ScrollViewProxy) -> some View {
         ScrollView(showsIndicators: false) {
             LazyVStack(spacing: 2) {
@@ -393,6 +454,42 @@ struct SidebarView: View {
         // / AppDelegate routes all go through here, so this stays the one
         // mechanism that opens the create sheet.
         store.pendingCreateWorktreeRequest = workspace
+    }
+}
+
+/// One segment of the sidebar's footer toggle. `HoverableIconButton` has no
+/// active-fill state, so this is its selected-capable sibling: active
+/// segments read `chromeActive` (same fill as the selected workspace row),
+/// hover reads `chromeHover`.
+private struct FooterSegment: View {
+    let systemName: String
+    let isActive: Bool
+    let isCompact: Bool
+    let help: String
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(isActive ? Theme.chromeForeground : Theme.chromeMuted)
+                .frame(maxWidth: isCompact ? nil : .infinity)
+                .frame(width: isCompact ? 28 : nil, height: isCompact ? 28 : 26)
+                .background(fill)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .help(help)
+    }
+
+    private var fill: Color {
+        if isActive { return Theme.chromeActive }
+        if isHovered { return Theme.chromeHover }
+        return .clear
     }
 }
 

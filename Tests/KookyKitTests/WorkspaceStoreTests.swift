@@ -1206,6 +1206,38 @@ final class WorkspaceStoreTests: XCTestCase {
         XCTAssertEqual(saved.activeWorkspaceId, store.activeWorkspaceId)
     }
 
+    func testSidebarContentPersistsAndRestores() throws {
+        let persistence = InMemoryPersistence()
+        let store = WorkspaceStore(persistence: persistence, engineFactory: { TestEngine() })
+        store.addWorkspace(workingDirectory: projectA)
+        store.setSidebarContent(.files)
+        store.flushPersistence()
+        XCTAssertEqual(persistence.saved?.sidebarContent, .files)
+
+        let restored = makeStore(initial: persistence.saved)
+        XCTAssertEqual(restored.sidebarContent, .files)
+    }
+
+    func testRequestRenameActiveWorkspaceLeavesFilesMode() {
+        // The rename popover anchors to a workspace row — ⌘⇧R from files
+        // mode must flip the sidebar back so the parked request is consumed.
+        let store = makeStore()
+        store.addWorkspace(workingDirectory: projectA)
+        store.setSidebarContent(.files)
+        store.requestRenameActiveWorkspace()
+        XCTAssertEqual(store.sidebarContent, .workspaces)
+        XCTAssertNotNil(store.pendingRenameWorkspace)
+    }
+
+    func testTerminateCancelsFileTreeWatchers() {
+        let store = makeStore()
+        store.addWorkspace(workingDirectory: projectA)
+        store.fileTree.activate(root: projectA)
+        XCTAssertEqual(store.fileTree.watchedDirectoryCount, 1)
+        store.terminate()
+        XCTAssertEqual(store.fileTree.watchedDirectoryCount, 0)
+    }
+
     func testApplyConversationIdWritesToCorrectSessionOnly() {
         // Two Claude tabs running in parallel — each gets its own conversation
         // id via separate `applyConversationId` calls, neither stomps the

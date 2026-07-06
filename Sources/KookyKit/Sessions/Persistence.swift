@@ -9,6 +9,9 @@ struct PersistedState: Codable, Equatable {
     var activeWorkspaceId: UUID?
     var sidebarMode: SidebarMode?
     var rightSidebarMode: SidebarMode?
+    /// Optional so state.json files written before the file-tree toggle
+    /// existed still decode (nil → `.workspaces`).
+    var sidebarContent: SidebarContent?
 }
 
 /// Root of the multi-window `state.json`. Each `PersistedWindow` is one

@@ -125,6 +125,29 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(decoded.worktreePath, dir)
     }
 
+    // MARK: - Sidebar content
+
+    func testSidebarContentRoundtrips() throws {
+        var state = makeState()
+        state.sidebarContent = .files
+        let data = try JSONEncoder().encode(state)
+        let decoded = try JSONDecoder().decode(PersistedState.self, from: data)
+        XCTAssertEqual(decoded.sidebarContent, .files)
+    }
+
+    func testSidebarContentDecodesNilFromPreFileTreeStateFiles() throws {
+        // state.json files written before the file-tree toggle existed omit
+        // the key — decode must succeed and leave it nil (→ `.workspaces`).
+        let legacy = makeState()
+        let data = try JSONEncoder().encode(legacy)
+        XCTAssertFalse(
+            String(decoding: data, as: UTF8.self).contains("sidebarContent"),
+            "nil must encode as an absent key, or old kooky versions choke on the file"
+        )
+        let decoded = try JSONDecoder().decode(PersistedState.self, from: data)
+        XCTAssertNil(decoded.sidebarContent)
+    }
+
     func testPersistedWorkspaceDecodesNilWhenWorktreeFieldsMissing() throws {
         // Pre-worktree state.json files omit both keys — decode must succeed
         // and leave the fields nil so plain workspaces stay plain on upgrade.
