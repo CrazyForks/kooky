@@ -1222,7 +1222,12 @@ final class GhosttySurfaceView: NSView {
     @discardableResult
     private func sendKey(event: NSEvent, action: ghostty_input_action_e, surface: ghostty_surface_t) -> Bool {
         let mods = Self.mapModifiers(event.modifierFlags)
-        let chars = event.characters ?? ""
+        // NSEvent raises NSInternalInconsistencyException on `characters` for
+        // FlagsChanged events (modifier-only, no text) — and that ObjC unwind
+        // through this Swift frame is undefined behavior, thousands of times a
+        // day (every Shift/Cmd/Option press). Modifiers carry their state via
+        // `mods` + `keycode` alone, matching ghostty.app's flagsChanged path.
+        let chars = event.type == .flagsChanged ? "" : (event.characters ?? "")
         // NSEvent gives function/arrow keys a Private-Use-Area "character"
         // (e.g. NSUpArrowFunctionKey = 0xF700). Those aren't real text — strip
         // them so libghostty relies on `keycode` instead and emits the correct

@@ -2,6 +2,11 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.31.6 — 2026-07-07
+
+- Fixed: every modifier key press (Shift / Cmd / Option) triggered an internal AppKit exception — invisible in normal use, but undefined behavior that could corrupt a long-lived session, and the prime suspect for rare "app suddenly quits" crashes.
+- New: crash black box — if kooky ever dies unexpectedly, its last words are saved to ~/Library/Logs/kooky/stderr.log so the cause can be diagnosed instead of lost.
+
 ## v0.31.5 — 2026-07-01
 
 - Fixed: showing or hiding the sidebar or agent panel no longer flickers the terminal while it resizes. (#29)
