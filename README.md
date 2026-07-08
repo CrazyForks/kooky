@@ -34,6 +34,8 @@ A minimal modern terminal built for AI coding. Sidebar workspaces; horizontal / 
 
 **Quick Open (⌘P).** Fuzzy-search across every window's workspaces, tabs, agents, and Terminal presets from one floating panel. Type to filter, ↑↓ to navigate, Enter to jump or spawn. Triggers from ⌘P or the search pill in the top chrome.
 
+**Sidebar file tree.** A toggle at the bottom of the sidebar swaps the workspace list for a file tree of the active workspace's folder. Expand directories, double-click to open a file, right-click for Open / Reveal in Finder / Copy Path / Insert Path into Terminal — or just drag a file or folder straight into the terminal to insert its escaped path, same as a Finder drag. The tree follows the active tab's directory and refreshes live as files change on disk.
+
 **Friction-free input.** Click anywhere on the zsh prompt to move the shell cursor there (no modifier needed, same UX as ghostty.app). Drag a file or folder from Finder onto any pane to drop its escaped absolute path at the cursor.
 
 **Prompt composer (⌘L).** A chat-style box rises from the bottom of the pane for writing a long, multi-line prompt without a stray Return firing it off mid-thought. Return sends it to the current agent (or shell), Shift+Return adds a newline, Esc cancels and keeps your draft. Open it with ⌘L or the compose button in the pane status bar.

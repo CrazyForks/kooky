@@ -34,6 +34,8 @@
 
 **快速打开(⌘P)。** 一个浮动面板模糊搜索所有 window 的 workspaces、tabs、agents、Terminal presets。输入关键字筛选,↑↓ 选,Enter 跳过去或者新开一个。⌘P 或顶部 chrome 上的 search pill 都能触发。
 
+**侧边栏文件树。** 侧边栏底部的切换按钮把 workspace 列表换成当前 workspace 文件夹的文件树。目录可展开、双击文件用默认程序打开,右键有打开 / 在访达显示 / 拷贝路径 / 把路径插入终端 —— 也可以直接把文件或文件夹拖进终端,escape 好的路径就插到光标处,跟从 Finder 拖进来一样。文件树跟随当前 tab 的目录,磁盘上文件一变就自动刷新。
+
 **输入顺手。** 在 zsh 提示行点哪儿光标就跳哪儿(不用按 modifier,跟 ghostty.app 一致)。从 Finder 把文件或文件夹拖到任意 pane,绝对路径会自动 escape 后插到光标位置。
 
 **Prompt composer (⌘L)。** pane 底部升起一个聊天式输入框，让你安心写长的、多行的 prompt——不会手一抖回车就发出去。回车发给当前 agent（或 shell），Shift+回车换行，Esc 取消并保留草稿。⌘L 或 pane 底部状态栏的 compose 按钮打开。
