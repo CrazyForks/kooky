@@ -21,8 +21,10 @@ struct FileNode: Identifiable, Equatable, Sendable {
 struct FileTreeRow: Identifiable, Equatable {
     enum Kind: Equatable {
         case entry(FileNode)
-        /// Non-interactive note under an expanded-but-unlistable directory.
-        case placeholder(String)
+        /// Non-interactive "no access" note under an expanded-but-unlistable
+        /// directory. The message lives at the render site — the model only
+        /// carries the state.
+        case placeholder
     }
 
     let kind: Kind
@@ -58,7 +60,11 @@ enum FileTreeLister {
             let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
             let isSymlink = values?.isSymbolicLink == true
             return FileNode(
-                url: url,
+                // `contentsOfDirectory` returns realpath'd URLs (a `/var/…` or
+                // `/tmp/…` root comes back under `/private/…`); standardize the
+                // `/private` back off so child ids share the root's prefix and
+                // path comparisons hold — the same normalization worktree paths use.
+                url: url.standardizedFileURL,
                 name: name,
                 isDirectory: values?.isDirectory == true && !isSymlink,
                 isSymlink: isSymlink
@@ -86,11 +92,11 @@ enum FileTreeLister {
         while let (node, depth) = stack.popLast() {
             let path = node.url.path
             let isExpanded = node.isDirectory && expandedDirs.contains(path)
-            rows.append(FileTreeRow(kind: .entry(node), depth: depth, isExpanded: isExpanded, id: node.id))
+            rows.append(FileTreeRow(kind: .entry(node), depth: depth, isExpanded: isExpanded, id: path))
             guard isExpanded else { continue }
             if failedDirs.contains(path) {
                 rows.append(FileTreeRow(
-                    kind: .placeholder("no access"),
+                    kind: .placeholder,
                     depth: depth + 1,
                     isExpanded: false,
                     id: path + "/__placeholder__"
@@ -152,6 +158,20 @@ final class FileTreeModel {
     /// False while the tree isn't showing (workspaces mode / sidebar hidden)
     /// — no watchers run and refreshes are skipped; caches survive.
     private var isActive = false
+    /// Bumped by every `activate`; lets a stale `deactivate` be ignored.
+    private var activationToken = 0
+
+    /// Roots must resolve symlinks: shells report the *logical* cwd over
+    /// OSC 7, but `contentsOfDirectory(at:)` refuses to traverse a URL whose
+    /// last component is a symlink (ENOTDIR) — verified on macOS 15/26; an
+    /// `isDirectory: true` hint does NOT help — which would strand the tree
+    /// on "Folder unavailable" for any symlinked project dir. Resolving also
+    /// realpaths the prefix, and the trailing `.standardizedFileURL` strips
+    /// `/private` the same way child listings do, so root and child keys
+    /// converge on one canonical form.
+    private static func canonicalRoot(_ url: URL) -> URL {
+        url.resolvingSymlinksInPath().standardizedFileURL
+    }
 
     /// Root + 63 most recently expanded directories. Keeps the fd budget
     /// trivial next to the default 256 soft limit; over-cap directories
@@ -163,23 +183,31 @@ final class FileTreeModel {
 
     /// Entering files mode (or the sidebar remounting). Re-lists the visible
     /// subtree to catch changes made while paused, then arms watchers.
-    func activate(root: URL?) {
+    /// Returns an activation token; `deactivate(token:)` ignores stale tokens
+    /// so an animated unmount's late `onDisappear` can't kill the watchers a
+    /// newer mount just armed (the shared-state clobber M5.mmmm refcounted).
+    @discardableResult
+    func activate(root: URL?) -> Int {
+        activationToken += 1
         isActive = true
+        let root = root.map(Self.canonicalRoot)
         if rootURL?.path != root?.path {
             resetState(to: root)
         }
         relistVisibleSubtree()
         pruneUnreachable()
-        syncWatchers()
         rebuildRows()
+        return activationToken
     }
 
     /// Leaving files mode (toggle back / sidebar hidden). Drops every
     /// watcher; caches and expansion survive so re-entry is instant.
-    func deactivate() {
+    /// Pass the token `activate` returned to make the call a no-op when a
+    /// newer activation superseded it; nil deactivates unconditionally.
+    func deactivate(token: Int? = nil) {
+        if let token, token != activationToken { return }
         isActive = false
-        for watcher in watchers.values { watcher.cancel() }
-        watchers.removeAll()
+        cancelAllWatchers()
     }
 
     /// Full teardown for `WorkspaceStore.terminate()`.
@@ -192,11 +220,16 @@ final class FileTreeModel {
     /// Active-workspace switch or cwd drift. Same path is a no-op; a new
     /// path clears expansion/caches/selection and re-lists.
     func setRoot(_ url: URL?) {
+        let url = url.map(Self.canonicalRoot)
         guard rootURL?.path != url?.path else { return }
         resetState(to: url)
-        guard isActive else { return }
+        guard isActive else {
+            // Keep the model self-consistent while paused — the old root's
+            // rows must not survive under the new `rootURL`.
+            if !rows.isEmpty { rows = [] }
+            return
+        }
         relistVisibleSubtree()
-        syncWatchers()
         rebuildRows()
     }
 
@@ -207,15 +240,15 @@ final class FileTreeModel {
             expandedDirs.remove(path)
             expansionOrder.removeAll { $0 == path }
         } else {
+            // Not in `expandedDirs` ⟹ not in `expansionOrder` — the two are
+            // kept in lockstep — so a plain append suffices.
             expandedDirs.insert(path)
-            expansionOrder.removeAll { $0 == path }
             expansionOrder.append(path)
             // List this directory and any previously-expanded descendants
             // that just became visible again — their caches may be stale.
             relistVisibleSubtree(from: path)
             pruneUnreachable()
         }
-        syncWatchers()
         rebuildRows()
     }
 
@@ -225,9 +258,22 @@ final class FileTreeModel {
         guard isActive, let rootPath = rootURL?.path else { return }
         guard dirPath == rootPath || childrenByDir[dirPath] != nil || expandedDirs.contains(dirPath)
         else { return }
-        listDirectory(dirPath)
-        pruneUnreachable()
-        syncWatchers()
+        let wasRootError = rootError
+        let removedEntries = listDirectory(dirPath)
+        if dirPath == rootPath && (wasRootError || removedEntries) && !rootError {
+            // The root either just recovered (deleted-then-recreated) or had
+            // entries swapped out from under it: expanded descendants render
+            // retained caches and their fresh watchers only report *future*
+            // changes, so re-list the whole visible subtree, not just the
+            // root — the same staleness `activate` handles on re-entry.
+            relistVisibleSubtree()
+            pruneUnreachable()
+        } else if removedEntries {
+            pruneUnreachable()
+        }
+        // A purely additive change can't make anything unreachable — skip
+        // the full-cache prune walk (it would run per 200ms tick during
+        // bulk churn like npm install).
         rebuildRows()
     }
 
@@ -244,12 +290,20 @@ final class FileTreeModel {
     }
 
     /// Shallow listing of one directory into the cache. Root failures set
-    /// `rootError`; child failures land in `failedDirs`.
-    private func listDirectory(_ path: String) {
+    /// `rootError`; child failures land in `failedDirs`. Returns whether any
+    /// previously-cached entry disappeared — callers use it to skip the
+    /// unreachability prune on purely additive changes.
+    @discardableResult
+    private func listDirectory(_ path: String) -> Bool {
+        let previous = childrenByDir[path]
         do {
-            childrenByDir[path] = try FileTreeLister.children(of: URL(fileURLWithPath: path))
+            let children = try FileTreeLister.children(of: URL(fileURLWithPath: path))
+            childrenByDir[path] = children
             failedDirs.remove(path)
             if path == rootURL?.path { rootError = false }
+            guard let previous else { return false }
+            let kept = Set(children.map(\.id))
+            return previous.contains { !kept.contains($0.id) }
         } catch {
             childrenByDir.removeValue(forKey: path)
             if path == rootURL?.path {
@@ -257,6 +311,7 @@ final class FileTreeModel {
             } else {
                 failedDirs.insert(path)
             }
+            return previous != nil
         }
     }
 
@@ -283,19 +338,17 @@ final class FileTreeModel {
     /// reachable from the root through the current cache — a deleted
     /// subtree must not keep stale rows (or, via `syncWatchers`, fds) alive.
     private func pruneUnreachable() {
-        guard let rootPath = rootURL?.path else {
-            childrenByDir.removeAll()
-            expandedDirs.removeAll()
-            expansionOrder.removeAll()
-            failedDirs.removeAll()
-            return
-        }
+        // No root ⟹ every cache is already empty (only `resetState` clears
+        // them, and it nils the root in the same call; nothing populates a
+        // cache without a root). So there's nothing to prune here.
+        guard let rootPath = rootURL?.path else { return }
         var reachable: Set<String> = [rootPath]
         var stack: [String] = [rootPath]
         while let dir = stack.popLast() {
             for child in childrenByDir[dir] ?? [] where child.isDirectory {
-                if reachable.insert(child.url.path).inserted {
-                    stack.append(child.url.path)
+                let path = child.url.path
+                if reachable.insert(path).inserted {
+                    stack.append(path)
                 }
             }
         }
@@ -311,13 +364,20 @@ final class FileTreeModel {
     /// watcher whose directory briefly disappeared.
     private func syncWatchers() {
         guard isActive, let rootPath = rootURL?.path else {
-            for watcher in watchers.values { watcher.cancel() }
-            watchers.removeAll()
+            cancelAllWatchers()
             return
         }
         var desired: Set<String> = [rootPath]
         if !rootError {
-            let visible = visiblyExpandedDirs()
+            // The visible expanded dirs are exactly the expanded directory
+            // rows just emitted — `rebuildRows` tail-calls syncWatchers, so
+            // `rows` is always fresh here and no separate tree walk is
+            // needed.
+            let visible = Set(rows.compactMap { row -> String? in
+                guard case .entry(let node) = row.kind, node.isDirectory, row.isExpanded
+                else { return nil }
+                return node.url.path
+            })
             desired.formUnion(
                 expansionOrder.reversed()
                     .filter { visible.contains($0) }
@@ -341,26 +401,18 @@ final class FileTreeModel {
         }
     }
 
-    /// Expanded directories actually rendered right now — the walk only
-    /// descends through expanded parents, so an expanded dir hidden under a
-    /// collapsed ancestor doesn't count (and doesn't deserve a watcher).
-    private func visiblyExpandedDirs() -> Set<String> {
-        guard let rootPath = rootURL?.path else { return [] }
-        var result: Set<String> = []
-        var stack: [String] = [rootPath]
-        while let dir = stack.popLast() {
-            for child in childrenByDir[dir] ?? [] where child.isDirectory {
-                let path = child.url.path
-                if expandedDirs.contains(path) {
-                    result.insert(path)
-                    stack.append(path)
-                }
-            }
-        }
-        return result
+    /// Drop every live watcher (each owns a kqueue fd) — shared by
+    /// `deactivate()` and the no-root guard in `syncWatchers()`.
+    private func cancelAllWatchers() {
+        for watcher in watchers.values { watcher.cancel() }
+        watchers.removeAll()
     }
 
     private func rebuildRows() {
+        // Tail-calling syncWatchers here is the single ordering-enforcement
+        // point: the watcher set is derived from `rows`, so the wrong order
+        // (sync against stale rows) is unrepresentable at call sites.
+        defer { syncWatchers() }
         guard let root = rootURL, !rootError else {
             if !rows.isEmpty { rows = [] }
             if selectedId != nil { selectedId = nil }

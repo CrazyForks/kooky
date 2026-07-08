@@ -177,6 +177,35 @@ final class FileTreeModelTests: XCTestCase {
         XCTAssertEqual(model.rows.map(\.depth), [0, 0])
     }
 
+    func testSymlinkedRootListsThroughTheLink() throws {
+        // Shells report the *logical* cwd, so a symlinked project dir
+        // (~/proj → ~/dev/proj) arrives as the link path. The URL-based
+        // lister refuses to traverse a symlink final component (ENOTDIR),
+        // so the root must be canonicalized or the tree strands on
+        // "Folder unavailable". The temp-dir fixtures never cover this —
+        // /var and /tmp are Foundation-special-cased — hence a real link.
+        let (root, _, model) = try makeFixture()
+        let target = root.appendingPathComponent("real-target", isDirectory: true)
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        FileManager.default.createFile(
+            atPath: target.appendingPathComponent("inside.txt").path,
+            contents: Data()
+        )
+        let link = root.appendingPathComponent("link-root")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+
+        model.activate(root: link)
+        XCTAssertFalse(model.rootError, "a symlinked root must list through the link")
+        XCTAssertEqual(
+            model.rows.map { ($0.id as NSString).lastPathComponent },
+            ["inside.txt"]
+        )
+        // Root and child keys must share one canonical prefix, or expansion
+        // and watcher bookkeeping silently key-miss.
+        let rootPath = try XCTUnwrap(model.rootURL?.path)
+        XCTAssertTrue(model.rows.allSatisfy { $0.id.hasPrefix(rootPath + "/") })
+    }
+
     func testExpandAndCollapse() throws {
         let (root, src, model) = try makeFixture()
         model.activate(root: root)

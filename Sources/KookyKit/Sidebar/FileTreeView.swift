@@ -5,18 +5,23 @@ import SwiftUI
 /// list while `store.sidebarContent == .files` (full mode only — 52pt can't
 /// fit a tree).
 struct FileTreeView: View {
-    @Bindable var store: WorkspaceStore
+    let store: WorkspaceStore
     let model: FileTreeModel
+
+    @State private var activationToken = 0
 
     var body: some View {
         VStack(spacing: 0) {
             if let root = model.rootURL {
                 header(root: root)
+                Rectangle().fill(Theme.chromeHairline).frame(height: 1)
             }
             content
         }
-        .onAppear { model.activate(root: store.active?.diskPath) }
-        .onDisappear { model.deactivate() }
+        .onAppear { activationToken = model.activate(root: store.active?.diskPath) }
+        // Tokened: an animated unmount's late onDisappear must not deactivate
+        // the model a newer mount just activated (frozen-tree race).
+        .onDisappear { model.deactivate(token: activationToken) }
         // Follows the active workspace, and — for plain workspaces, where
         // `diskPath == workingDirectory` — OSC 7 cwd drift; worktrees stay
         // pinned via `worktreePath`.
@@ -26,19 +31,26 @@ struct FileTreeView: View {
     }
 
     private func header(root: URL) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(root.lastPathComponent)
-                .font(Theme.display(12.5, weight: .medium))
-                .foregroundStyle(Theme.chromeForeground)
-                .lineLimit(1)
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Image(systemName: "folder.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.chromeForeground.opacity(0.6))
+                Text(root.lastPathComponent)
+                    .font(Theme.display(13, weight: .medium))
+                    .foregroundStyle(Theme.chromeForeground)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
             Text((root.path as NSString).abbreviatingWithTildeInPath)
-                .font(Theme.mono(10.5))
-                .foregroundStyle(Theme.chromeMuted)
+                .font(Theme.mono(10))
+                .foregroundStyle(Theme.chromeFaint)
                 .lineLimit(1)
                 .truncationMode(.head)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, Theme.space4)
+        .padding(.horizontal, Theme.space3)
+        .padding(.top, Theme.space1)
         .padding(.bottom, Theme.space2)
         .help(root.path)
     }
@@ -46,20 +58,23 @@ struct FileTreeView: View {
     @ViewBuilder
     private var content: some View {
         if store.active == nil {
-            emptyState("No active workspace")
+            emptyState("square.dashed", "No active workspace")
         } else if model.rootError {
-            emptyState("Folder unavailable")
+            emptyState("folder.badge.questionmark", "Folder unavailable")
         } else if model.rows.isEmpty {
-            emptyState("Empty folder")
+            emptyState("folder", "Empty folder")
         } else {
             ScrollView(showsIndicators: false) {
-                LazyVStack(spacing: 1) {
+                // spacing 0 keeps the indent guides visually continuous down
+                // the column; each row carries its own hover/selected fill.
+                LazyVStack(spacing: 0) {
                     ForEach(model.rows) { row in
                         FileTreeRowView(row: row, model: model, store: store)
                     }
                 }
                 .padding(.horizontal, Theme.space2)
-                .padding(.vertical, Theme.space2)
+                .padding(.top, Theme.space1)
+                .padding(.bottom, Theme.space2)
             }
             // Fresh scroll position when the tree re-roots — offsets from
             // the previous workspace's tree are meaningless here.
@@ -67,19 +82,27 @@ struct FileTreeView: View {
         }
     }
 
-    private func emptyState(_ message: String) -> some View {
-        Text(message)
-            .font(Theme.display(12))
-            .foregroundStyle(Theme.chromeMuted)
-            .multilineTextAlignment(.center)
-            .padding(.horizontal, Theme.space4)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    private func emptyState(_ symbol: String, _ message: String) -> some View {
+        VStack(spacing: Theme.space2) {
+            Image(systemName: symbol)
+                .font(.system(size: 22, weight: .light))
+                .foregroundStyle(Theme.chromeFaint)
+            Text(message)
+                .font(Theme.display(12))
+                .foregroundStyle(Theme.chromeMuted)
+                .multilineTextAlignment(.center)
+        }
+        .padding(.horizontal, Theme.space4)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
-/// One flattened tree row — indent by depth, chevron for directories, icon,
-/// name. Single click selects (and toggles a directory); double click opens
-/// a file with its default app; right click opens the kooky popover menu.
+/// One flattened tree row — indent guides by depth, chevron for directories,
+/// icon, name. Single click selects (and toggles a directory); double click
+/// opens a file with its default app; drag carries the file/folder URL so a
+/// drop onto a terminal pane inserts its escaped path (same path as a Finder
+/// drag — the pane's `performDragOperation` reads the same `.fileURL`); right
+/// click opens the kooky popover menu.
 private struct FileTreeRowView: View {
     let row: FileTreeRow
     let model: FileTreeModel
@@ -87,52 +110,99 @@ private struct FileTreeRowView: View {
 
     @State private var isHovered = false
     @State private var isContextMenuOpen = false
+    @State private var lastDirectoryToggle: Date = .distantPast
 
     /// Per-level indent. 14pt keeps ~10 levels readable inside the sidebar's
-    /// 220pt; names beyond that truncate middle and the row tooltip carries
-    /// the full path.
+    /// full width; the guide line sits at the column centre so it lands under
+    /// the parent row's chevron. Names beyond depth truncate middle and the
+    /// row tooltip carries the full path.
     private static let indentPerLevel: CGFloat = 14
+    private static let chevronColumn: CGFloat = 14
+    private static let iconColumn: CGFloat = 17
 
     var body: some View {
         switch row.kind {
         case .entry(let node):
             entryRow(node)
-        case .placeholder(let message):
-            placeholderRow(message)
+        case .placeholder:
+            placeholderRow()
         }
+    }
+
+    /// One 1pt guide per ancestor level, full row height. Centred in the
+    /// 14pt column so it aligns exactly under the parent chevron (chevron
+    /// centre = 7pt into its own 14pt column = guide centre of the next
+    /// level down).
+    @ViewBuilder
+    private func indentGuides(_ depth: Int) -> some View {
+        HStack(spacing: 0) {
+            ForEach(0..<depth, id: \.self) { _ in
+                Rectangle()
+                    .fill(Theme.chromeHairline)
+                    .frame(width: 1)
+                    .frame(width: Self.indentPerLevel)
+            }
+        }
+        .padding(.leading, Theme.space2)
+    }
+
+    /// The shared row frame: the caller's leading columns + label, a trailing
+    /// spacer, depth indentation, and the common padding recipe. The indent
+    /// guides draw in a full-height *background* — as HStack siblings they'd
+    /// stop at the content height and leave a gap across the vertical
+    /// padding of every row, rendering as dashes instead of continuous
+    /// lines. Row-kind-specific modifiers (hover fill, gestures, drag) chain
+    /// onto the result at the `entryRow` call site.
+    private func rowShell<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        HStack(spacing: 0) {
+            content()
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, CGFloat(row.depth) * Self.indentPerLevel)
+        .padding(.vertical, 3.5)
+        .padding(.leading, Theme.space2)
+        .padding(.trailing, Theme.space2)
+        .background(alignment: .leading) { indentGuides(row.depth) }
     }
 
     private func entryRow(_ node: FileNode) -> some View {
         let isSelected = model.selectedId == row.id
-        return HStack(spacing: Theme.space1) {
+        return rowShell {
             if node.isDirectory {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(Theme.chromeMuted)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(isSelected || isHovered ? Theme.chromeMuted : Theme.chromeFaint)
                     .rotationEffect(.degrees(row.isExpanded ? 90 : 0))
-                    .animation(.easeOut(duration: 0.15), value: row.isExpanded)
-                    .frame(width: 14)
+                    .frame(width: Self.chevronColumn)
             } else {
-                // Keep file names column-aligned with sibling directories.
-                Color.clear.frame(width: 14, height: 1)
+                // Explicit spacer, NOT an empty conditional with a frame — a
+                // frame on an empty view renders nothing, and files would sit
+                // 14pt left of sibling directories.
+                Color.clear.frame(width: Self.chevronColumn, height: 1)
             }
             Image(systemName: FileTreeLister.symbolName(for: node))
                 .font(.system(size: 11))
-                .foregroundStyle(Theme.chromeMuted)
-                .frame(width: 16)
+                .foregroundStyle(iconColor(node, selected: isSelected))
+                .frame(width: Self.iconColumn)
             Text(node.name)
                 .font(Theme.display(12.5))
-                .foregroundStyle(isSelected ? Theme.chromeForeground : Theme.chromeForeground.opacity(0.85))
+                .foregroundStyle(nameColor(selected: isSelected))
                 .lineLimit(1)
                 .truncationMode(.middle)
-            Spacer(minLength: 0)
+                .padding(.leading, 2)
         }
-        .padding(.leading, CGFloat(row.depth) * Self.indentPerLevel)
-        .padding(.horizontal, Theme.space2)
-        .padding(.vertical, 4)
+        .animation(.easeOut(duration: 0.15), value: row.isExpanded)
         .hoverableRowBackground(isActive: isSelected, isHovered: isHovered)
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .contentShape(Rectangle())
+        // Drag carries the raw file URL (public.file-url). The terminal pane's
+        // `performDragOperation` reads exactly this and backslash-escapes the
+        // path, so a tree drag lands identically to a Finder drag.
+        .onDrag {
+            NSItemProvider(object: node.url as NSURL)
+        } preview: {
+            dragPreview(node)
+        }
         // count:2 must attach before count:1 or the double never recognizes.
         // A double-click on a file also fires the single handler on its
         // first click — select-then-open, same as Finder.
@@ -141,10 +211,16 @@ private struct FileTreeRowView: View {
         }
         .onTapGesture {
             model.selectedId = row.id
-            if node.isDirectory {
-                withAnimation(.easeOut(duration: 0.12)) {
-                    model.toggleExpanded(node)
-                }
+            guard node.isDirectory else { return }
+            // Whether the single-tap fires once or twice for a double-click
+            // varies across macOS releases; swallow a second toggle inside
+            // the double-click window so a Finder-habit double-click reads
+            // as "expand", never an open-shut flicker.
+            let now = Date()
+            guard now.timeIntervalSince(lastDirectoryToggle) > NSEvent.doubleClickInterval else { return }
+            lastDirectoryToggle = now
+            withAnimation(.easeOut(duration: 0.12)) {
+                model.toggleExpanded(node)
             }
         }
         .onHover { isHovered = $0 }
@@ -153,6 +229,40 @@ private struct FileTreeRowView: View {
             contextMenu(node)
         }
         .help(node.url.path)
+    }
+
+    /// File/folder icon tint — a single-colour hierarchy: folders read as
+    /// containers (more solid), files as leaves (muted), the selected row
+    /// promotes to full foreground. No hue; kooky's chrome stays monochrome.
+    private func iconColor(_ node: FileNode, selected: Bool) -> Color {
+        if selected { return Theme.chromeForeground }
+        if node.isDirectory { return Theme.chromeForeground.opacity(0.6) }
+        return isHovered ? Theme.chromeForeground.opacity(0.72) : Theme.chromeMuted
+    }
+
+    private func nameColor(selected: Bool) -> Color {
+        if selected { return Theme.chromeForeground }
+        return Theme.chromeForeground.opacity(isHovered ? 0.95 : 0.82)
+    }
+
+    /// Compact chip shown under the cursor while dragging — icon + name on the
+    /// chrome surface, so the drag reads as "this file" rather than a snapshot
+    /// of the whole hover-highlighted row.
+    private func dragPreview(_ node: FileNode) -> some View {
+        HStack(spacing: Theme.space1) {
+            Image(systemName: FileTreeLister.symbolName(for: node))
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.chromeForeground.opacity(0.8))
+            Text(node.name)
+                .font(Theme.display(12))
+                .foregroundStyle(Theme.chromeForeground)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, Theme.space2)
+        .padding(.vertical, Theme.space1)
+        .background(Theme.chromeBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.chromeHairline, lineWidth: 1))
     }
 
     private func contextMenu(_ node: FileNode) -> some View {
@@ -191,18 +301,14 @@ private struct FileTreeRowView: View {
     }
 
     /// Muted, non-interactive note under an expanded-but-unlistable
-    /// directory ("no access").
-    private func placeholderRow(_ message: String) -> some View {
-        HStack(spacing: Theme.space1) {
-            Color.clear.frame(width: 14, height: 1)
-            Text(message)
+    /// directory, indented to match its parent's children.
+    private func placeholderRow() -> some View {
+        rowShell {
+            Color.clear.frame(width: Self.chevronColumn, height: 1)
+            Text("no access")
                 .font(Theme.display(11.5))
-                .foregroundStyle(Theme.chromeMuted)
+                .foregroundStyle(Theme.chromeFaint)
                 .lineLimit(1)
-            Spacer(minLength: 0)
         }
-        .padding(.leading, CGFloat(row.depth) * Self.indentPerLevel)
-        .padding(.horizontal, Theme.space2)
-        .padding(.vertical, 4)
     }
 }

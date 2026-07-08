@@ -41,13 +41,22 @@ struct SidebarView: View {
     /// watches `store.pendingRemovalRequest` for ⌘⇧W routed via AppDelegate.
     @State private var sheet: SidebarSheet?
 
+    /// Whether the file tree is the mounted middle surface (files mode, full
+    /// width — compact can't fit a tree and falls back to the icon list).
+    /// Single source for the body's content switch and the folder-drop
+    /// rejection below: the drop zone must reject exactly while the tree —
+    /// whose rows vend `public.file-url` drags — is what's on screen.
+    private var fileTreeIsMounted: Bool {
+        store.sidebarContent == .files && store.sidebarMode != .compact
+    }
+
     var body: some View {
         let isCompact = store.sidebarMode == .compact
         VStack(spacing: 0) {
             brand(isCompact: isCompact)
-            // Compact always shows the icon list — 52pt can't fit a tree;
-            // the footer's files segment expands to full first.
-            if store.sidebarContent == .files && !isCompact {
+            // Compact can't fit a tree in 52pt, so it always shows the icon
+            // list; the file tree (and its footer toggle) are full-mode only.
+            if fileTreeIsMounted {
                 FileTreeView(store: store, model: store.fileTree)
             } else {
                 ScrollViewReader { proxy in
@@ -55,7 +64,7 @@ struct SidebarView: View {
                 }
             }
             Spacer(minLength: 0)
-            footer(isCompact: isCompact)
+            if !isCompact { footer() }
         }
         .frame(width: isCompact ? Self.compactWidth : Self.fullWidth)
         .glassChromeBackground()
@@ -79,13 +88,21 @@ struct SidebarView: View {
         // lights up for any URL drag (SwiftUI's `.dropDestination` can't
         // pre-filter file-vs-folder); file drags release as no-ops.
         .dropDestination(for: URL.self) { urls, _ in
+            // The file tree's rows vend public.file-url drags (a folder row
+            // looks exactly like a Finder drag) and the tree renders inside
+            // this very drop zone — reject drops while it's mounted so a
+            // tree drag released over the sidebar bounces back instead of
+            // minting a workspace. Everywhere the workspace LIST shows —
+            // workspaces mode, compact (the tree never mounts there), any
+            // window — Finder folders still land.
+            guard !fileTreeIsMounted else { return false }
             let folders = urls.filter(isDirectory)
             guard !folders.isEmpty else { return false }
             for folder in folders {
                 store.addWorkspace(workingDirectory: folder)
             }
             return true
-        } isTargeted: { isFolderDropTargeted = $0 }
+        } isTargeted: { isFolderDropTargeted = $0 && !fileTreeIsMounted }
         .sheet(item: $sheet) { current in
             switch current {
             case .createWorktree(let source):
@@ -266,56 +283,29 @@ struct SidebarView: View {
         }
     }
 
-    /// Pinned bottom bar: a two-segment toggle between the workspace list
-    /// and the active workspace's file tree. Mirrors `brand`'s compact/full
-    /// handling — compact stacks the segments in the narrow column.
+    /// Pinned bottom bar, full mode only — compact hides it since a 52pt
+    /// column can't host the tree the files segment switches to. Two segments
+    /// toggling between the workspace list and the active workspace's file tree.
     @ViewBuilder
-    private func footer(isCompact: Bool) -> some View {
+    private func footer() -> some View {
         Rectangle().fill(Theme.chromeHairline).frame(height: 1)
-        Group {
-            if isCompact {
-                VStack(spacing: 2) {
-                    workspacesSegment(isCompact: true)
-                    filesSegment(isCompact: true)
-                }
-                .frame(maxWidth: .infinity)
-            } else {
-                HStack(spacing: Theme.space1) {
-                    workspacesSegment(isCompact: false)
-                    filesSegment(isCompact: false)
-                }
-            }
+        HStack(spacing: 2) {
+            segment(.workspaces, systemName: "rectangle.stack", help: "Workspaces")
+            segment(.files, systemName: "folder", help: "Files")
+            Spacer(minLength: 0)
         }
-        .padding(.horizontal, isCompact ? Theme.space2 : Theme.space3)
-        .padding(.vertical, Theme.space2)
+        .padding(.horizontal, Theme.space2)
+        .padding(.vertical, Theme.space1)
     }
 
-    private func workspacesSegment(isCompact: Bool) -> some View {
+    private func segment(_ content: SidebarContent, systemName: String, help: String) -> some View {
         FooterSegment(
-            systemName: "rectangle.stack",
-            isActive: store.sidebarContent == .workspaces,
-            isCompact: isCompact,
-            help: "Workspaces"
+            systemName: systemName,
+            isActive: store.sidebarContent == content,
+            help: help
         ) {
             withAnimation(Theme.chromeTransition) {
-                store.setSidebarContent(.workspaces)
-            }
-        }
-    }
-
-    private func filesSegment(isCompact: Bool) -> some View {
-        FooterSegment(
-            systemName: "folder",
-            isActive: store.sidebarContent == .files,
-            isCompact: isCompact,
-            help: "Files"
-        ) {
-            withAnimation(Theme.chromeTransition) {
-                // A 52pt column can't render the tree — showing files from
-                // compact expands the sidebar first (the mode setter handles
-                // the width-animation size-propagation dance).
-                if store.sidebarMode == .compact { store.setSidebarMode(.full) }
-                store.setSidebarContent(.files)
+                store.setSidebarContent(content)
             }
         }
     }
@@ -464,7 +454,6 @@ struct SidebarView: View {
 private struct FooterSegment: View {
     let systemName: String
     let isActive: Bool
-    let isCompact: Bool
     let help: String
     let action: () -> Void
 
@@ -473,10 +462,9 @@ private struct FooterSegment: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(isActive ? Theme.chromeForeground : Theme.chromeMuted)
-                .frame(maxWidth: isCompact ? nil : .infinity)
-                .frame(width: isCompact ? 28 : nil, height: isCompact ? 28 : 26)
+                .frame(width: 26, height: 22)
                 .background(fill)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
                 .contentShape(Rectangle())

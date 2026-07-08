@@ -47,33 +47,53 @@ final class DirectoryWatcher {
 
     private func attach() {
         let fd = open(directory.path, O_EVTONLY)
-        guard fd >= 0 else { return }
+        guard fd >= 0 else {
+            // Directory missing (deleted-then-recreated later, or not yet
+            // created). A one-shot retry strands the watcher dead forever —
+            // in the file tree's rootError state this is the ONLY live
+            // recovery path — so poll gently until the path returns or the
+            // owner cancels.
+            scheduleReattach(after: 0.5)
+            return
+        }
         let src = DispatchSource.makeFileSystemObjectSource(
             fileDescriptor: fd,
             eventMask: [.write, .delete, .rename],
             queue: .main
         )
         src.setEventHandler { [weak self] in
-            guard let self else { return }
+            // Identity guard: GCD still delivers already-enqueued invocations
+            // after cancel(), so a stale event from a replaced source must
+            // not act on — and cancel — the healthy current one.
+            guard let self, self.source === src else { return }
             let data = src.data
             self.scheduleRefresh()
             // `.delete`/`.rename` mean our fd's vnode is going away (rm -r,
             // mv, or an atomic directory swap). Drop the source and try to
             // re-attach to whatever now sits at the same path — if nothing
-            // does, the debounced `onChange` we just scheduled lets the model
-            // discover the loss through a failed re-list.
+            // does yet, `attach` keeps retrying until the path returns or
+            // the owner cancels.
             if data.contains(.delete) || data.contains(.rename) {
                 self.source?.cancel()
                 self.source = nil
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-                    guard let self, !self.isCancelled, self.source == nil else { return }
-                    self.attach()
-                }
+                self.scheduleReattach(after: 0.05)
             }
         }
         src.setCancelHandler { close(fd) }
         src.resume()
         source = src
+    }
+
+    /// Deferred re-attach for a path whose vnode went away. Retries until
+    /// `attach` succeeds or the owner cancels; on success fires a refresh so
+    /// the model re-lists what now sits at the path (the fresh fd only
+    /// reports *future* changes).
+    private func scheduleReattach(after delay: TimeInterval) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, !self.isCancelled, self.source == nil else { return }
+            self.attach()
+            if self.source != nil { self.scheduleRefresh() }
+        }
     }
 
     private func scheduleRefresh() {

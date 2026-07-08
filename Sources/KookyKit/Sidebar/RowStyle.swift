@@ -2,15 +2,17 @@ import AppKit
 import SwiftUI
 
 /// Shared row background palette for sidebar / tab / popover-menu rows.
-/// Centralizes the hover/active alpha values so a future theme toggle has one
-/// place to change.
+/// Reads the theme-derived tokens so light themes get a visible (ink-based)
+/// fill — the old hardcoded `Color.white` alphas were invisible on light
+/// chrome and matched nothing else after v0.26.2 moved every active/hover
+/// surface onto `Theme.chromeActive`/`chromeHover`.
 extension View {
     func hoverableRowBackground(isActive: Bool = false, isHovered: Bool) -> some View {
         let color: Color
         if isActive {
-            color = Color.white.opacity(0.10)
+            color = Theme.chromeActive
         } else if isHovered {
-            color = Color.white.opacity(0.05)
+            color = Theme.chromeHover
         } else {
             color = .clear
         }
