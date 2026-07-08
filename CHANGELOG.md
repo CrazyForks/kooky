@@ -2,6 +2,12 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.32.0 — 2026-07-08
+
+- New: sidebar file tree — a toggle at the bottom of the sidebar switches between the workspace list and a file tree of the active workspace's folder. Expand directories, double-click to open a file, right-click for Open / Reveal in Finder / Copy Path / Insert Path into Terminal.
+- Drag a file or folder from the tree into the terminal to insert its path — same as dragging from Finder.
+- The tree follows the active tab's directory and refreshes live as files change on disk; symlinked project folders are supported.
+
 ## v0.31.6 — 2026-07-07
 
 - Fixed: every modifier key press (Shift / Cmd / Option) triggered an internal AppKit exception — invisible in normal use, but undefined behavior that could corrupt a long-lived session, and the prime suspect for rare "app suddenly quits" crashes.
