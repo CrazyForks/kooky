@@ -32,9 +32,11 @@ A minimal modern terminal built for AI coding. Sidebar workspaces; horizontal / 
 
 **SSH workspaces.** File → New SSH Workspace… (or ⌘P) creates a workspace that lives on a remote machine: every new tab, split, and restored tab reconnects to the same host on its own. Agent tabs start their agent on the remote — with the remote's own shell setup loaded, so tools installed through nvm and friends are found. Paste a local file or screenshot and kooky uploads it first, then pastes a path the remote agent can actually open. Connections to the same host are shared: extra tabs attach instantly, and password-authenticated hosts work throughout, pasting included.
 
+**Recent projects.** kooky remembers every folder you open a workspace on — no setup, no manual adding. Reopen one from File → Open Recent, or press ⌘P and type the project's name: closed projects show up as "recent" entries and reopen with a single Enter. Deleted folders hide automatically, and worktree / SSH directories never clutter the list.
+
 **Right-click a selection → "Ask <agent>".** Select an error / log line / file path, right-click, pick any agent — a new tab spawns with the selection already submitted as the first prompt. Zero ⌘C / ⌘V to go from "what is this" to an actual answer.
 
-**Quick Open (⌘P).** Fuzzy-search across every window's workspaces, tabs, agents, and Terminal presets from one floating panel. Type to filter, ↑↓ to navigate, Enter to jump or spawn. Triggers from ⌘P or the search pill in the top chrome.
+**Quick Open (⌘P).** Fuzzy-search across every window's workspaces, tabs, agents, Terminal presets, and recent project folders from one floating panel. Type to filter, ↑↓ to navigate, Enter to jump or spawn. Triggers from ⌘P or the search pill in the top chrome.
 
 **Sidebar file tree.** A toggle at the bottom of the sidebar swaps the workspace list for a file tree of the active workspace's folder. Expand directories, double-click to open a file, right-click for Reveal in Finder / Copy Path / Insert Path into Terminal (file rows also get Open) — or just drag a file or folder straight into the terminal to insert its escaped path, same as a Finder drag. Changed files show their `+X −Y` line counts (the same numbers the status bar totals), and a collapsed folder rolls up its subtree's changes. The tree follows the active tab's directory (worktree workspaces stay pinned to their worktree folder) and refreshes live as files change on disk.
 
@@ -112,7 +114,7 @@ Requires Xcode 26+ and macOS 14+ (Sonoma — `@Observable` is the floor).
 ./scripts/setup-libghostty.sh        # one-time: fetch the libghostty xcframework
 swift build
 swift run                            # dev mode
-swift test                           # 491 unit tests
+swift test                           # 502 unit tests
 
 ./scripts/build-app.sh               # writes dist/Kooky.app
 ./scripts/build-dmg.sh --build       # writes dist/Kooky-vX.Y.Z.dmg
