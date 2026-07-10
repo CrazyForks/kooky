@@ -78,6 +78,11 @@ final class WorkspaceStore {
     /// Left sidebar's middle content — workspace list or file tree. Persisted
     /// like `sidebarMode`; the footer toggle in `SidebarView` flips it.
     var sidebarContent: SidebarContent = .workspaces
+    /// Full-mode sidebar width, user-draggable from the trailing edge.
+    /// `SidebarView.fullWidth` is the floor (the design width — the sidebar
+    /// can only grow); compact stays fixed at `compactWidth` and hidden is
+    /// hidden, so this only applies while expanded. Persisted per window.
+    var sidebarWidth: CGFloat = SidebarView.fullWidth
     /// File-tree state for the sidebar's files mode. Store-owned (not view
     /// `@State`) because it holds kqueue fds needing explicit teardown and
     /// the sidebar unmounts whole while hidden — `terminate()` is the
@@ -94,14 +99,14 @@ final class WorkspaceStore {
     /// (issue #29). Gated on a real mode change above, so no-op sets don't suspend.
     func setSidebarMode(_ mode: SidebarMode) {
         guard sidebarMode != mode else { return }
-        suspendSizePropagationForLayoutAnimation(active?.root.allPanes.flatMap { $0.tabs }.map(\.engine) ?? [])
+        suspendSizePropagationForLayoutAnimation(active?.root.allEngines ?? [])
         sidebarMode = mode
         scheduleSave()
     }
 
     func setRightSidebarMode(_ mode: SidebarMode) {
         guard rightSidebarMode != mode else { return }
-        suspendSizePropagationForLayoutAnimation(active?.root.allPanes.flatMap { $0.tabs }.map(\.engine) ?? [])
+        suspendSizePropagationForLayoutAnimation(active?.root.allEngines ?? [])
         rightSidebarMode = mode
         scheduleSave()
     }
@@ -986,7 +991,7 @@ final class WorkspaceStore {
         guard workspace.canZoom else { return }
         // Suspend per-frame `set_size` across the workspace for the zoom animation
         // (see suspendSizePropagationForLayoutAnimation).
-        suspendSizePropagationForLayoutAnimation(workspace.root.allPanes.flatMap { $0.tabs }.map(\.engine))
+        suspendSizePropagationForLayoutAnimation(workspace.root.allEngines)
         workspace.activePaneId = paneId
         workspace.zoomedPaneId = workspace.isZoomed(paneId) ? nil : paneId
         scheduleSave()
@@ -1291,6 +1296,9 @@ final class WorkspaceStore {
         sidebarMode = state.sidebarMode ?? .full
         rightSidebarMode = state.rightSidebarMode ?? .hidden
         sidebarContent = state.sidebarContent ?? .workspaces
+        sidebarWidth = state.sidebarWidth
+            .map { SidebarView.clampWidth(CGFloat($0)) }
+            ?? SidebarView.fullWidth
     }
 
     private func restorePane(_ persisted: PersistedPaneNode, fm: FileManager) -> PaneNode? {
@@ -1547,6 +1555,32 @@ final class WorkspaceStore {
             guard let session, session.gitStatus != status else { return }
             session.gitStatus = status
         }
+        // Piggyback the file tree's per-file diff on the SAME triggers that
+        // refresh the status bar (spawn / every prompt / command finished /
+        // GitWatcher) — single chokepoint, so the tree's +/− badges and the
+        // status bar's totals can never drift. Cheap mounted-check first;
+        // the O(panes) walk only runs while the tree is actually showing.
+        if fileTree.isShowing, active?.root.pane(containingSessionId: session.id) != nil {
+            refreshFileTreeGitDiff()
+        }
+    }
+
+    /// Stable dedup key for the tree's diff fetch: the tree is a per-store
+    /// singleton, so a NEWER fetch must invalidate ANY older in-flight one —
+    /// keying by workspace id would let a slow pre-switch fetch land after
+    /// the new workspace's fresh result and blank its badges for a beat.
+    private let fileTreeDiffFetchId = UUID()
+
+    /// Fetches per-file `+/−` counts for the file tree's current root and
+    /// pushes them into the model. Also called by `FileTreeView` on mount
+    /// and root change (the chokepoint above can't see those). Gated on the
+    /// model's own mounted predicate — zero git cost while the tree isn't
+    /// on screen (workspaces mode, compact, hidden sidebar).
+    func refreshFileTreeGitDiff() {
+        guard fileTree.isShowing, let root = fileTree.rootURL else { return }
+        gitStatusFetcher.fetchFileDiffs(id: fileTreeDiffFetchId, cwd: root) { [weak self] diffs in
+            self?.fileTree.applyGitDiff(diffs)
+        }
     }
 
     /// Starts (or re-points) the Codex usage watcher for a Codex session.
@@ -1612,7 +1646,8 @@ final class WorkspaceStore {
             activeWorkspaceId: activeWorkspaceId,
             sidebarMode: sidebarMode,
             rightSidebarMode: rightSidebarMode,
-            sidebarContent: sidebarContent
+            sidebarContent: sidebarContent,
+            sidebarWidth: Double(sidebarWidth)
         )
     }
 }

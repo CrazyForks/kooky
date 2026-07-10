@@ -12,6 +12,9 @@ struct PersistedState: Codable, Equatable {
     /// Optional so state.json files written before the file-tree toggle
     /// existed still decode (nil → `.workspaces`).
     var sidebarContent: SidebarContent?
+    /// Optional so pre-resizable-sidebar state files decode (nil → the
+    /// design width). Clamped on restore, not trusted from disk.
+    var sidebarWidth: Double?
 }
 
 /// Root of the multi-window `state.json`. Each `PersistedWindow` is one

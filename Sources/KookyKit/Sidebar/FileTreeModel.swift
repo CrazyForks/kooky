@@ -135,6 +135,16 @@ enum FileTreeLister {
 final class FileTreeModel {
     private(set) var rootURL: URL?
     private(set) var rows: [FileTreeRow] = []
+    /// Per-file `+/−` counts from the same `git diff … HEAD` the status bar
+    /// aggregates, keyed by the row id (absolute standardized path). Pushed
+    /// by `WorkspaceStore` on the status bar's own refresh triggers so the
+    /// two can't drift.
+    private(set) var gitDiff: [String: GitFileDiff] = [:]
+    /// Subtree totals for every ancestor directory of a changed file —
+    /// rendered only on COLLAPSED directory rows, so each change surfaces
+    /// exactly once along the visible frontier (expanded dirs let their
+    /// children carry the numbers).
+    private(set) var gitDiffDirTotals: [String: GitFileDiff] = [:]
     /// True when the root itself can't be listed (deleted / unreadable).
     /// Recovers on the next `activate`/`setRoot`, or via the root watcher
     /// if the directory reappears at the same path.
@@ -180,6 +190,13 @@ final class FileTreeModel {
 
     /// Number of live kqueue watchers — exposed for tests.
     var watchedDirectoryCount: Int { watchers.count }
+
+    /// Whether the tree is the mounted, visible surface right now — the
+    /// authoritative "is it showing" predicate, maintained by the mount
+    /// lifecycle itself (activate/deactivate). Callers gating side work
+    /// (the git-diff fetch) read this instead of re-deriving sidebar
+    /// content+mode+visibility shallowly.
+    var isShowing: Bool { isActive }
 
     /// Entering files mode (or the sidebar remounting). Re-lists the visible
     /// subtree to catch changes made while paused, then arms watchers.
@@ -252,6 +269,31 @@ final class FileTreeModel {
         rebuildRows()
     }
 
+    /// Latest per-file diff for the current root. Filters to paths under the
+    /// root and pre-computes ancestor-directory totals; no-ops when nothing
+    /// changed so the per-prompt refresh doesn't re-render the tree.
+    func applyGitDiff(_ diffs: [String: GitFileDiff]) {
+        // No root ⟹ the diff dicts are already empty: `resetState` (the only
+        // rootURL writer) clears them in the same synchronous call.
+        guard let rootPath = rootURL?.path else { return }
+        let prefix = rootPath + "/"
+        var files: [String: GitFileDiff] = [:]
+        var totals: [String: GitFileDiff] = [:]
+        for (path, counts) in diffs where path.hasPrefix(prefix) {
+            files[path] = counts
+            var dir = (path as NSString).deletingLastPathComponent
+            while dir != rootPath, dir.hasPrefix(prefix) {
+                var t = totals[dir] ?? GitFileDiff(insertions: 0, deletions: 0)
+                t.insertions += counts.insertions
+                t.deletions += counts.deletions
+                totals[dir] = t
+                dir = (dir as NSString).deletingLastPathComponent
+            }
+        }
+        if files != gitDiff { gitDiff = files }
+        if totals != gitDiffDirTotals { gitDiffDirTotals = totals }
+    }
+
     /// Watcher callback (also driven directly by tests): shallow re-list of
     /// one directory, prune state for entries that vanished, rebuild rows.
     func refresh(dirPath: String) {
@@ -287,6 +329,8 @@ final class FileTreeModel {
         expandedDirs.removeAll()
         expansionOrder.removeAll()
         failedDirs.removeAll()
+        gitDiff.removeAll()
+        gitDiffDirTotals.removeAll()
     }
 
     /// Shallow listing of one directory into the cache. Root failures set

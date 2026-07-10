@@ -2,6 +2,84 @@ import XCTest
 @testable import KookyKit
 
 final class GitStatusFetcherTests: XCTestCase {
+    // MARK: - parseNumstat (-z records)
+
+    func testParseNumstatNormalAndBinary() {
+        // Two normal entries + one binary (numstat prints `-` → 0/0).
+        let raw = "12\t3\tSources/App/Main.swift\u{0}0\t7\tREADME.md\u{0}-\t-\timg/icon.png\u{0}"
+        let entries = GitStatusFetcher.parseNumstat(raw)
+        XCTAssertEqual(entries.count, 3)
+        XCTAssertEqual(entries[0].path, "Sources/App/Main.swift")
+        XCTAssertEqual(entries[0].insertions, 12)
+        XCTAssertEqual(entries[0].deletions, 3)
+        XCTAssertEqual(entries[1].path, "README.md")
+        XCTAssertEqual(entries[1].insertions, 0)
+        XCTAssertEqual(entries[1].deletions, 7)
+        XCTAssertEqual(entries[2].path, "img/icon.png")
+        XCTAssertEqual(entries[2].insertions, 0)
+        XCTAssertEqual(entries[2].deletions, 0)
+    }
+
+    func testParseNumstatRenameKeepsPostPath() {
+        // A rename record is `ins\tdel\t` + two extra NUL fields (pre, post);
+        // the post-path is the file's current name on disk.
+        let raw = "5\t1\t\u{0}old/Name.swift\u{0}new/Name.swift\u{0}2\t0\tother.txt\u{0}"
+        let entries = GitStatusFetcher.parseNumstat(raw)
+        XCTAssertEqual(entries.count, 2)
+        XCTAssertEqual(entries[0].path, "new/Name.swift")
+        XCTAssertEqual(entries[0].insertions, 5)
+        XCTAssertEqual(entries[0].deletions, 1)
+        XCTAssertEqual(entries[1].path, "other.txt")
+    }
+
+    func testParseNumstatEmpty() {
+        XCTAssertTrue(GitStatusFetcher.parseNumstat("").isEmpty)
+    }
+
+    // MARK: - runGit pipe draining
+
+    func testRunGitDrainsOutputLargerThanPipeBuffer() throws {
+        // Regression (Codex review): runGit used to read stdout only AFTER
+        // exit — git blocks writing once output passes the ~64KB pipe
+        // buffer, the timeout kills it, and callers see nil (file-tree
+        // badges vanish on exactly the large changesets they matter for).
+        // 1500 deletions under a long directory name ≈ 100KB+ of numstat.
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("kooky-numstat-\(UUID().uuidString)", isDirectory: true)
+        let dir = root.appendingPathComponent(
+            "deeply-nested-directory-name-that-pads-numstat-lines-past-the-pipe-buffer",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+
+        for i in 0..<1500 {
+            FileManager.default.createFile(
+                atPath: dir.appendingPathComponent("file-\(String(format: "%04d", i)).txt").path,
+                contents: Data("x\n".utf8)
+            )
+        }
+        // Generous timeouts: this test pins the drain behavior, not speed.
+        XCTAssertNotNil(GitStatusFetcher.runGit(["-C", root.path, "init", "-q"], timeout: 10))
+        XCTAssertNotNil(GitStatusFetcher.runGit(["-C", root.path, "add", "-A"], timeout: 10))
+        XCTAssertNotNil(GitStatusFetcher.runGit(
+            ["-C", root.path, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "seed"],
+            timeout: 10
+        ))
+        try FileManager.default.removeItem(at: dir)
+
+        let raw = GitStatusFetcher.runGit(
+            ["-C", root.path, "--no-optional-locks", "diff", "--numstat", "-z", "HEAD"],
+            timeout: 10
+        )
+        let entries = GitStatusFetcher.parseNumstat(try XCTUnwrap(
+            raw, "numstat larger than the pipe buffer must not deadlock into the timeout"
+        ))
+        XCTAssertEqual(entries.count, 1500)
+    }
+
+    // MARK: - parseShortstat
+
     func testParseShortstatAllThree() {
         let (files, ins, del) = GitStatusFetcher.parseShortstat(
             " 3 files changed, 47 insertions(+), 12 deletions(-)"

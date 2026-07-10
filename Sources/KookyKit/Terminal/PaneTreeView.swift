@@ -583,7 +583,9 @@ private struct FlowLayout: Layout {
 /// saturation of its digit creates a subtle hierarchical stagger that reads
 /// as designed, not as a UI widget. JetBrains Mono is fixed-width, so the
 /// two-Text HStack stays optically tight without manual kerning.
-private struct SignedNumber: View {
+/// Internal (not private): the sidebar file tree's diff badges reuse it so
+/// the tree and the status bar render +/− as one system.
+struct SignedNumber: View {
     let sign: String
     let value: Int
     let color: Color
@@ -1346,7 +1348,7 @@ private struct SplitContainer: View {
                 // the engines so onEnded/onDisappear end the SAME set (balanced).
                 if !dividerResizeSuspended {
                     dividerResizeSuspended = true
-                    dividerSuspendedEngines = node.allPanes.flatMap { $0.tabs.map(\.engine) }
+                    dividerSuspendedEngines = node.allEngines
                     for engine in dividerSuspendedEngines { engine.beginSizePropagationSuspension() }
                 }
                 node.content = .split(orientation: orient, first: f, second: s, fraction: clamped)
@@ -1369,7 +1371,10 @@ private struct SplitContainer: View {
     }
 }
 
-private struct DividerHandle: View {
+/// Internal (not private): the sidebar's resize handle composes it the same
+/// way SplitContainer does (invisible strip + resize cursor; caller adds
+/// .frame/.gesture).
+struct DividerHandle: View {
     let orientation: SplitOrientation
 
     var body: some View {

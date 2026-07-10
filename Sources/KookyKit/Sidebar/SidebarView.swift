@@ -22,7 +22,33 @@ private enum SidebarSheet: Identifiable {
 struct SidebarView: View {
     static let fullWidth: CGFloat = 220
     static let compactWidth: CGFloat = 52
+    /// Ceiling for the user-draggable full-mode width (`fullWidth` is the
+    /// floor — the sidebar only grows from its design width).
+    static let maxWidth: CGFloat = 480
+
+    /// Single source for the width policy — floor `fullWidth`, ceiling
+    /// `maxWidth`, and whole points (fractional widths land row text on
+    /// per-frame-shifting sub-pixel boundaries → the mono diff badges
+    /// visibly shimmer during a drag). Shared by the drag gesture and the
+    /// state.json restore path so the two can't diverge.
+    static func clampWidth(_ width: CGFloat) -> CGFloat {
+        min(max(width, fullWidth), maxWidth).rounded()
+    }
+
+    // Trailing-edge resize drag (full mode only). Mirrors the split
+    // divider's suspend pattern: begin once per drag (gated), capture the
+    // engines so onEnded / the handle's onDisappear end the SAME set.
+    @State private var resizeDragStartWidth: CGFloat?
+    @State private var sidebarResizeSuspended = false
+    @State private var sidebarSuspendedEngines: [any TerminalEngine] = []
     @Bindable var store: WorkspaceStore
+    /// Passed as a parameter (not read live off the store) so the exiting
+    /// view keeps its LAST VISIBLE mode during the hide transition: a
+    /// compact→hidden switch otherwise re-evaluates `isCompact` against the
+    /// already-`.hidden` store value → false → the sidebar snaps to full
+    /// width while fading out (the "flash of full mode"). Mirrors
+    /// `AgentOverviewSidebar(mode:)`, which never had this flash.
+    let mode: SidebarMode
     /// Id of the workspace currently being dragged. Set by `.onDrag`, cleared
     /// on drop. Lets each row compute whether the drag origin is above or
     /// below it so the drop indicator can flip edges.
@@ -41,17 +67,68 @@ struct SidebarView: View {
     /// watches `store.pendingRemovalRequest` for ⌘⇧W routed via AppDelegate.
     @State private var sheet: SidebarSheet?
 
+    /// Invisible trailing-edge strip that widens the sidebar by drag —
+    /// full mode only (compact is fixed, hidden is hidden). A width drag
+    /// re-frames every libghostty NSView per frame → SIGWINCH storm (conda
+    /// scrollback-wipe, issue #29) without the divider-style suspension.
+    private var resizeHandle: some View {
+        DividerHandle(orientation: .horizontal)
+            .frame(width: 7)
+            .gesture(resizeGesture)
+            .onDisappear {
+                // Backstop: ⌘⌃S mid-drag unmounts the handle before onEnded
+                // can fire — end the captured engines so the suspension
+                // refcount stays balanced (mirrors the split divider).
+                if sidebarResizeSuspended {
+                    sidebarResizeSuspended = false
+                    for engine in sidebarSuspendedEngines { engine.endSizePropagationSuspension() }
+                    sidebarSuspendedEngines = []
+                }
+            }
+    }
+
+    private var resizeGesture: some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                if resizeDragStartWidth == nil { resizeDragStartWidth = store.sidebarWidth }
+                let proposed = (resizeDragStartWidth ?? store.sidebarWidth) + value.translation.width
+                let clamped = Self.clampWidth(proposed)
+                guard abs(clamped - store.sidebarWidth) > .ulpOfOne else { return }
+                if !sidebarResizeSuspended {
+                    sidebarResizeSuspended = true
+                    sidebarSuspendedEngines = store.active?.root.allEngines ?? []
+                    for engine in sidebarSuspendedEngines { engine.beginSizePropagationSuspension() }
+                }
+                store.sidebarWidth = clamped
+            }
+            .onEnded { _ in
+                resizeDragStartWidth = nil
+                // End + flush once — only when the engine's refcount hits 0
+                // (a concurrent zoom / status-bar suspension flushes on ITS
+                // own release).
+                if sidebarResizeSuspended {
+                    sidebarResizeSuspended = false
+                    for engine in sidebarSuspendedEngines {
+                        engine.endSizePropagationSuspension()
+                        if !engine.suspendsSizePropagation { engine.flushSize() }
+                    }
+                    sidebarSuspendedEngines = []
+                }
+                store.flushPersistence()
+            }
+    }
+
     /// Whether the file tree is the mounted middle surface (files mode, full
     /// width — compact can't fit a tree and falls back to the icon list).
     /// Single source for the body's content switch and the folder-drop
     /// rejection below: the drop zone must reject exactly while the tree —
     /// whose rows vend `public.file-url` drags — is what's on screen.
     private var fileTreeIsMounted: Bool {
-        store.sidebarContent == .files && store.sidebarMode != .compact
+        store.sidebarContent == .files && mode != .compact
     }
 
     var body: some View {
-        let isCompact = store.sidebarMode == .compact
+        let isCompact = mode == .compact
         VStack(spacing: 0) {
             brand(isCompact: isCompact)
             // Compact can't fit a tree in 52pt, so it always shows the icon
@@ -66,8 +143,11 @@ struct SidebarView: View {
             Spacer(minLength: 0)
             if !isCompact { footer() }
         }
-        .frame(width: isCompact ? Self.compactWidth : Self.fullWidth)
+        .frame(width: isCompact ? Self.compactWidth : store.sidebarWidth)
         .glassChromeBackground()
+        .overlay(alignment: .trailing) {
+            if !isCompact { resizeHandle }
+        }
         .overlay {
             // Drop affordance: tinted fill + hairline stroke, inset from the
             // sidebar edges so the splitter / titlebar don't clip it. Always

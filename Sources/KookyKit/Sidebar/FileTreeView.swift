@@ -18,7 +18,10 @@ struct FileTreeView: View {
             }
             content
         }
-        .onAppear { activationToken = model.activate(root: store.active?.diskPath) }
+        .onAppear {
+            activationToken = model.activate(root: store.active?.diskPath)
+            store.refreshFileTreeGitDiff()
+        }
         // Tokened: an animated unmount's late onDisappear must not deactivate
         // the model a newer mount just activated (frozen-tree race).
         .onDisappear { model.deactivate(token: activationToken) }
@@ -27,6 +30,7 @@ struct FileTreeView: View {
         // pinned via `worktreePath`.
         .onChange(of: store.active?.diskPath.path) { _, newPath in
             model.setRoot(newPath.map { URL(fileURLWithPath: $0) })
+            store.refreshFileTreeGitDiff()
         }
     }
 
@@ -146,8 +150,9 @@ private struct FileTreeRowView: View {
         .padding(.leading, Theme.space2)
     }
 
-    /// The shared row frame: the caller's leading columns + label, a trailing
-    /// spacer, depth indentation, and the common padding recipe. The indent
+    /// The shared row frame: the caller's leading columns + label (the label
+    /// fills the remaining width itself), depth indentation, and the common
+    /// padding recipe. The indent
     /// guides draw in a full-height *background* — as HStack siblings they'd
     /// stop at the content height and leave a gap across the vertical
     /// padding of every row, rendering as dashes instead of continuous
@@ -156,7 +161,6 @@ private struct FileTreeRowView: View {
     private func rowShell<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         HStack(spacing: 0) {
             content()
-            Spacer(minLength: 0)
         }
         .padding(.leading, CGFloat(row.depth) * Self.indentPerLevel)
         .padding(.vertical, 3.5)
@@ -184,12 +188,19 @@ private struct FileTreeRowView: View {
                 .font(.system(size: 11))
                 .foregroundStyle(iconColor(node, selected: isSelected))
                 .frame(width: Self.iconColumn)
+            // The name takes ALL remaining width (truncating internally) and
+            // the badge is fixedSize — during a sidebar-width drag every
+            // frame's layout is then a pure function of the row width. A
+            // Spacer + two negotiating Texts re-split compression per frame,
+            // which visibly judders the right-pinned badge.
             Text(node.name)
                 .font(Theme.display(12.5))
                 .foregroundStyle(nameColor(selected: isSelected))
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .padding(.leading, 2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            diffBadge(node)
         }
         .animation(.easeOut(duration: 0.15), value: row.isExpanded)
         .hoverableRowBackground(isActive: isSelected, isHovered: isHovered)
@@ -309,6 +320,36 @@ private struct FileTreeRowView: View {
                 .font(Theme.display(11.5))
                 .foregroundStyle(Theme.chromeFaint)
                 .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// Trailing `+X −Y` for a changed file — same tokens and typographic
+    /// minus as the status bar's diff segment, so the two read as one
+    /// system (the per-file numbers sum to the bar's totals). Collapsed
+    /// directories show their subtree total; expanded ones stay quiet and
+    /// let the visible children carry the numbers. Binary files (numstat
+    /// reports no line counts) show a muted ±.
+    @ViewBuilder
+    private func diffBadge(_ node: FileNode) -> some View {
+        let counts = node.isDirectory
+            ? (row.isExpanded ? nil : model.gitDiffDirTotals[row.id])
+            : model.gitDiff[row.id]
+        if let counts {
+            HStack(spacing: 5) {
+                if counts.insertions > 0 {
+                    SignedNumber(sign: "+", value: counts.insertions, color: Theme.gitInsertion)
+                }
+                if counts.deletions > 0 {
+                    SignedNumber(sign: "−", value: counts.deletions, color: Theme.gitDeletion)
+                }
+                if counts.insertions == 0 && counts.deletions == 0 {
+                    Text("±").foregroundStyle(Theme.chromeMuted)
+                }
+            }
+            .font(Theme.mono(10))
+            .padding(.leading, Theme.space1)
+            .fixedSize()
         }
     }
 }

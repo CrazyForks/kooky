@@ -10,7 +10,7 @@ struct ContentView: View {
             Rectangle().fill(Theme.chromeHairline).frame(height: 1)
             HStack(spacing: 0) {
                 if store.sidebarMode != .hidden {
-                    SidebarView(store: store)
+                    SidebarView(store: store, mode: store.sidebarMode)
                     Rectangle().fill(Theme.chromeHairline).frame(width: 1)
                 }
                 mainPane

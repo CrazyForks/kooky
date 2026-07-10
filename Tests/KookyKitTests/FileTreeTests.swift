@@ -302,6 +302,41 @@ final class FileTreeModelTests: XCTestCase {
         XCTAssertEqual(model.watchedDirectoryCount, 2)
     }
 
+    func testApplyGitDiffFiltersToRootAndAggregatesAncestors() throws {
+        let (root, src, model) = try makeFixture()
+        model.activate(root: root)
+
+        let mainSwift = src.appendingPathComponent("main.swift").path
+        model.applyGitDiff([
+            mainSwift: GitFileDiff(insertions: 10, deletions: 2),
+            root.appendingPathComponent("readme.md").path: GitFileDiff(insertions: 1, deletions: 0),
+            "/somewhere/else/outside.txt": GitFileDiff(insertions: 99, deletions: 99),
+        ])
+
+        // Files keep exact counts; outside-root paths are dropped.
+        XCTAssertEqual(model.gitDiff[mainSwift], GitFileDiff(insertions: 10, deletions: 2))
+        XCTAssertNil(model.gitDiff["/somewhere/else/outside.txt"])
+        // `src` (ancestor dir of main.swift) carries the subtree total for
+        // its collapsed-row badge; the root itself is not a row → no entry.
+        XCTAssertEqual(model.gitDiffDirTotals[src.path], GitFileDiff(insertions: 10, deletions: 2))
+        XCTAssertNil(model.gitDiffDirTotals[root.path])
+    }
+
+    func testSetRootClearsGitDiff() throws {
+        let (root, src, model) = try makeFixture()
+        model.activate(root: root)
+        model.applyGitDiff([
+            src.appendingPathComponent("main.swift").path: GitFileDiff(insertions: 3, deletions: 1)
+        ])
+        XCTAssertFalse(model.gitDiff.isEmpty)
+
+        let otherRoot = root.appendingPathComponent("other", isDirectory: true)
+        try FileManager.default.createDirectory(at: otherRoot, withIntermediateDirectories: true)
+        model.setRoot(otherRoot)
+        XCTAssertTrue(model.gitDiff.isEmpty, "a re-rooted tree must not render the old root's badges")
+        XCTAssertTrue(model.gitDiffDirTotals.isEmpty)
+    }
+
     func testCancelClearsEverything() throws {
         let (root, src, model) = try makeFixture()
         model.activate(root: root)

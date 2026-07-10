@@ -40,6 +40,13 @@ extension PaneNode {
         return out
     }
 
+    /// Every tab's engine under this node — the set a size-propagation
+    /// suspension must cover (background tabs share the pane's NSView
+    /// geometry). Single spelling for the five suspend owners.
+    var allEngines: [any TerminalEngine] {
+        allPanes.flatMap { $0.tabs.map(\.engine) }
+    }
+
     private func collectPanes(into out: inout [Pane]) {
         switch content {
         case .pane(let p): out.append(p)
