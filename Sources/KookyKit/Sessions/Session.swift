@@ -58,6 +58,13 @@ final class Session: Identifiable {
     /// the ssh wrapper via an OSC title marker, shown in the pane status bar.
     /// Not persisted (like `transientAgent`); cleared on command-finished.
     var remoteHost: String?
+    /// SSH destination this tab was *spawned against* — set only when kooky
+    /// itself opened the connection (SSH workspace tabs), never by a manually
+    /// typed `ssh`. Stable for the tab's lifetime, which makes it the paste
+    /// routing signal: "upload pasted files to this host" must not flicker
+    /// with `remoteHost`'s marker/command-finished lifecycle. Not persisted —
+    /// restore re-derives it from `Workspace.sshRemoteHost` at spawn.
+    var sshWorkspaceHost: String?
     /// Latest Codex account rate-limit usage (5-hour + weekly windows), parsed
     /// from the active session's rollout file by `CodexUsageMonitor` and shown
     /// as a status-bar gauge. Only populated for Codex sessions; `nil` until

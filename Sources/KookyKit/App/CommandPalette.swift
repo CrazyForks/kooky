@@ -55,6 +55,8 @@ enum PaletteItemKind: Hashable, Sendable {
     case createWorktree(workspaceId: UUID, windowId: UUID)
     /// Spawn a new tab with this agent / preset in the active workspace.
     case agent(templateId: String)
+    /// Open the SSH-workspace destination sheet in the active window.
+    case createSSHWorkspace
 }
 
 struct PaletteItem: Identifiable, Hashable {
@@ -119,6 +121,14 @@ enum PaletteIndex {
                 iconAsset: template.iconAsset
             ))
         }
+        items.append(PaletteItem(
+            id: "create-ssh-workspace",
+            title: "New SSH Workspace…",
+            subtitle: "workspace on a remote host",
+            kind: .createSSHWorkspace,
+            symbol: "network",
+            iconAsset: nil
+        ))
         return items
     }
 

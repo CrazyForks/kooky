@@ -77,8 +77,7 @@ enum KookyShellIntegration {
     /// 3. **Plain string** → raw, no escaping (we'd corrupt `ls -la`).
     ///    `bracketed-paste` mode already isolates it from shell parsing.
     static func readTerminalPasteText(from pb: NSPasteboard) -> String? {
-        if pb.availableType(from: [.fileURL]) != nil,
-           let urls = pb.readObjects(forClasses: [NSURL.self]) as? [URL],
+        if let urls = pasteboardFileURLs(pb),
            let joined = backslashEscapedFileURLs(urls)
         {
             return joined
@@ -92,6 +91,192 @@ enum KookyShellIntegration {
             return text
         }
         return nil
+    }
+
+    /// Tier 1 of the paste precedence: pasted Finder files as local URLs.
+    /// Single source for the fileURL-extraction dance `readTerminalPasteText`
+    /// and the remote-paste snapshot share.
+    private static func pasteboardFileURLs(_ pb: NSPasteboard) -> [URL]? {
+        guard pb.availableType(from: [.fileURL]) != nil,
+              let urls = (pb.readObjects(forClasses: [NSURL.self]) as? [URL])?.filter(\.isFileURL),
+              !urls.isEmpty else { return nil }
+        return urls
+    }
+
+    /// Test seam for the remote-paste subprocess (`ssh mkdir` / `scp`).
+    /// `nonisolated(unsafe)`: written once from a test before any upload
+    /// runs, read from the upload's GCD thread — never mutated concurrently.
+    nonisolated(unsafe) static var remotePasteProcessRunnerOverride: (@Sendable (String, [String], TimeInterval) -> Bool)?
+
+    /// One-line entry for every paste site (surface ⌘V, right-click Paste,
+    /// composer). When `host` is set and the pasteboard carries a file/image
+    /// payload, uploads async and hands the escaped remote path(s) to
+    /// `deliver` on the main actor — fail-closed beep when the transfer
+    /// fails, so a dead connection never pastes a local path the remote
+    /// can't read — and returns true. False = not a remote-upload paste;
+    /// the caller falls through to its local paste path.
+    @discardableResult
+    static func pasteViaRemoteUpload(from pb: NSPasteboard, host: String?, deliver: @escaping @MainActor (String) -> Void) -> Bool {
+        guard let host, let upload = remotePasteUpload(from: pb, host: host) else { return false }
+        Task { @MainActor in
+            if let text = await upload(), !text.isEmpty {
+                deliver(text)
+            } else {
+                NSSound.beep()
+            }
+        }
+        return true
+    }
+
+    /// SSH-workspace paste: pasted files / clipboard images must land on the
+    /// REMOTE before a path gets injected — an agent over ssh can't open
+    /// `/Users/...`. Returns nil when the pasteboard has no file or image
+    /// payload. The payload is snapshotted synchronously — the pasteboard
+    /// can change under an async hop — but only as URLs / raw bytes; the
+    /// returned closure does everything slow off the main thread: a TIFF
+    /// screenshot's PNG re-encode, then `ssh mkdir -p` + one `scp` per file
+    /// into a fresh `/tmp/kooky-pastes-*` dir, resolving to the space-joined
+    /// escaped remote paths (nil on any failure).
+    static func remotePasteUpload(from pb: NSPasteboard, host: String) -> (@Sendable () async -> String?)? {
+        let remoteDir = "/tmp/kooky-pastes-\(pasteFilenameTimestamp.string(from: Date()))-\(UUID().uuidString.prefix(8))"
+        let work: @Sendable () -> String?
+        if let urls = pasteboardFileURLs(pb) {
+            let files = remotePasteDestinations(for: urls, remoteDir: remoteDir)
+            work = { performRemotePasteUpload(files, to: host, remoteDir: remoteDir) }
+        } else if let raw = pasteboardRawImage(pb) {
+            work = {
+                guard let cached = writePasteImageToCache(raw) else { return nil }
+                let files = remotePasteDestinations(for: [cached], remoteDir: remoteDir)
+                return performRemotePasteUpload(files, to: host, remoteDir: remoteDir)
+            }
+        } else {
+            return nil
+        }
+        return {
+            await withCheckedContinuation { continuation in
+                // GCD, not the cooperative pool — `waitUntilExit` blocks its
+                // thread for up to the scp timeout.
+                DispatchQueue.global(qos: .userInitiated).async {
+                    continuation.resume(returning: work())
+                }
+            }
+        }
+    }
+
+    /// Connection-multiplex options shared by the kooky-ssh MAIN connection
+    /// (see `sshWrapperScript`) and the paste upload's ssh/scp below. The
+    /// SAME ControlPath template on both sides is load-bearing: the
+    /// workspace's interactively authenticated connection becomes the master
+    /// the background upload rides — a headless scp can never prompt, so
+    /// without this reuse a password / interactive-passphrase workspace
+    /// could never paste files at all. Repeat pastes within 30s also reuse
+    /// the master (one TCP+auth handshake per paste burst, not per file).
+    /// /tmp keeps the socket path well under the 104-byte sun_path limit;
+    /// %C hashes host+port+user.
+    static let sshMultiplexOptions = [
+        "-o", "ControlMaster=auto",
+        "-o", "ControlPath=/tmp/kooky-ssh-%C",
+        "-o", "ControlPersist=30",
+    ]
+
+    private static let remotePasteSSHOptions = [
+        "-o", "BatchMode=yes",
+        "-o", "ConnectTimeout=10",
+    ] + sshMultiplexOptions
+
+    /// mkdir for this paste plus a piggybacked expiry sweep: kooky-pastes
+    /// dirs older than an hour are removed on the way (ample time for any
+    /// agent to consume the pasted path). `;` — not `&&` — so a sweep
+    /// failure (another user's dir, say) can't fail the mkdir; errors muted.
+    private static func remotePasteMkdirCommand(_ remoteDir: String) -> String {
+        "find /tmp -maxdepth 1 -name 'kooky-pastes-*' -type d -mmin +60 -exec rm -rf {} + 2>/dev/null; mkdir -p -- \(quote(remoteDir))"
+    }
+
+    private static func performRemotePasteUpload(_ files: [(local: URL, remotePath: String)], to host: String, remoteDir: String) -> String? {
+        guard runRemotePasteProcess(
+            "/usr/bin/ssh",
+            remotePasteSSHOptions + [host, remotePasteMkdirCommand(remoteDir)],
+            timeout: 20
+        ) else { return nil }
+        for file in files {
+            var isDirectory: ObjCBool = false
+            FileManager.default.fileExists(atPath: file.local.path, isDirectory: &isDirectory)
+            var args = remotePasteSSHOptions
+            if isDirectory.boolValue { args.append("-r") }
+            args.append(contentsOf: [file.local.path, "\(host):\(file.remotePath)"])
+            guard runRemotePasteProcess("/usr/bin/scp", args, timeout: 60) else { return nil }
+        }
+        return files.map { backslashEscape($0.remotePath) }.joined(separator: " ")
+    }
+
+    /// Runs ssh/scp to completion on the calling (GCD) thread with a
+    /// watchdog kill at `timeout`. All stdio goes to /dev/null — BatchMode
+    /// never prompts, and an unread pipe on a chatty connection is the same
+    /// fill-the-buffer deadlock class `runGit` hit (v0.33.0).
+    private static func runRemotePasteProcess(_ executable: String, _ arguments: [String], timeout: TimeInterval) -> Bool {
+        if let runner = remotePasteProcessRunnerOverride {
+            return runner(executable, arguments, timeout)
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+        } catch {
+            NSLog("kooky: remote paste could not launch %@: %@", executable, error.localizedDescription)
+            return false
+        }
+        let watchdog = DispatchWorkItem { [weak process] in process?.terminate() }
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: watchdog)
+        process.waitUntilExit()
+        watchdog.cancel()
+        guard process.terminationStatus == 0 else {
+            NSLog("kooky: remote paste %@ exited %d", executable, process.terminationStatus)
+            return false
+        }
+        return true
+    }
+
+    /// Maps each local URL to its remote destination path, deduping
+    /// same-named files with a `-2` / `-3` stem suffix.
+    private static func remotePasteDestinations(for urls: [URL], remoteDir: String) -> [(local: URL, remotePath: String)] {
+        var counts: [String: Int] = [:]
+        return urls.map { url in
+            let base = sanitizedRemotePasteFilename(url.lastPathComponent)
+            let seen = counts[base, default: 0] + 1
+            counts[base] = seen
+            let name: String
+            if seen == 1 {
+                name = base
+            } else {
+                let ns = base as NSString
+                let ext = ns.pathExtension
+                name = ext.isEmpty ? "\(base)-\(seen)" : "\(ns.deletingPathExtension)-\(seen).\(ext)"
+            }
+            return (local: url, remotePath: "\(remoteDir)/\(name)")
+        }
+    }
+
+    /// Remote-safe filename: keep `A-Za-z0-9 . _ -`, everything else `_`.
+    /// The remote path lands in an `scp` destination, which the REMOTE shell
+    /// word-splits and glob-expands — the conservative set sidesteps that
+    /// quoting problem entirely.
+    private static func sanitizedRemotePasteFilename(_ raw: String) -> String {
+        var out = ""
+        out.reserveCapacity(raw.count)
+        for scalar in raw.unicodeScalars {
+            switch scalar {
+            case "a"..."z", "A"..."Z", "0"..."9", ".", "_", "-":
+                out.unicodeScalars.append(scalar)
+            default:
+                out.append("_")
+            }
+        }
+        let trimmed = out.trimmingCharacters(in: CharacterSet(charactersIn: "._-"))
+        return trimmed.isEmpty ? "paste" : trimmed
     }
 
     /// Cheap probe used by the right-click "Paste" menu's enabled gate.
@@ -120,17 +305,38 @@ enum KookyShellIntegration {
     /// is offered (Cmd+Shift+3 screenshots land as TIFF, not PNG) —
     /// agents accept PNG universally, TIFF support is uneven.
     private static func writePasteboardImageToCache(_ pb: NSPasteboard) -> URL? {
-        guard let data = pasteboardPNGData(pb) else { return nil }
+        guard let raw = pasteboardRawImage(pb) else { return nil }
+        return writePasteImageToCache(raw)
+    }
+
+    /// Image bytes exactly as the pasteboard offers them (PNG preferred).
+    /// The potentially slow TIFF→PNG re-encode is deferred to
+    /// `writePasteImageToCache` so remote paste can run it off the main
+    /// thread — Retina screenshot TIFFs run tens of MB.
+    private struct RawPasteImage {
+        let data: Data
+        let isPNG: Bool
+    }
+
+    private static func pasteboardRawImage(_ pb: NSPasteboard) -> RawPasteImage? {
+        if let direct = pb.data(forType: .png) { return RawPasteImage(data: direct, isPNG: true) }
+        if let tiff = pb.data(forType: .tiff) { return RawPasteImage(data: tiff, isPNG: false) }
+        return nil
+    }
+
+    /// Encode (TIFF → PNG when needed — Cmd+Shift+3 screenshots land as
+    /// TIFF; agents accept PNG universally) and spill to the pastes cache.
+    private static func writePasteImageToCache(_ raw: RawPasteImage) -> URL? {
+        guard let data = encodedPNG(raw) else { return nil }
         let ts = pasteFilenameTimestamp.string(from: Date())
         let file = pastesCacheDirectory.appendingPathComponent("screenshot-\(ts).png")
         guard (try? data.write(to: file, options: .atomic)) != nil else { return nil }
         return file
     }
 
-    private static func pasteboardPNGData(_ pb: NSPasteboard) -> Data? {
-        if let direct = pb.data(forType: .png) { return direct }
-        if let tiff = pb.data(forType: .tiff),
-           let rep = NSBitmapImageRep(data: tiff),
+    private static func encodedPNG(_ raw: RawPasteImage) -> Data? {
+        if raw.isPNG { return raw.data }
+        if let rep = NSBitmapImageRep(data: raw.data),
            let encoded = rep.representation(using: .png, properties: [:])
         {
             return encoded
@@ -354,6 +560,11 @@ enum KookyShellIntegration {
         writeWrapper(name: "pi", script: bracketWrapperScript(slug: "pi"))
         writeWrapper(name: "kiro-cli", script: bracketWrapperScript(slug: "kiro-cli"))
         writeWrapper(name: "droid", script: bracketWrapperScript(slug: "droid"))
+        // Private ssh entry point for SSH workspaces — always installed,
+        // unlike the public `ssh` shim below (user-setting gated because it
+        // changes manually typed ssh). Same script; the filename is what
+        // unlocks the `--` remote-agent protocol.
+        writeWrapper(name: "kooky-ssh", script: sshWrapperScript)
         refreshSshRemoteAgentDetection(enabled: sshRemoteAgentDetection)
 
         let hookCmd = kookyHookBinaryPath
@@ -863,6 +1074,7 @@ enum KookyShellIntegration {
         fi
 
         args=("$@")
+        remote_agent_args=()
         skip_next=0
         destination_seen=0
         remote_command_seen=0
@@ -916,6 +1128,16 @@ enum KookyShellIntegration {
                 destination_seen=1
                 continue
             fi
+            # kooky-ssh only: `kooky-ssh <dest> -- <agent argv…>` asks the
+            # remote bootstrap to launch that agent after rc replay. Gated on
+            # the invoked filename so the public `ssh` shim (same script,
+            # user-setting gated install) never hijacks a manually typed
+            # `ssh host -- cmd` — that stays a plain remote command.
+            if [[ "${0##*/}" == "kooky-ssh" && "$arg" == "--" ]]; then
+                remote_agent_args=("${args[@]:$((i + 1))}")
+                args=("${args[@]:0:$i}")
+                break
+            fi
             remote_command_seen=1
             break
         done
@@ -927,7 +1149,29 @@ enum KookyShellIntegration {
         printf '\\033]2;\(RemoteLoginMarker.titlePrefix)%s\\a' "$dest" > /dev/tty 2>/dev/null
 
         remote_command=\(quote(remoteCommand))
-        exec "$real" -t "$@" "$remote_command"
+        if (( ${#remote_agent_args[@]} )); then
+            # Re-quote the agent argv into one eval-able string, then hand it
+            # to the bootstrap via an env prefix. `env` (a command, not shell
+            # syntax) so the REMOTE login shell parsing this line doesn't
+            # need `VAR=val cmd` support (csh lacks it, fish only grew it in
+            # 3.1). The bootstrap's rc tail evals it after the user's rc
+            # replay, so PATH managers like nvm are already loaded.
+            printf -v _kooky_remote_agent '%q ' "${remote_agent_args[@]}"
+            printf -v _kooky_remote_agent_q '%q' "${_kooky_remote_agent% }"
+            remote_command="env KOOKY_REMOTE_AGENT=$_kooky_remote_agent_q $remote_command"
+        fi
+        _kooky_mux_opts=()
+        if [[ "${0##*/}" == "kooky-ssh" ]]; then
+            # kooky-owned connections multiplex (ControlPath shared with the
+            # paste upload's ssh/scp — `sshMultiplexOptions`): this
+            # interactively authenticated connection is the master the
+            # headless upload rides, which is what lets password /
+            # interactive-passphrase workspaces paste files at all. The
+            # public `ssh` shim never gets this — silently switching manual
+            # ssh onto shared connections is not kooky's call to make.
+            _kooky_mux_opts=(\(sshMultiplexOptions.joined(separator: " ")))
+        fi
+        exec "$real" -t "${_kooky_mux_opts[@]}" "${args[@]}" "$remote_command"
         """
     }()
 
@@ -935,6 +1179,25 @@ enum KookyShellIntegration {
     /// binaries into a temp dir on the remote, then starts the user's shell
     /// with that dir prepended after normal rc replay. The temp dir is removed
     /// when the remote shell exits, so this does not persist files on servers.
+    /// Consume-once eval of the agent command the kooky-ssh wrapper passed
+    /// via the `KOOKY_REMOTE_AGENT` env prefix — interpolated into all three
+    /// bootstrap shell branches (same single-source shape as the local
+    /// `agentLaunchBlock`). `heredocEscaped: true` renders the `\$` form the
+    /// zsh/bash rc heredocs need (the OUTER bootstrap shell must leave
+    /// expansion to the rc's shell); the POSIX fallback takes the plain form.
+    /// `unset` runs BEFORE the eval so nested shells the agent spawns can't
+    /// relaunch it.
+    private static func remoteAgentEvalBlock(heredocEscaped: Bool) -> String {
+        let d = heredocEscaped ? #"\$"# : "$"
+        return """
+        if [ -n "\(d){KOOKY_REMOTE_AGENT:-}" ]; then
+            _kooky_remote_agent="\(d)KOOKY_REMOTE_AGENT"
+            unset KOOKY_REMOTE_AGENT
+            eval "\(d)_kooky_remote_agent"
+        fi
+        """
+    }
+
     static let remoteAgentBootstrapScript: String = {
         let slugs = remoteAgentMarkerSlugs.map(quote).joined(separator: " ")
         return #"""
@@ -1004,6 +1267,7 @@ enum KookyShellIntegration {
         [[ -r "\${ZDOTDIR:-\$HOME}/.zshrc" ]] && source "\${ZDOTDIR:-\$HOME}/.zshrc"
         export KOOKY_AGENT_MARKERS=1
         export PATH="$_kooky_bin:\$PATH"
+        \#(remoteAgentEvalBlock(heredocEscaped: true))
         KOOKY_ZSHRC
                 KOOKY_ORIGINAL_ZDOTDIR="${ZDOTDIR:-}" ZDOTDIR="$_kooky_root/zsh" zsh -l
                 ;;
@@ -1024,12 +1288,18 @@ enum KookyShellIntegration {
         unset _kooky_login_rc_loaded
         export KOOKY_AGENT_MARKERS=1
         export PATH="$_kooky_bin:\$PATH"
+        \#(remoteAgentEvalBlock(heredocEscaped: true))
         KOOKY_BASHRC
                 bash --rcfile "$_kooky_root/bashrc" -i
                 ;;
             *)
                 export KOOKY_AGENT_MARKERS=1
                 export PATH="$_kooky_bin:$PATH"
+                # Non-zsh/bash login shells (fish, csh, …): run the agent in
+                # THIS POSIX bootstrap before handing over. It won't see the
+                # user's fish/csh rc PATH additions, but it starts and marks
+                # correctly instead of crashing on foreign-shell syntax.
+                \#(remoteAgentEvalBlock(heredocEscaped: false))
                 "${SHELL:-/bin/sh}" -l
                 ;;
         esac

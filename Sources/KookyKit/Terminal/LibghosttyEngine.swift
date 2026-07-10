@@ -269,6 +269,10 @@ final class LibghosttyEngine: TerminalEngine {
         get { surfaceView.onSearchSelected }
         set { surfaceView.onSearchSelected = newValue }
     }
+    var pasteUploadHostProvider: (() -> String?)? {
+        get { surfaceView.pasteUploadHostProvider }
+        set { surfaceView.pasteUploadHostProvider = newValue }
+    }
     var foregroundPid: pid_t? {
         guard let surface = surfaceView.surface else { return nil }
         let pid = pid_t(ghostty_surface_foreground_pid(surface))
@@ -405,6 +409,7 @@ final class GhosttySurfaceView: NSView {
     var onSearchEnd: (() -> Void)?
     var onSearchTotal: ((Int) -> Void)?
     var onSearchSelected: ((Int) -> Void)?
+    var pasteUploadHostProvider: (() -> String?)?
     /// Read in `viewDidMoveToWindow` to gate the mount-time first-responder
     /// grab; set by `TerminalView` from the pane's active state. See
     /// `TerminalEngine.grabsFocusOnMount` for the why (issue #24).
@@ -815,13 +820,23 @@ final class GhosttySurfaceView: NSView {
         // `readTerminalPasteText` covers fileURLs (Finder Copy → full
         // path, not bare filename) and raw image data (screenshots →
         // spilled to a cache PNG so agents can open it as a path).
-        if cmdOnly,
-           event.charactersIgnoringModifiers?.lowercased() == "v",
-           let pasted = KookyShellIntegration.readTerminalPasteText(from: .general),
-           !pasted.isEmpty
-        {
-            paste(pasted)
-            return
+        if cmdOnly, event.charactersIgnoringModifiers?.lowercased() == "v" {
+            // SSH workspace tab pasting a file/image: upload to the remote
+            // and paste the REMOTE path when it lands (a local path is
+            // unreadable there). Local pastes fall through.
+            if KookyShellIntegration.pasteViaRemoteUpload(
+                from: .general,
+                host: pasteUploadHostProvider?(),
+                deliver: { [weak self] in self?.paste($0) }
+            ) {
+                return
+            }
+            if let pasted = KookyShellIntegration.readTerminalPasteText(from: .general),
+               !pasted.isEmpty
+            {
+                paste(pasted)
+                return
+            }
         }
 
         // Cmd+C with a live selection — without this branch libghostty's

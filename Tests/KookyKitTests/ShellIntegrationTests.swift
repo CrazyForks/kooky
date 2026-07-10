@@ -167,7 +167,36 @@ final class ShellIntegrationTests: XCTestCase {
         XCTAssertTrue(script.contains("! -t 0 || ! -t 1"), "must skip non-interactive ssh transport")
         XCTAssertTrue(script.contains("remote_command="), "must append exactly one remote shell command")
         XCTAssertTrue(script.contains("sh -lc"), "remote command should run through POSIX sh")
-        XCTAssertTrue(script.contains("exec \"$real\" -t \"$@\" \"$remote_command\""))
+        XCTAssertTrue(script.contains("exec \"$real\" -t \"${_kooky_mux_opts[@]}\" \"${args[@]}\" \"$remote_command\""))
+    }
+
+    func testSshWrapperGatesAgentProtocolOnKookySshName() {
+        let script = KookyShellIntegration.sshWrapperScript
+
+        // The `--` remote-agent protocol must be locked to the kooky-ssh
+        // filename. The public `ssh` shim shares this script; a manually
+        // typed `ssh host -- cmd` must keep plain ssh semantics.
+        XCTAssertTrue(script.contains(#""${0##*/}" == "kooky-ssh" && "$arg" == "--""#))
+        // Agent argv is re-quoted and handed to the bootstrap via an `env`
+        // prefix — a command, not `VAR=val cmd` shell syntax, so a csh /
+        // old-fish remote login shell can still parse the remote command.
+        XCTAssertTrue(script.contains("env KOOKY_REMOTE_AGENT="))
+        XCTAssertTrue(script.contains(#"printf -v _kooky_remote_agent '%q '"#))
+    }
+
+    func testSshWrapperMultiplexesOnlyKookySshConnections() {
+        let script = KookyShellIntegration.sshWrapperScript
+
+        // The main connection's ControlPath must be the exact option set the
+        // paste upload uses — same socket template is what lets the headless
+        // scp ride the workspace's interactively authenticated connection
+        // (password / passphrase auth workspaces can't paste otherwise).
+        let muxLine = "_kooky_mux_opts=(\(KookyShellIntegration.sshMultiplexOptions.joined(separator: " ")))"
+        XCTAssertTrue(script.contains(muxLine))
+        XCTAssertTrue(KookyShellIntegration.sshMultiplexOptions.contains("ControlPath=/tmp/kooky-ssh-%C"))
+        // Gated on the kooky-ssh filename — the public `ssh` shim must not
+        // silently switch manual ssh onto shared connections.
+        XCTAssertTrue(script.contains("if [[ \"${0##*/}\" == \"kooky-ssh\" ]]; then"))
     }
 
     func testSshWrapperPassesThroughRemoteCommandsAndTransportModes() {
@@ -204,6 +233,21 @@ final class ShellIntegrationTests: XCTestCase {
         XCTAssertTrue(script.contains(#"export PATH="$_kooky_bin:$PATH""#))
         XCTAssertTrue(script.contains("> /dev/tty"), "remote markers must target the tty, not the agent's redirected stdout")
         XCTAssertTrue(script.contains("export HISTFILE="), "remote zsh must reset HISTFILE off the ephemeral ZDOTDIR (else remote history is rm -rf'd on logout)")
+    }
+
+    func testRemoteBootstrapLaunchesRequestedAgentInEveryShellBranch() {
+        let script = KookyShellIntegration.remoteAgentBootstrapScript
+
+        // One eval site per shell branch (zsh rc, bash rc, POSIX fallback):
+        // the agent must start AFTER the user's rc replay so PATH managers
+        // like nvm are loaded — the whole reason agent launch rides the
+        // bootstrap instead of a bare ssh remote command.
+        let evalSites = script.components(separatedBy: "KOOKY_REMOTE_AGENT").count - 1
+        XCTAssertGreaterThanOrEqual(evalSites, 6, "expected the launch block in all three shell branches")
+        XCTAssertTrue(script.contains(#"eval "\$_kooky_remote_agent""#), "zsh/bash rc branches eval the agent command")
+        XCTAssertTrue(script.contains(#"eval "$_kooky_remote_agent""#), "POSIX fallback branch evals the agent command")
+        // Consumed exactly once — nested shells must not relaunch the agent.
+        XCTAssertTrue(script.contains("unset KOOKY_REMOTE_AGENT"))
     }
 
     func testAntigravityWrapperGuardsAgainstIDEShim() {
@@ -597,6 +641,85 @@ final class ShellIntegrationTests: XCTestCase {
         let pb = makeIsolatedPasteboard()
         pb.clearContents()
         XCTAssertNil(KookyShellIntegration.readTerminalPasteText(from: pb))
+    }
+
+    // MARK: - remote paste upload (SSH workspaces)
+
+    func testRemotePasteUploadRunsMkdirThenScpAndReturnsRemotePath() async throws {
+        final class Recorder: @unchecked Sendable {
+            let lock = NSLock()
+            var commands: [(String, [String])] = []
+            func record(_ exe: String, _ args: [String]) {
+                lock.lock(); defer { lock.unlock() }
+                commands.append((exe, args))
+            }
+        }
+        let recorder = Recorder()
+        KookyShellIntegration.remotePasteProcessRunnerOverride = { exe, args, _ in
+            recorder.record(exe, args)
+            return true
+        }
+        defer { KookyShellIntegration.remotePasteProcessRunnerOverride = nil }
+
+        let pb = makeIsolatedPasteboard()
+        pb.clearContents()
+        pb.writeObjects([URL(fileURLWithPath: "/tmp/some folder/图 one.png") as NSURL])
+
+        let upload = try XCTUnwrap(
+            KookyShellIntegration.remotePasteUpload(from: pb, host: "deploy@example.com")
+        )
+        let uploaded = await upload()
+        let pasted = try XCTUnwrap(uploaded)
+
+        // Remote path, sanitized filename (non-ASCII → `_`, then leading
+        // `._-` trimmed), no trace of the local dir.
+        XCTAssertTrue(pasted.hasPrefix("/tmp/kooky-pastes-"), pasted)
+        XCTAssertTrue(pasted.hasSuffix("/one.png"), pasted)
+        XCTAssertFalse(pasted.contains("some"))
+
+        XCTAssertEqual(recorder.commands.count, 2)
+        XCTAssertEqual(recorder.commands[0].0, "/usr/bin/ssh")
+        XCTAssertTrue(recorder.commands[0].1.contains("deploy@example.com"))
+        XCTAssertTrue(recorder.commands[0].1.last?.contains("mkdir -p -- '/tmp/kooky-pastes-") == true)
+        // The mkdir ride-along sweep: expired paste dirs from earlier
+        // sessions get removed without an extra connection.
+        XCTAssertTrue(recorder.commands[0].1.last?.contains("-name 'kooky-pastes-*'") == true)
+        XCTAssertTrue(recorder.commands[0].1.last?.contains("-mmin +60") == true)
+        XCTAssertEqual(recorder.commands[1].0, "/usr/bin/scp")
+        XCTAssertTrue(recorder.commands[1].1.contains("/tmp/some folder/图 one.png"))
+        XCTAssertTrue(recorder.commands[1].1.last?.hasPrefix("deploy@example.com:/tmp/kooky-pastes-") == true)
+        // BatchMode so a passwordless-auth miss fails fast instead of
+        // hanging the upload on an invisible prompt (the multiplex master —
+        // shared with the workspace's own connection — is what carries
+        // interactive-auth setups past this).
+        XCTAssertTrue(recorder.commands[0].1.contains("BatchMode=yes"))
+        XCTAssertTrue(recorder.commands[0].1.contains("ControlMaster=auto"))
+        XCTAssertTrue(recorder.commands[1].1.contains("ControlPath=/tmp/kooky-ssh-%C"))
+    }
+
+    func testRemotePasteUploadFailsClosedWhenTransferFails() async throws {
+        KookyShellIntegration.remotePasteProcessRunnerOverride = { _, _, _ in false }
+        defer { KookyShellIntegration.remotePasteProcessRunnerOverride = nil }
+
+        let pb = makeIsolatedPasteboard()
+        pb.clearContents()
+        pb.writeObjects([URL(fileURLWithPath: "/tmp/real-image.png") as NSURL])
+
+        let upload = try XCTUnwrap(
+            KookyShellIntegration.remotePasteUpload(from: pb, host: "deploy@example.com")
+        )
+        let pasted = await upload()
+
+        XCTAssertNil(pasted, "a failed upload must paste nothing — never the local path")
+    }
+
+    func testRemotePasteUploadReturnsNilForPlainText() {
+        let pb = makeIsolatedPasteboard()
+        pb.clearContents()
+        pb.setString("echo hello", forType: .string)
+
+        // Plain text stays a local paste — no subprocess, no upload closure.
+        XCTAssertNil(KookyShellIntegration.remotePasteUpload(from: pb, host: "deploy@example.com"))
     }
 
     func testPasteboardHasTerminalPasteContentMatchesReadability() {

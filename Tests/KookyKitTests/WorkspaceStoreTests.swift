@@ -1688,6 +1688,132 @@ final class WorkspaceStoreTests: XCTestCase {
         XCTAssertEqual(persistence.saveCount, baseline,
                        "re-emitting an unchanged cwd must not re-persist")
     }
+
+    // MARK: - SSH workspaces
+
+    func testAddWorkspaceWithSSHHostSpawnsFirstTabOverSSH() {
+        let store = makeStore()
+
+        let ws = store.addWorkspace(workingDirectory: projectA, sshRemoteHost: "deploy@example.com")
+
+        guard let session = ws.activeSession else { return XCTFail("expected initial session") }
+        XCTAssertEqual(ws.sshRemoteHost, "deploy@example.com")
+        XCTAssertEqual(session.sshWorkspaceHost, "deploy@example.com")
+        XCTAssertEqual(
+            engine(session).startedConfigs.last?.environment["KOOKY_AGENT"],
+            "kooky-ssh 'deploy@example.com'"
+        )
+        XCTAssertEqual(session.activityState, .idle, "a plain shell over ssh is not agent activity")
+    }
+
+    func testAddWorkspaceTreatsWhitespaceHostAsLocal() {
+        let store = makeStore()
+
+        let ws = store.addWorkspace(workingDirectory: projectA, sshRemoteHost: "   ")
+
+        XCTAssertNil(ws.sshRemoteHost)
+        guard let session = ws.activeSession else { return XCTFail("expected initial session") }
+        XCTAssertNil(session.sshWorkspaceHost)
+        XCTAssertNil(engine(session).startedConfigs.last?.environment["KOOKY_AGENT"])
+    }
+
+    func testSSHWorkspaceAgentTabLaunchesAgentBehindDoubleDash() {
+        let store = makeStore()
+        let ws = store.addWorkspace(workingDirectory: projectA, sshRemoteHost: "deploy@example.com")
+
+        let session = store.addTab(in: ws, template: .claudeCode)
+
+        XCTAssertEqual(
+            engine(session).startedConfigs.last?.environment["KOOKY_AGENT"],
+            "kooky-ssh 'deploy@example.com' -- claude"
+        )
+        XCTAssertEqual(session.sshWorkspaceHost, "deploy@example.com")
+        XCTAssertEqual(session.agent.id, AgentTemplate.claudeCodeID)
+        XCTAssertEqual(session.activityState, .running, "remote agent tab promotes optimistically")
+    }
+
+    func testSSHWorkspaceAgentTabDropsLocalResumeId() {
+        let store = makeStore()
+        let ws = store.addWorkspace(workingDirectory: projectA, sshRemoteHost: "deploy@example.com")
+
+        // resumeProvider is `true` in makeStore — locally this conversation
+        // id would become `--resume <id>`. The remote has no such session.
+        let session = store.addTab(in: ws, template: .claudeCode, conversationId: "abc-123")
+
+        let launch = engine(session).startedConfigs.last?.environment["KOOKY_AGENT"] ?? ""
+        XCTAssertFalse(launch.contains("--resume"), "local conversation ids must not ride to the remote: \(launch)")
+        XCTAssertFalse(launch.contains("abc-123"))
+    }
+
+    func testSSHWorkspaceSplitInheritsHost() {
+        let store = makeStore()
+        let ws = store.addWorkspace(workingDirectory: projectA, sshRemoteHost: "deploy@example.com")
+        let pane = firstPane(ws)
+
+        guard let newPane = store.splitPane(pane, orientation: .horizontal, in: ws),
+              let session = newPane.activeTab
+        else { return XCTFail("expected split pane") }
+
+        XCTAssertEqual(
+            engine(session).startedConfigs.last?.environment["KOOKY_AGENT"],
+            "kooky-ssh 'deploy@example.com'"
+        )
+        XCTAssertEqual(session.sshWorkspaceHost, "deploy@example.com")
+    }
+
+    func testRestoreSSHWorkspaceReconnectsTabs() {
+        let wsId = UUID()
+        let paneId = UUID()
+        let leafId = UUID()
+        let initial = PersistedState(
+            workspaces: [
+                PersistedWorkspace(
+                    id: wsId,
+                    workingDirectoryPath: "/tmp/projectA",
+                    root: PersistedPaneNode(
+                        id: paneId,
+                        kind: .pane(PersistedPane(
+                            id: paneId,
+                            tabs: [PersistedTab(id: leafId, agentId: "terminal", currentDirectoryPath: "/tmp/projectA")],
+                            activeTabId: leafId
+                        ))
+                    ),
+                    activePaneId: paneId,
+                    sshRemoteHost: "deploy@example.com"
+                )
+            ],
+            activeWorkspaceId: wsId
+        )
+
+        let store = makeStore(initial: initial)
+
+        guard let ws = store.workspaces.first, let session = ws.activeSession else {
+            return XCTFail("expected restored workspace")
+        }
+        XCTAssertEqual(ws.sshRemoteHost, "deploy@example.com")
+        XCTAssertEqual(session.sshWorkspaceHost, "deploy@example.com")
+        XCTAssertEqual(
+            engine(session).startedConfigs.last?.environment["KOOKY_AGENT"],
+            "kooky-ssh 'deploy@example.com'"
+        )
+    }
+
+    func testManualSshMarkerKeepsStatusBarButNotPasteRouting() {
+        let store = makeStore()
+        let ws = store.addWorkspace(workingDirectory: projectA)
+        guard let session = ws.activeSession else { return XCTFail("expected session") }
+
+        // A manually typed `ssh` (public shim) emits the remote-login marker.
+        engine(session).emitTitle("\(RemoteLoginMarker.titlePrefix)deploy@example.com")
+
+        // v0.26.5 behaviour intact: the status-bar slot still gets the host…
+        XCTAssertEqual(session.remoteHost, "deploy@example.com")
+        // …but paste routing stays local, and the workspace is not promoted.
+        XCTAssertNil(session.sshWorkspaceHost)
+        XCTAssertNil(ws.sshRemoteHost)
+        let next = store.addTab(in: ws, template: .terminal)
+        XCTAssertNil(engine(next).startedConfigs.last?.environment["KOOKY_AGENT"])
+    }
 }
 
 private extension PersistedPaneNode {

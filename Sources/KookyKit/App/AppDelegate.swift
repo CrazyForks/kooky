@@ -500,6 +500,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         mainMenu.addItem(submenu(buildMenu(title: "File", entries: [
             selfRow("New Tab", #selector(handleNewTab), "t"),
             selfRow("New Workspace", #selector(handleNewWorkspace), "n"),
+            selfRow("New SSH Workspace…", #selector(handleNewSSHWorkspace)),
             selfRow("New Window", #selector(handleNewWindow), "n", modifiers: [.command, .shift]),
             .separator,
             selfRow("Quick Open…", #selector(handleQuickOpen), "p"),
@@ -683,6 +684,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         activeStore?.addWorkspace()
     }
 
+    /// File menu / command palette: the store parks the request and reveals
+    /// a hidden sidebar; the animation wrap keeps the reveal from snapping
+    /// (matches the palette's worktree-create routing).
+    @objc private func handleNewSSHWorkspace() {
+        guard let store = activeStore else { return }
+        withAnimation(Theme.chromeTransition) {
+            store.requestCreateSSHWorkspace()
+        }
+    }
+
     /// Internal (not `private`) so `#selector` in `ContentView` can typecheck.
     /// The runtime dispatch goes through Obj-C selectors either way.
     @objc func handleQuickOpen() {
@@ -739,6 +750,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             let template = AgentTemplate.visibleOrdered(model: KookySettingsModel.shared)
                 .first(where: { $0.id == templateId }) ?? .terminal
             store.addTab(in: ws, template: template)
+        case .createSSHWorkspace:
+            handleNewSSHWorkspace()
         }
     }
 

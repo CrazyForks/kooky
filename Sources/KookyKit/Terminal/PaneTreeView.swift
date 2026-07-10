@@ -812,6 +812,16 @@ private struct PaneContextMenu: View {
             }
             KookyMenuRow(title: "Paste", shortcut: "⌘V", isDisabled: !pasteAvailable) {
                 isPresented = false
+                // SSH workspace tab pasting a file/image: upload, then paste
+                // the remote path once it lands (mirrors ⌘V in the surface).
+                let engine = session.engine
+                if KookyShellIntegration.pasteViaRemoteUpload(
+                    from: .general,
+                    host: session.sshWorkspaceHost,
+                    deliver: { engine.paste($0) }
+                ) {
+                    return
+                }
                 if let text = KookyShellIntegration.readTerminalPasteText(from: .general),
                    !text.isEmpty
                 {
@@ -1015,6 +1025,7 @@ private struct PaneComposerBar: View {
         VStack(alignment: .leading, spacing: 6) {
             ComposerTextView(
                 text: $session.composerDraft,
+                remotePasteHost: session.sshWorkspaceHost,
                 onSend: send,
                 onCancel: close
             )
@@ -1099,8 +1110,25 @@ private struct PaneComposerBar: View {
 /// them. Plain text falls through to NSTextView's native paste, keeping undo
 /// coalescing + smart behaviors.
 private final class ComposerNSTextView: NSTextView {
+    /// Session's spawn-pinned SSH host — same paste routing signal the
+    /// surface's ⌘V uses (see `TerminalEngine.pasteUploadHostProvider`).
+    /// A plain value, set once at construction: it never changes for a
+    /// session's lifetime and the composer is `.id(session.id)`-scoped.
+    var remotePasteHost: String?
+
     override func paste(_ sender: Any?) {
         let pb = NSPasteboard.general
+        // SSH workspace tab: the composed prompt runs on the remote, so a
+        // pasted file/image must be uploaded and referenced by remote path.
+        if KookyShellIntegration.pasteViaRemoteUpload(
+            from: pb,
+            host: remotePasteHost,
+            deliver: { [weak self] text in
+                self?.insertText(text, replacementRange: self?.selectedRange() ?? NSRange())
+            }
+        ) {
+            return
+        }
         if pb.availableType(from: [.fileURL, .png, .tiff]) != nil,
            let text = KookyShellIntegration.readTerminalPasteText(from: pb),
            !text.isEmpty {
@@ -1117,11 +1145,13 @@ private final class ComposerNSTextView: NSTextView {
 /// intercepts the Return command itself, before any newline is inserted.
 private struct ComposerTextView: NSViewRepresentable {
     @Binding var text: String
+    var remotePasteHost: String?
     var onSend: () -> Void
     var onCancel: () -> Void
 
     func makeNSView(context: Context) -> NSScrollView {
         let tv = ComposerNSTextView(frame: .zero)
+        tv.remotePasteHost = remotePasteHost
         tv.minSize = .zero
         tv.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         tv.isVerticallyResizable = true

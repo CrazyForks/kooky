@@ -4,6 +4,7 @@ import SwiftUI
 /// `.sheet(item:)` modifier. `.sheet(isPresented:)` per state would race
 /// when switching directly between modes (create → confirm-remove).
 private enum SidebarSheet: Identifiable {
+    case createSSHWorkspace
     case createWorktree(Workspace)
     case confirmRemoveWorktree(Workspace)
     case confirmCloseOthers(WorkspaceStore.BulkRemovalRequest)
@@ -11,6 +12,7 @@ private enum SidebarSheet: Identifiable {
 
     var id: String {
         switch self {
+        case .createSSHWorkspace: return "create-ssh-workspace"
         case .createWorktree(let ws): return "create-\(ws.id.uuidString)"
         case .confirmRemoveWorktree(let ws): return "remove-\(ws.id.uuidString)"
         case .confirmCloseOthers(let req): return "close-others-\(req.keeping.id.uuidString)"
@@ -185,6 +187,18 @@ struct SidebarView: View {
         } isTargeted: { isFolderDropTargeted = $0 && !fileTreeIsMounted }
         .sheet(item: $sheet) { current in
             switch current {
+            case .createSSHWorkspace:
+                CreateSSHWorkspaceSheet(
+                    create: { host in
+                        store.addWorkspace(sshRemoteHost: host)
+                        store.pendingCreateSSHWorkspaceRequest = false
+                        sheet = nil
+                    },
+                    dismiss: {
+                        store.pendingCreateSSHWorkspaceRequest = false
+                        sheet = nil
+                    }
+                )
             case .createWorktree(let source):
                 CreateWorktreeSheet(
                     source: source,
@@ -287,9 +301,17 @@ struct SidebarView: View {
                 sheet = .createWorktree(workspace)
             }
         }
+        // SSH-workspace create request (File menu / command palette). Same
+        // parked-while-hidden contract as worktree-create above.
+        .onChange(of: store.pendingCreateSSHWorkspaceRequest) { _, pending in
+            if pending { sheet = .createSSHWorkspace }
+        }
         .onAppear {
             if let workspace = store.pendingCreateWorktreeRequest {
                 sheet = .createWorktree(workspace)
+            }
+            if store.pendingCreateSSHWorkspaceRequest {
+                sheet = .createSSHWorkspace
             }
         }
         // Bulk close-others request — keyed off keeping.id since the
