@@ -30,6 +30,8 @@ AI コーディングのために作られた、ミニマルでモダンな macO
 
 **Git worktree。** 任意の git workspace を右クリック → "Create Worktree…" で新しい branch (または既存 branch の checkout) に対する worktree を作成します。worktree はサイドバーで元のリポジトリの下にネストして表示され、独自の tab + agent を持ちます —— main で何かが走っている最中でも、Claude を feature branch で並行して動かせます。コマンドラインで `git worktree add` した worktree も、次回 kooky 起動時に自動でサイドバーに現れます。
 
+**SSH workspace。** File → New SSH Workspace… (または ⌘P) で、リモートマシン上に「住む」workspace を作成します。以降の新しい tab・分割ペイン・再起動時に復元される tab は、すべて同じホストへ自動で再接続します。agent tab を開くと agent はリモート側で起動 —— リモート自身のシェル設定を読み込んでから始まるので、nvm などで入れたツールもきちんと見つかります。ローカルのファイルやスクリーンショットを貼り付けると、kooky が先にアップロードしてからリモートパスを貼り付けるため、向こうの agent が実際に開けます。同一ホストへの接続は共有され、追加の tab は即座に接続。パスワード認証のホストでも貼り付けを含めて全部使えます。
+
 **選択範囲を右クリック → "Ask <agent>"。** ターミナル内でエラー / ログ / ファイルパスを選択して右クリック、好きな agent を選ぶと、新しい tab が開いた時点で選択範囲が最初の prompt として送信済みの状態になります。⌘C / ⌘V の往復なしで "これは何？" から答えに直行。
 
 **クイックオープン (⌘P)。** 全ウィンドウの workspaces、tabs、agents、Terminal preset を 1 つのフローティングパネルから fuzzy 検索。文字を打って絞り込み、↑↓ で選択、Enter でジャンプまたは起動。⌘P または上部 chrome の検索 pill から呼び出せます。
@@ -110,7 +112,7 @@ Xcode 26+ と macOS 14+ (Sonoma —— `@Observable` の最低システム要件
 ./scripts/setup-libghostty.sh        # 初回のみ：プリビルドの libghostty xcframework を Vendor/ にダウンロード
 swift build
 swift run                            # 開発モードで直接起動
-swift test                           # 478 個のユニットテスト
+swift test                           # 491 個のユニットテスト
 
 ./scripts/build-app.sh               # dist/Kooky.app を出力
 ./scripts/build-dmg.sh --build       # dist/Kooky-vX.Y.Z.dmg を出力
