@@ -2,6 +2,14 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.34.0 — 2026-07-10
+
+- New: SSH workspaces — File → New SSH Workspace… (also in ⌘P) creates a workspace that lives on a remote machine: every new tab, split, and restored tab connects to the same host automatically.
+- Agent tabs in an SSH workspace start their agent on the remote, with the remote's own shell setup loaded — so tools installed through nvm and friends are found.
+- Pasting a local file or screenshot into an SSH workspace uploads it to the remote first and pastes the remote path, so an agent on the other side can actually open it. Uploads run in the background; a failed transfer beeps instead of pasting a dead local path.
+- Connections to the same host are shared: extra tabs connect instantly, and password-authenticated workspaces can paste files too.
+- SSH workspaces carry a network badge and their host in the sidebar; the new-tab menu labels entries "on SSH".
+
 ## v0.33.0 — 2026-07-10
 
 - New: git changes show in the file tree — a modified file's row carries its `+X −Y` line counts (same numbers and colors as the status bar's diff, and they add up to its totals); a collapsed folder rolls up its subtree's changes.
