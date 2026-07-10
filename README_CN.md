@@ -20,7 +20,7 @@
 
 ## 功能
 
-**垂直 tab、分屏、多窗口。** 侧边栏管理所有 workspace，三档宽度可切换（`⌘⌃S`）。每个 pane 都有独立 tab 栏和当前 tab，用 tab 栏右侧两个按钮或 ⌘D / ⌘⇧D 就能向右 / 向下分屏。⌘R 重命名 tab、⌘⇧R 重命名 workspace。`⌘⇧N` 打开新窗口。tab 可以拖动排序、跨 pane 移动，也能拖进另一个窗口 —— 实时会话整体带过去，scrollback 和正在跑的进程都在。重启后状态自动恢复，每个打开的窗口都会还原。把任意文件夹打开成新 workspace:从 Finder 拖到 sidebar,或者按 ⌘O。按 `⌘⇧E` 把当前 pane 放大占满 workspace 再按一次还原 —— 其他 pane 滑出视野但进程还在跑。
+**垂直 tab、分屏、多窗口。** 侧边栏管理所有 workspace，三档宽度可切换（`⌘⌃S`），还能拖右边缘加宽,宽度按窗口记忆。每个 pane 都有独立 tab 栏和当前 tab，用 tab 栏右侧两个按钮或 ⌘D / ⌘⇧D 就能向右 / 向下分屏。⌘R 重命名 tab、⌘⇧R 重命名 workspace。`⌘⇧N` 打开新窗口。tab 可以拖动排序、跨 pane 移动，也能拖进另一个窗口 —— 实时会话整体带过去，scrollback 和正在跑的进程都在。重启后状态自动恢复，每个打开的窗口都会还原。把任意文件夹打开成新 workspace:从 Finder 拖到 sidebar,或者按 ⌘O。按 `⌘⇧E` 把当前 pane 放大占满 workspace 再按一次还原 —— 其他 pane 滑出视野但进程还在跑。
 
 ![左侧竖直 tab，一个 pane 分成四块](img/screenshot-2.png)
 
@@ -34,7 +34,7 @@
 
 **快速打开(⌘P)。** 一个浮动面板模糊搜索所有 window 的 workspaces、tabs、agents、Terminal presets。输入关键字筛选,↑↓ 选,Enter 跳过去或者新开一个。⌘P 或顶部 chrome 上的 search pill 都能触发。
 
-**侧边栏文件树。** 侧边栏底部的切换按钮把 workspace 列表换成当前 workspace 文件夹的文件树。目录可展开、双击文件用默认程序打开,右键有在访达显示 / 拷贝路径 / 把路径插入终端(文件行还多一个「打开」)—— 也可以直接把文件或文件夹拖进终端,escape 好的路径就插到光标处,跟从 Finder 拖进来一样。文件树跟随当前 tab 的目录(worktree 工作区固定在各自的 worktree 目录),磁盘上文件一变就自动刷新。
+**侧边栏文件树。** 侧边栏底部的切换按钮把 workspace 列表换成当前 workspace 文件夹的文件树。目录可展开、双击文件用默认程序打开,右键有在访达显示 / 拷贝路径 / 把路径插入终端(文件行还多一个「打开」)—— 也可以直接把文件或文件夹拖进终端,escape 好的路径就插到光标处,跟从 Finder 拖进来一样。改动过的文件会显示 `+X −Y` 行数(和状态栏 git diff 同一套数字),折叠的文件夹汇总其子树的改动。文件树跟随当前 tab 的目录(worktree 工作区固定在各自的 worktree 目录),磁盘上文件一变就自动刷新。
 
 **输入顺手。** 在 zsh 提示行点哪儿光标就跳哪儿(不用按 modifier,跟 ghostty.app 一致)。从 Finder 把文件或文件夹拖到任意 pane,绝对路径会自动 escape 后插到光标位置。
 
