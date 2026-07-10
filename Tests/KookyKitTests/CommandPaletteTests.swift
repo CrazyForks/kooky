@@ -114,3 +114,31 @@ final class PaletteIndexMatchTests: XCTestCase {
         XCTAssertTrue(out.isEmpty)
     }
 }
+
+@MainActor
+final class PaletteIndexRecentFolderTests: XCTestCase {
+    func testRecentFoldersBecomeOpenEntries() {
+        let items = PaletteIndex.build(
+            controllers: [],
+            model: KookySettingsModel.shared,
+            recentFolders: [URL(fileURLWithPath: "/tmp/proj-x", isDirectory: true)]
+        )
+
+        let recent = items.filter {
+            if case .openRecentFolder = $0.kind { return true }
+            return false
+        }
+        XCTAssertEqual(recent.count, 1)
+        XCTAssertEqual(recent.first?.title, "proj-x")
+        XCTAssertEqual(recent.first?.kind, .openRecentFolder(path: "/tmp/proj-x"))
+        XCTAssertTrue(recent.first?.subtitle.hasPrefix("recent · ") == true)
+    }
+
+    func testNoRecentFoldersMeansNoEntries() {
+        let items = PaletteIndex.build(controllers: [], model: KookySettingsModel.shared)
+        XCTAssertFalse(items.contains {
+            if case .openRecentFolder = $0.kind { return true }
+            return false
+        })
+    }
+}

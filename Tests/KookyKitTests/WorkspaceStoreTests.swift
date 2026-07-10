@@ -15,12 +15,16 @@ final class WorkspaceStoreTests: XCTestCase {
         }
     }
 
-    private func makeStore(initial: PersistedState? = nil) -> WorkspaceStore {
+    private func makeStore(
+        initial: PersistedState? = nil,
+        noteRecentFolder: @escaping @MainActor (URL) -> Void = { _ in }
+    ) -> WorkspaceStore {
         WorkspaceStore(
             persistence: InMemoryPersistence(initial: initial),
             engineFactory: { TestEngine() },
             optionsProvider: { _ in nil },
-            resumeProvider: { true }
+            resumeProvider: { true },
+            noteRecentFolder: noteRecentFolder
         )
     }
 
@@ -1796,6 +1800,49 @@ final class WorkspaceStoreTests: XCTestCase {
             engine(session).startedConfigs.last?.environment["KOOKY_AGENT"],
             "kooky-ssh 'deploy@example.com'"
         )
+    }
+
+    // MARK: - Recent folders
+
+    func testAddWorkspaceRecordsRecentFolderExceptWorktreesAndSSH() {
+        var noted: [String] = []
+        let store = makeStore(noteRecentFolder: { noted.append($0.path) })
+        // The seed workspace (home cwd) reports too — home filtering is
+        // RecentFolders.note()'s own rule, covered by its tests. This test
+        // pins the STORE-level exclusions, so start counting from here.
+        noted.removeAll()
+
+        store.addWorkspace(workingDirectory: projectA)
+        XCTAssertEqual(noted, ["/tmp/projectA"], "a plain workspace records its folder")
+
+        let source = store.workspaces[0]
+        store.addWorkspace(workingDirectory: projectB, worktreeParent: source, worktreeBranch: "feat")
+        XCTAssertEqual(noted, ["/tmp/projectA"], "worktree children must not be recorded — their dir dies with the worktree")
+
+        store.addWorkspace(workingDirectory: projectC, sshRemoteHost: "deploy@example.com")
+        XCTAssertEqual(noted, ["/tmp/projectA"], "SSH workspaces must not be recorded — the local cwd is not the project")
+    }
+
+    func testRecentFolderExclusionFollowsDirProvenance() {
+        var noted: [String] = []
+        let store = makeStore(noteRecentFolder: { noted.append($0.path) })
+        noted.removeAll()
+
+        // Duplicate on a worktree: the dir is path-matched to the worktree
+        // workspace, so its exclusion rides along.
+        let source = store.addWorkspace(workingDirectory: projectA)
+        let worktree = store.addWorkspace(workingDirectory: projectB, worktreeParent: source, worktreeBranch: "feat")
+        noted.removeAll()
+        store.duplicateWorkspace(worktree)
+        XCTAssertTrue(noted.isEmpty, "duplicating a worktree must not record its dying dir")
+
+        // ⌘N (no explicit dir) while an SSH workspace is active inherits its
+        // cwd — and must inherit its exclusion too.
+        let ssh = store.addWorkspace(workingDirectory: projectC, sshRemoteHost: "deploy@example.com")
+        store.activateWorkspace(ssh)
+        noted.removeAll()
+        store.addWorkspace()
+        XCTAssertTrue(noted.isEmpty, "a dir inherited from an SSH workspace is not a local project")
     }
 
     func testManualSshMarkerKeepsStatusBarButNotPasteRouting() {

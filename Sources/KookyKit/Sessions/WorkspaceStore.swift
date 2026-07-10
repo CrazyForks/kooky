@@ -165,6 +165,12 @@ final class WorkspaceStore {
     /// notification — only when the originating tab isn't currently visible.
     /// Tests default to a no-op.
     private let onSessionAlert: @MainActor (UUID, SessionAlertKind) -> Void
+    /// Reports a user-chosen project folder for File → Open Recent / ⌘P.
+    /// Defaults to a no-op like the other side-effecting callbacks
+    /// (`onSessionAlert`, `moveToNewWindow`) — a write must never be the
+    /// default a test construction silently inherits; `AppDelegate.addWindow`
+    /// wires the real `RecentFolders` sink.
+    private let noteRecentFolder: @MainActor (URL) -> Void
     private let persistence: any Persistence
     private let gitStatusFetcher = GitStatusFetcher()
     /// One watcher per session — refreshes git status when `.git/HEAD` or
@@ -214,7 +220,8 @@ final class WorkspaceStore {
         resumeProvider: @escaping @MainActor () -> Bool = { KookySettingsModel.shared.resumeConversations },
         peerStores: @escaping @MainActor () -> [WorkspaceStore] = { [] },
         moveToNewWindow: @escaping @MainActor (UUID) -> Void = { _ in },
-        onSessionAlert: @escaping @MainActor (UUID, SessionAlertKind) -> Void = { _, _ in }
+        onSessionAlert: @escaping @MainActor (UUID, SessionAlertKind) -> Void = { _, _ in },
+        noteRecentFolder: @escaping @MainActor (URL) -> Void = { _ in }
     ) {
         self.persistence = persistence
         self.engineFactory = engineFactory
@@ -223,6 +230,7 @@ final class WorkspaceStore {
         self.peerStores = peerStores
         self.moveToNewWindow = moveToNewWindow
         self.onSessionAlert = onSessionAlert
+        self.noteRecentFolder = noteRecentFolder
         if let saved = persistence.load(), !saved.workspaces.isEmpty {
             restore(from: saved)
         } else {
@@ -240,8 +248,15 @@ final class WorkspaceStore {
         template: AgentTemplate = .terminal,
         sshRemoteHost: String? = nil
     ) -> Workspace {
+        // NB: the home fallback (fresh window's seed workspace) reaching
+        // `noteRecentFolder` below is caught by `RecentFolders.note()`'s own
+        // home exclusion — if this fallback ever becomes a configurable
+        // default-projects dir, the recent list starts recording it silently.
+        // `inheritedFrom` is captured HERE, before `activeWorkspaceId` moves
+        // to the new workspace below — `active` later means the new one.
+        let inheritedFrom = workingDirectory == nil ? active : nil
         let dir = workingDirectory
-            ?? active?.workingDirectory
+            ?? inheritedFrom?.workingDirectory
             ?? URL(fileURLWithPath: NSHomeDirectory())
         let pane = Pane()
         let root = PaneNode(pane: pane)
@@ -276,6 +291,20 @@ final class WorkspaceStore {
             workspaces.append(workspace)
         }
         activeWorkspaceId = workspace.id
+        // Remember the project folder for Open Recent / ⌘P (issue #28) —
+        // except worktree children (their dir dies with the worktree) and
+        // SSH workspaces (the local cwd is not where the project lives).
+        // The exclusion follows the DIRECTORY's provenance, not just this
+        // call's arguments: a dir inherited from such a workspace (⌘N with
+        // one active — `inheritedFrom` — or Duplicate on one — matched by
+        // path) keeps its source's exclusion.
+        let origin = inheritedFrom ?? workspaces.first(where: {
+            $0 !== workspace && $0.workingDirectory.standardizedFileURL.path == dir.standardizedFileURL.path
+        })
+        if worktreeParent == nil, workspace.sshRemoteHost == nil,
+           origin?.worktreeParentId == nil, origin?.sshRemoteHost == nil {
+            noteRecentFolder(dir)
+        }
         scheduleSave()
         return workspace
     }

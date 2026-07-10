@@ -16,6 +16,10 @@ private enum MenuTag {
 
 @MainActor
 public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+    /// File → Open Recent. Items are rebuilt from `RecentFolders` on every
+    /// open via the dedicated delegate — the menu itself is a stable shell.
+    private let openRecentMenu = NSMenu(title: "Open Recent")
+    private let openRecentMenuDelegate = OpenRecentMenuDelegate()
     private var windowControllers: [KookyWindowController] = [] {
         // Every window add/remove flows through this one property, so bump the
         // agent monitor here — the right sidebar re-aggregates over the new
@@ -138,7 +142,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             persistence: WindowPersistence(windowId: windowId, app: appPersistence),
             peerStores: { [weak self] in self?.windowControllers.map(\.store) ?? [] },
             moveToNewWindow: { [weak self] id in self?.moveTabToNewWindow(sessionId: id) },
-            onSessionAlert: { [weak self] id, kind in self?.handleSessionAlert(id, kind) }
+            onSessionAlert: { [weak self] id, kind in self?.handleSessionAlert(id, kind) },
+            noteRecentFolder: { RecentFolders.shared.note($0) }
         )
         let controller = KookyWindowController(windowId: windowId, store: store)
         controller.onWillClose = { [weak self] in self?.handleWindowWillClose($0) }
@@ -497,6 +502,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             responderRow("Quit \(KookyApp.name)", #selector(NSApplication.terminate(_:)), "q"),
         ])))
 
+        openRecentMenuDelegate.rebuild = { [weak self] menu in self?.rebuildOpenRecentMenu(menu) }
+        openRecentMenu.delegate = openRecentMenuDelegate
         mainMenu.addItem(submenu(buildMenu(title: "File", entries: [
             selfRow("New Tab", #selector(handleNewTab), "t"),
             selfRow("New Workspace", #selector(handleNewWorkspace), "n"),
@@ -506,6 +513,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             selfRow("Quick Open…", #selector(handleQuickOpen), "p"),
             selfRow("Notifications", #selector(handleShowInbox), "i", modifiers: [.command, .shift]),
             selfRow("Open Folder…", #selector(handleOpenFolder), "o"),
+            .sub(openRecentMenu),
             .separator,
             selfRow("Close Tab", #selector(handleCloseTab), "w"),
             selfRow("Reopen Closed Tab", #selector(handleReopenClosedTab), "t", modifiers: [.command, .shift]),
@@ -615,6 +623,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private enum MenuEntry {
         case row(MenuRow)
         case separator
+        /// Nested submenu at this position (e.g. File → Open Recent, whose
+        /// items a delegate rebuilds on every open).
+        case sub(NSMenu)
     }
 
     /// Item routed to `self` — used for the AppDelegate's own `handle*`
@@ -646,6 +657,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 menu.addItem(item)
             case .separator:
                 menu.addItem(.separator())
+            case .sub(let nested):
+                menu.addItem(submenu(nested))
             }
         }
         return menu
@@ -694,6 +707,57 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         }
     }
 
+    /// Rebuilt on every submenu open — folders that vanished from disk are
+    /// filtered by `existing`, and duplicate folder names fall back to the
+    /// abbreviated path so two repos both named `app` stay tellable apart.
+    private func rebuildOpenRecentMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let folders = RecentFolders.shared.existing
+        let nameCounts = Dictionary(grouping: folders, by: \.lastPathComponent).mapValues(\.count)
+        for url in folders {
+            let abbreviated = (url.path as NSString).abbreviatingWithTildeInPath
+            let title = nameCounts[url.lastPathComponent, default: 0] > 1 ? abbreviated : url.lastPathComponent
+            let item = NSMenuItem(title: title, action: #selector(handleOpenRecentFolder(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = url.path
+            item.toolTip = abbreviated
+            let icon = NSWorkspace.shared.icon(forFile: url.path)
+            icon.size = NSSize(width: 16, height: 16)
+            item.image = icon
+            menu.addItem(item)
+        }
+        if !folders.isEmpty { menu.addItem(.separator()) }
+        // macOS convention: Clear Menu is always present, disabled when
+        // there's nothing to clear (nil action → auto-disabled). Enabled off
+        // the RAW list, not the disk-filtered `folders`: when every recorded
+        // dir is deleted/unmounted the menu shows empty, but the hidden
+        // entries still hold list slots — Clear must stay reachable (Codex).
+        let clear = NSMenuItem(
+            title: "Clear Menu",
+            action: RecentFolders.shared.paths.isEmpty ? nil : #selector(handleClearRecentFolders),
+            keyEquivalent: ""
+        )
+        clear.target = self
+        menu.addItem(clear)
+    }
+
+    /// One seam for both open-recent entry points (menu item + ⌘P palette)
+    /// so a future behavior change — say, jump to an existing workspace
+    /// instead of adding a duplicate — can't land in one and not the other
+    /// (the `revealTab` precedent).
+    private func openRecentFolder(atPath path: String) {
+        activeStore?.addWorkspace(workingDirectory: URL(fileURLWithPath: path, isDirectory: true))
+    }
+
+    @objc private func handleOpenRecentFolder(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String else { return }
+        openRecentFolder(atPath: path)
+    }
+
+    @objc private func handleClearRecentFolders() {
+        RecentFolders.shared.clear()
+    }
+
     /// Internal (not `private`) so `#selector` in `ContentView` can typecheck.
     /// The runtime dispatch goes through Obj-C selectors either way.
     @objc func handleQuickOpen() {
@@ -704,7 +768,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         CommandPaletteWindowController.shared.toggle(
             items: { [weak self] in
                 guard let self else { return [] }
-                return PaletteIndex.build(controllers: self.windowControllers, model: KookySettingsModel.shared)
+                return PaletteIndex.build(
+                    controllers: self.windowControllers,
+                    model: KookySettingsModel.shared,
+                    recentFolders: RecentFolders.shared.existing
+                )
             },
             anchor: activeController?.window,
             onActivate: { [weak self] item in self?.activate(item) }
@@ -752,6 +820,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             store.addTab(in: ws, template: template)
         case .createSSHWorkspace:
             handleNewSSHWorkspace()
+        case .openRecentFolder(let path):
+            openRecentFolder(atPath: path)
         }
     }
 
@@ -1008,4 +1078,29 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         }
     }
     #endif
+}
+
+/// Dedicated delegate for File → Open Recent. A separate object — not
+/// `AppDelegate` — on purpose: (1) `menuHasKeyEquivalent` returning false
+/// exempts this menu from AppKit's key-equivalent scan, which otherwise
+/// calls `menuNeedsUpdate` on EVERY ⌘-keypress (hot in a terminal app) and
+/// would re-stat every recent path + fetch its folder icon per keystroke;
+/// (2) implementing that method on `AppDelegate` would also divert the View
+/// menu, whose ⌘1-9 hidden-item gating depends on the `menuNeedsUpdate`
+/// populate path.
+private final class OpenRecentMenuDelegate: NSObject, NSMenuDelegate {
+    var rebuild: (NSMenu) -> Void = { _ in }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        rebuild(menu)
+    }
+
+    func menuHasKeyEquivalent(
+        _ menu: NSMenu,
+        for event: NSEvent,
+        target: AutoreleasingUnsafeMutablePointer<AnyObject?>,
+        action: UnsafeMutablePointer<Selector?>
+    ) -> Bool {
+        false // recent items never carry key equivalents
+    }
 }

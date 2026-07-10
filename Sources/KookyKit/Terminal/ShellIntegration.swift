@@ -395,7 +395,10 @@ enum KookyShellIntegration {
     /// `~/Library/Application Support/kooky/<subpath>` — single source for the
     /// app's private support locations. Path-only; callers create the directory
     /// when they need it (some of these are roots, not leaf dirs).
-    private static func kookyAppSupport(_ subpath: String, isDirectory: Bool) -> URL {
+    /// Single source for paths under `~/Library/Application Support/kooky/`
+    /// — internal (not private) so other subsystems (e.g. `RecentFolders`)
+    /// don't grow their own spelling of the root.
+    static func kookyAppSupport(_ subpath: String, isDirectory: Bool) -> URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("kooky/\(subpath)", isDirectory: isDirectory)
     }

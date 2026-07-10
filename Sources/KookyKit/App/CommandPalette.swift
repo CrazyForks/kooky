@@ -57,6 +57,9 @@ enum PaletteItemKind: Hashable, Sendable {
     case agent(templateId: String)
     /// Open the SSH-workspace destination sheet in the active window.
     case createSSHWorkspace
+    /// Open a recently used project folder as a new workspace in the
+    /// active window (issue #28 — "pick from my projects" without ⌘O).
+    case openRecentFolder(path: String)
 }
 
 struct PaletteItem: Identifiable, Hashable {
@@ -73,7 +76,7 @@ enum PaletteIndex {
     /// Build the live index from every open window + the settings model's
     /// visible templates. Rebuilt fresh on every palette open so additions
     /// / closures / renames all show up without cache invalidation.
-    static func build(controllers: [KookyWindowController], model: KookySettingsModel) -> [PaletteItem] {
+    static func build(controllers: [KookyWindowController], model: KookySettingsModel, recentFolders: [URL] = []) -> [PaletteItem] {
         var items: [PaletteItem] = []
         let multiWindow = controllers.count > 1
         for (idx, controller) in controllers.enumerated() {
@@ -129,6 +132,21 @@ enum PaletteIndex {
             symbol: "network",
             iconAsset: nil
         ))
+        // Recent project folders — skip ones already open as a workspace
+        // (their workspace entry above is the better jump target).
+        let openPaths = Set(controllers.flatMap { controller in
+            controller.store.workspaces.map { $0.workingDirectory.standardizedFileURL.path }
+        })
+        for url in recentFolders where !openPaths.contains(url.standardizedFileURL.path) {
+            items.append(PaletteItem(
+                id: "recent-\(url.path)",
+                title: url.lastPathComponent,
+                subtitle: "recent · \((url.path as NSString).abbreviatingWithTildeInPath)",
+                kind: .openRecentFolder(path: url.path),
+                symbol: "clock.arrow.circlepath",
+                iconAsset: nil
+            ))
+        }
         return items
     }
 
