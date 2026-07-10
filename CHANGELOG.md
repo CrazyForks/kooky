@@ -2,6 +2,13 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.33.0 — 2026-07-10
+
+- New: git changes show in the file tree — a modified file's row carries its `+X −Y` line counts (same numbers and colors as the status bar's diff, and they add up to its totals); a collapsed folder rolls up its subtree's changes.
+- New: the sidebar is resizable — drag its right edge to widen it (the default width is the minimum), per-window width persists across restarts.
+- Fixed: switching the sidebar from compact to hidden no longer flashes it at full width during the transition.
+- Fixed: reading large git output (thousands of changed files or branches) could silently stall and drop the result — git output is now streamed while the command runs.
+
 ## v0.32.0 — 2026-07-08
 
 - New: sidebar file tree — a toggle at the bottom of the sidebar switches between the workspace list and a file tree of the active workspace's folder. Expand directories, double-click to open a file, right-click for Open / Reveal in Finder / Copy Path / Insert Path into Terminal.
