@@ -2,6 +2,11 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.35.0 — 2026-07-10
+
+- New: recent project folders — kooky now remembers every folder you open a workspace on. Reopen one from File → Open Recent, or press ⌘P and type the project's name: folders you've closed show up as "recent" entries and reopen with a single Enter. (#28)
+- The list keeps the 20 most recent folders with no setup: deleted folders hide automatically (and come back if the volume remounts), and worktree or SSH workspace directories are never recorded.
+
 ## v0.34.0 — 2026-07-10
 
 - New: SSH workspaces — File → New SSH Workspace… (also in ⌘P) creates a workspace that lives on a remote machine: every new tab, split, and restored tab connects to the same host automatically.
