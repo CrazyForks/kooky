@@ -32,6 +32,8 @@ AI コーディングのために作られた、ミニマルでモダンな macO
 
 **SSH workspace。** File → New SSH Workspace… (または ⌘P) で、リモートマシン上に「住む」workspace を作成します。以降の新しい tab・分割ペイン・再起動時に復元される tab は、すべて同じホストへ自動で再接続します。agent tab を開くと agent はリモート側で起動 —— リモート自身のシェル設定を読み込んでから始まるので、nvm などで入れたツールもきちんと見つかります。ローカルのファイルやスクリーンショットを貼り付けると、kooky が先にアップロードしてからリモートパスを貼り付けるため、向こうの agent が実際に開けます。同一ホストへの接続は共有され、追加の tab は即座に接続。パスワード認証のホストでも貼り付けを含めて全部使えます。
 
+**Keep-awake(スリープ防止)。** agent が作業中に Mac が寝てしまうことはありません。トップバーの呼吸するインジケーターライトをクリックすると 3 段階を循環します:Off;Auto —— agent の作業中や SSH 接続中はスリープせず(蓋を閉じても継続、初回のみ管理者認証が必要)、作業が終わった瞬間に通常のスリープへ戻ります;Always —— 目に見える caffeinate として、切り替えるまでずっと起きたままです。kooky の外でスリープ設定を変えても(`sudo pmset` や他のツール)、数秒でダイヤルが双方向に追従します。
+
 **最近使ったプロジェクト。** kooky は workspace を開いたフォルダを自動で記憶します —— 設定も手動追加も不要。File → Open Recent から選ぶか、⌘P でプロジェクト名を入力して Enter で再オープン:閉じたプロジェクトは「recent」エントリとして表示されます。削除済みフォルダは自動的に隠れ、worktree / SSH ディレクトリがリストに混ざることもありません。
 
 **選択範囲を右クリック → "Ask <agent>"。** ターミナル内でエラー / ログ / ファイルパスを選択して右クリック、好きな agent を選ぶと、新しい tab が開いた時点で選択範囲が最初の prompt として送信済みの状態になります。⌘C / ⌘V の往復なしで "これは何？" から答えに直行。
@@ -114,7 +116,7 @@ Xcode 26+ と macOS 14+ (Sonoma —— `@Observable` の最低システム要件
 ./scripts/setup-libghostty.sh        # 初回のみ：プリビルドの libghostty xcframework を Vendor/ にダウンロード
 swift build
 swift run                            # 開発モードで直接起動
-swift test                           # 502 個のユニットテスト
+swift test                           # 523 個のユニットテスト
 
 ./scripts/build-app.sh               # dist/Kooky.app を出力
 ./scripts/build-dmg.sh --build       # dist/Kooky-vX.Y.Z.dmg を出力

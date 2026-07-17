@@ -32,6 +32,8 @@ A minimal modern terminal built for AI coding. Sidebar workspaces; horizontal / 
 
 **SSH workspaces.** File → New SSH Workspace… (or ⌘P) creates a workspace that lives on a remote machine: every new tab, split, and restored tab reconnects to the same host on its own. Agent tabs start their agent on the remote — with the remote's own shell setup loaded, so tools installed through nvm and friends are found. Paste a local file or screenshot and kooky uploads it first, then pastes a path the remote agent can actually open. Connections to the same host are shared: extra tabs attach instantly, and password-authenticated hosts work throughout, pasting included.
 
+**Keep-awake.** Your Mac won't fall asleep under a working agent. A breathing status light in the top bar cycles three notches: Off; Auto — awake while an agent works or an SSH session is live, lid closed included (one-time admin authorization), asleep again the moment the work ends; and Always — a caffeinate you can see, awake until you switch it down. Flip sleep-disable anywhere else (`sudo pmset`, another tool) and the dial follows within seconds, in both directions.
+
 **Recent projects.** kooky remembers every folder you open a workspace on — no setup, no manual adding. Reopen one from File → Open Recent, or press ⌘P and type the project's name: closed projects show up as "recent" entries and reopen with a single Enter. Deleted folders hide automatically, and worktree / SSH directories never clutter the list.
 
 **Right-click a selection → "Ask <agent>".** Select an error / log line / file path, right-click, pick any agent — a new tab spawns with the selection already submitted as the first prompt. Zero ⌘C / ⌘V to go from "what is this" to an actual answer.
@@ -114,7 +116,7 @@ Requires Xcode 26+ and macOS 14+ (Sonoma — `@Observable` is the floor).
 ./scripts/setup-libghostty.sh        # one-time: fetch the libghostty xcframework
 swift build
 swift run                            # dev mode
-swift test                           # 502 unit tests
+swift test                           # 523 unit tests
 
 ./scripts/build-app.sh               # writes dist/Kooky.app
 ./scripts/build-dmg.sh --build       # writes dist/Kooky-vX.Y.Z.dmg
