@@ -1861,6 +1861,28 @@ final class WorkspaceStoreTests: XCTestCase {
         let next = store.addTab(in: ws, template: .terminal)
         XCTAssertNil(engine(next).startedConfigs.last?.environment["KOOKY_AGENT"])
     }
+
+    func testRemoteHostSurvivesRemoteCommandsAndClearsOnLogoutMarker() {
+        let store = makeStore()
+        let ws = store.addWorkspace(workingDirectory: projectA)
+        guard let session = ws.activeSession else { return XCTFail("expected session") }
+
+        engine(session).emitTitle("\(RemoteLoginMarker.titlePrefix)deploy@example.com")
+        XCTAssertEqual(session.remoteHost, "deploy@example.com")
+
+        // A REMOTE shell with its own integration emits OSC 133;D through
+        // the connection on every remote command. That must NOT read as
+        // "ssh exited" — the SSH conversation (and its keep-awake claim)
+        // spans the whole connection.
+        engine(session).emitCommandFinished(exit: 0, duration: 1)
+        XCTAssertEqual(session.remoteHost, "deploy@example.com",
+                       "a remote command finishing must not clear the live SSH host")
+
+        // The wrapper's logout marker — emitted after ssh actually returns —
+        // is the one true clear signal.
+        engine(session).emitTitle(RemoteLoginMarker.logoutTitle)
+        XCTAssertNil(session.remoteHost)
+    }
 }
 
 private extension PersistedPaneNode {

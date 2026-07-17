@@ -1502,9 +1502,15 @@ final class WorkspaceStore {
             guard let session else { return }
             // A `kooky-remote-login:*` title is an ssh-destination marker, not
             // a visible title — record the host and stop before it reaches
-            // `terminalTitle`. Cleared on command-finished (ssh exit).
+            // `terminalTitle`. Cleared ONLY by the wrapper's logout marker
+            // below: OSC 133;D is not "ssh exited" (a remote shell's own
+            // integration emits it per remote command, through the wire).
             if let host = RemoteLoginMarker.parseTitle(title) {
                 session.remoteHost = host
+                return
+            }
+            if RemoteLoginMarker.isLogoutTitle(title) {
+                session.remoteHost = nil
                 return
             }
             // Any `kooky-agent:*` title is a status marker, never a visible
@@ -1537,16 +1543,17 @@ final class WorkspaceStore {
             guard let session else { return }
             // A remote agent surfaced via an OSC marker (transientAgent) emits
             // no `ended` marker when the ssh drops abnormally (network loss,
-            // killed connection). The local command finishing — the `ssh`
-            // itself returning to the prompt — is the reliable "remote session
-            // over" signal, so clear the transient promotion here too. During a
-            // live ssh the local shell is blocked, so this never fires mid-
-            // session and can't clear a still-running remote agent early.
+            // killed connection), so command-finished stays its safety net.
+            // Safe even though a REMOTE shell integration's 133;D also lands
+            // here: while a remote agent runs it owns the remote foreground,
+            // so no remote prompt (hence no D) can fire mid-agent.
+            // `remoteHost` is different — it must survive remote-command D's
+            // for the whole connection, so it's cleared by the wrapper's
+            // logout marker in onTitleChange, NOT here.
             if session.transientAgent != nil {
                 session.transientAgent = nil
                 session.activityState = .idle
             }
-            session.remoteHost = nil
             // Codex blocks the shell while it runs, so this firing means Codex
             // exited (or any other command finished) — drop the usage gauge and
             // stop watching the now-static rollout. Reliable even on an abnormal

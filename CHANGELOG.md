@@ -2,6 +2,14 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.36.0 — 2026-07-17
+
+- New: keep-awake — kooky can stop your Mac from sleeping while work is running. A breathing status light sits at the top right; click it to cycle Off → Auto → Always (also in Settings → General).
+- Auto keeps the Mac awake while an agent is working or an SSH session is connected — lid closed included, after a one-time admin authorization — and lets it sleep normally again the moment the work ends.
+- Always keeps the Mac awake unconditionally until you switch it down, like a caffeinate you can see.
+- Changes made outside kooky stay in sync: turning sleep-disable on in any terminal shows up as Always within seconds, turning it off externally switches the dial off.
+- Fixed: an SSH session's remote-login state (status bar host, keep-awake) no longer drops after the first remote command finishes on hosts with their own shell integration.
+
 ## v0.35.0 — 2026-07-10
 
 - New: recent project folders — kooky now remembers every folder you open a workspace on. Reopen one from File → Open Recent, or press ⌘P and type the project's name: folders you've closed show up as "recent" entries and reopen with a single Enter. (#28)

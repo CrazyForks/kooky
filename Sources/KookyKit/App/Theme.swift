@@ -236,6 +236,10 @@ enum Theme {
     static let gitInsertion = Color(.sRGB, red: 0.45, green: 0.78, blue: 0.50, opacity: 1)
     static let gitDeletion = activityFailure
 
+    /// Keep-awake status light (top strip). Tuned to read like the MacBook
+    /// keyboard's Caps Lock LED — a bright, luminous emerald.
+    static let keepAwakeGreen = Color(.sRGB, red: 0.30, green: 0.91, blue: 0.45, opacity: 1)
+
     // MARK: Fonts
     private static let displayName = "Onest"
     private static let monoName = "JetBrainsMono-Regular"

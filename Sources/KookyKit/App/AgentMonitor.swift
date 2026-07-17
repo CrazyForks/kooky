@@ -92,6 +92,27 @@ final class AgentMonitor {
         if session.activityState == .running { return .running }
         return .idle
     }
+
+    /// True when any session is actively working — an agent running, or a
+    /// live SSH conversation (`remoteHost`: set by the login marker, cleared
+    /// by the wrapper's logout marker, so it spans the whole connection).
+    /// SleepGuard's busy input. A short-circuiting walk on purpose, NOT
+    /// `entries`: entries allocates, sorts, and reads every session's
+    /// `title` (cwd-derived), which would both waste work and re-fire
+    /// observers on every cd / OSC title update.
+    var hasActiveWork: Bool {
+        _ = windowGeneration   // re-walk when the window set changes
+        return storesProvider().contains { store in
+            store.workspaces.contains { workspace in
+                workspace.root.allPanes.contains { pane in
+                    pane.tabs.contains { session in
+                        session.remoteHost != nil
+                            || (!session.displayAgent.isShell && session.activityState == .running)
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// `Theme.activity*` is @MainActor; resolve the per-state accent here so both

@@ -71,6 +71,9 @@ struct ContentView: View {
                 }
             }
             InboxBell()
+            // Rightmost on purpose: a status light lives in the corner —
+            // like a hardware power LED — not mixed into the action buttons.
+            KeepAwakeButton()
                 .padding(.trailing, 8)
         }
         .frame(height: 32)

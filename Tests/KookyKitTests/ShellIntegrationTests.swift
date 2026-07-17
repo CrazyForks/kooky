@@ -167,7 +167,16 @@ final class ShellIntegrationTests: XCTestCase {
         XCTAssertTrue(script.contains("! -t 0 || ! -t 1"), "must skip non-interactive ssh transport")
         XCTAssertTrue(script.contains("remote_command="), "must append exactly one remote shell command")
         XCTAssertTrue(script.contains("sh -lc"), "remote command should run through POSIX sh")
-        XCTAssertTrue(script.contains("exec \"$real\" -t \"${_kooky_mux_opts[@]}\" \"${args[@]}\" \"$remote_command\""))
+        // NO exec on the interactive path: the wrapper waits for ssh so it
+        // can emit the logout marker afterwards — the signal `remoteHost`'s
+        // whole-connection lifetime hangs on. INT/QUIT are ignored in the
+        // wrapper (ssh still gets them) so a Ctrl+C'd ssh can't abort the
+        // script before the marker; ssh's exit status is preserved.
+        XCTAssertTrue(script.contains("\"$real\" -t \"${_kooky_mux_opts[@]}\" \"${args[@]}\" \"$remote_command\""))
+        XCTAssertFalse(script.contains("exec \"$real\" -t"), "interactive path must not exec — the logout marker comes after ssh returns")
+        XCTAssertTrue(script.contains("trap '' INT QUIT"))
+        XCTAssertTrue(script.contains(RemoteLoginMarker.logoutTitle))
+        XCTAssertTrue(script.contains("exit \"$_kooky_ssh_status\""))
     }
 
     func testSshWrapperGatesAgentProtocolOnKookySshName() {

@@ -1174,7 +1174,16 @@ enum KookyShellIntegration {
             # ssh onto shared connections is not kooky's call to make.
             _kooky_mux_opts=(\(sshMultiplexOptions.joined(separator: " ")))
         fi
-        exec "$real" -t "${_kooky_mux_opts[@]}" "${args[@]}" "$remote_command"
+        # No exec: the wrapper must OUTLIVE ssh to emit the logout marker —
+        # the whole-connection-lifetime signal `remoteHost` is cleared by.
+        # Ignore INT/QUIT in the wrapper itself: the foreground ssh still
+        # receives them (same tty process group), and bash would otherwise
+        # abort the script after a Ctrl+C'd ssh and swallow the marker.
+        trap '' INT QUIT
+        "$real" -t "${_kooky_mux_opts[@]}" "${args[@]}" "$remote_command"
+        _kooky_ssh_status=$?
+        printf '\\033]2;\(RemoteLoginMarker.logoutTitle)\\a' > /dev/tty 2>/dev/null
+        exit "$_kooky_ssh_status"
         """
     }()
 

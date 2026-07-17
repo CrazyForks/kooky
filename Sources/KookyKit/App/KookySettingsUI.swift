@@ -105,6 +105,12 @@ final class KookySettingsModel {
     /// pill is hidden (the palette stays reachable via `⌘P` / the File menu).
     /// Persisted under `general.showSearchPill` (only when non-default).
     var showSearchPill: Bool = true
+    /// The sleep-protection dial (see `AwakeMode`): off / auto /
+    /// always. `SleepGuard` observes this. The `always` notch needs the
+    /// one-time privileged helper (`ClosedLidSleep`); first selection
+    /// triggers the admin auth. Persisted under `general.awakeMode`
+    /// (non-default only; default `auto`).
+    var awakeMode: AwakeMode = .auto
     /// Master switch for macOS notifications about a non-visible tab. When
     /// off, nothing is posted. The first post triggers the OS permission
     /// prompt. Persisted under `notifications.enabled` (only when non-default).
@@ -126,6 +132,34 @@ final class KookySettingsModel {
     var lastOpenInAppId: String? = nil
 
     private var saveWork: DispatchWorkItem?
+
+    /// The single entry for changing the awake dial — the status light,
+    /// the Settings control, and SleepGuard's reconcile seams all funnel
+    /// here. Persists, and stepping into `always` for the first time runs
+    /// the one-time privileged install (native admin prompt); a
+    /// cancelled/failed auth falls back to `auto` unless the user already
+    /// moved the dial again meanwhile. `runInstall: false` is the
+    /// reconcile variant — external-state absorption must never pop the
+    /// auth dialog.
+    func applyAwakeMode(_ mode: AwakeMode, runInstall: Bool = true) {
+        awakeMode = mode
+        scheduleSave()
+        guard runInstall, mode == .always, !ClosedLidSleep.isInstalled else { return }
+        ClosedLidSleep.install { [weak self] ok in
+            guard let self else { return }
+            if ok {
+                // The dial moved to `always` BEFORE the helper existed, so
+                // SleepGuard's earlier refresh saw helperReady == false and
+                // engaged nothing — and a successful install changes no
+                // observed state. Re-reconcile explicitly or the first
+                // authorization never actually disables lid sleep.
+                SleepGuard.shared.refresh()
+            } else if self.awakeMode == .always {
+                self.awakeMode = .auto
+                self.scheduleSave()
+            }
+        }
+    }
 
     init() { load() }
 
@@ -170,6 +204,7 @@ final class KookySettingsModel {
 
         let general = parsed["general"] as? [String: Any] ?? [:]
         showSearchPill = (general["showSearchPill"] as? Bool) ?? true
+        awakeMode = (general["awakeMode"] as? String).flatMap(AwakeMode.init) ?? .auto
 
         let notifications = parsed["notifications"] as? [String: Any] ?? [:]
         notificationsEnabled = (notifications["enabled"] as? Bool) ?? true
@@ -343,6 +378,7 @@ final class KookySettingsModel {
 
         var general = parsed["general"] as? [String: Any] ?? [:]
         general["showSearchPill"] = showSearchPill ? nil : false
+        general["awakeMode"] = awakeMode == .auto ? nil : awakeMode.rawValue
         if general.isEmpty {
             parsed.removeValue(forKey: "general")
         } else {
@@ -781,6 +817,33 @@ struct KookySettingsView: View {
                     .labelsHidden()
                     .toggleStyle(.switch)
             }
+            SettingsHairline()
+            // One dial, three notches of sleep protection (see AwakeMode).
+            // Segmented, not a menu — all three notches visible at once.
+            // The binding funnels through applyAwakeMode so the always-notch
+            // auth flow runs no matter which control moved the dial.
+            SettingsRow(label: "keep-awake") {
+                Picker("", selection: Binding(
+                    get: { model.awakeMode },
+                    set: { model.applyAwakeMode($0) }
+                )) {
+                    Text("Off").tag(AwakeMode.off)
+                    Text("Auto").tag(AwakeMode.auto)
+                    Text("Always").tag(AwakeMode.always)
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                // Segmented pickers greedily stretch on macOS; pin to the
+                // intrinsic width so the row's Spacer right-aligns it like
+                // every other trailing control.
+                .fixedSize()
+            }
+            Text("Auto: stay awake while agents or SSH work even lid closed.\nAlways: always stay awake.")
+                .font(Theme.mono(11))
+                .foregroundStyle(Theme.chromeMuted)
+                .padding(.horizontal, 28)
+                .padding(.top, 6)
+                .padding(.bottom, 10)
             SettingsHairline()
             // SSH remote agent detection lives here now (it was its own
             // one-toggle category before). The settings.json key stays

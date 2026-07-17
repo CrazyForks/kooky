@@ -101,6 +101,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         AgentMonitor.shared.onActivate = { [weak self] sessionId in
             self?.activateFromNotification(sessionId)
         }
+        // Keep-awake watches the same monitor; start after its stores are wired.
+        SleepGuard.shared.start()
 
         // Sweep paste-image cache off the launch hot path. macOS's
         // own Caches eviction is unreliable; without this a heavy
@@ -465,6 +467,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         for controller in windowControllers {
             controller.store.flushPersistence()
         }
+        // If closed-lid mode is engaged, re-enable lid sleep before dying —
+        // a system-wide pmset flag outlives the process, unlike assertions.
+        SleepGuard.shared.shutdownCleanup()
         hookServer.stop()
         KookyShellIntegration.cleanup()
     }
