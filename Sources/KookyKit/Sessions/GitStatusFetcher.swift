@@ -4,11 +4,16 @@ import Foundation
 /// `branch == nil` means "not in a repo" (or git unavailable / errored).
 struct GitStatus: Equatable {
     var branch: String?
+    /// Absolute worktree root (`rev-parse --show-toplevel`). Drives the
+    /// status bar's repo pill: name = basename, popover = Finder reveal +
+    /// remote lookup. Nil inside a bare repo / `.git` dir — the pill hides,
+    /// branch still shows.
+    var repoRoot: String?
     var filesChanged: Int
     var insertions: Int
     var deletions: Int
 
-    static let empty = GitStatus(branch: nil, filesChanged: 0, insertions: 0, deletions: 0)
+    static let empty = GitStatus(branch: nil, repoRoot: nil, filesChanged: 0, insertions: 0, deletions: 0)
 }
 
 /// Per-file slice of the same diff `GitStatus` aggregates — insertions /
@@ -114,10 +119,25 @@ final class GitStatusFetcher {
     }
 
     nonisolated private static func run(cwd: String) -> GitStatus {
-        // `--abbrev-ref HEAD` returns the branch name, or "HEAD" when detached.
-        // Failure here usually means cwd isn't inside a repo — fall through to
-        // empty so the footer hides cleanly.
-        guard let head = runGit(["-C", cwd, "--no-optional-locks", "rev-parse", "--abbrev-ref", "HEAD"]) else {
+        // One spawn answers both "what branch" (`--abbrev-ref HEAD` — the
+        // name, or "HEAD" when detached) and "where's the root" for every
+        // healthy worktree, keeping the per-prompt spawn count flat. Outside
+        // one (bare repo, inside .git) the combined form exits non-zero and
+        // its stdout is untrustworthy (an unborn-HEAD repo echoes
+        // `--show-toplevel` literally), so fall back to the branch-only
+        // probe: its failure means "not a repo" (footer hides); success
+        // means a rootless-but-real repo (branch shows, repo pill hides).
+        let head: String
+        let repoRoot: String?
+        if let combined = runGit([
+            "-C", cwd, "--no-optional-locks", "rev-parse", "--abbrev-ref", "HEAD", "--show-toplevel",
+        ]), let newline = combined.firstIndex(of: "\n") {
+            head = String(combined[..<newline])
+            repoRoot = String(combined[combined.index(after: newline)...])
+        } else if let solo = runGit(["-C", cwd, "--no-optional-locks", "rev-parse", "--abbrev-ref", "HEAD"]) {
+            head = solo
+            repoRoot = nil
+        } else {
             return .empty
         }
         let branch: String
@@ -128,7 +148,7 @@ final class GitStatusFetcher {
         }
         let stat = runGit(["-C", cwd, "--no-optional-locks", "diff", "--shortstat", "HEAD"]) ?? ""
         let (files, ins, del) = parseShortstat(stat)
-        return GitStatus(branch: branch, filesChanged: files, insertions: ins, deletions: del)
+        return GitStatus(branch: branch, repoRoot: repoRoot, filesChanged: files, insertions: ins, deletions: del)
     }
 
     /// Accumulates a pipe's contents on a background thread. `@unchecked
@@ -238,5 +258,91 @@ enum GitBranchInventory {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .filter { seen.insert($0).inserted }
+    }
+}
+
+/// Browsable https page of a git remote, for the status bar's repo popover.
+struct GitRemoteWebInfo: Equatable {
+    var webURL: URL
+
+    var host: String { webURL.host ?? "" }
+
+    /// Substring heuristic so self-hosted instances (github.company.com,
+    /// gitlab.corp.net) still get the right forge name.
+    var forgeName: String {
+        let h = host.lowercased()
+        if h.contains("github") { return "GitHub" }
+        if h.contains("gitlab") { return "GitLab" }
+        if h.contains("bitbucket") { return "Bitbucket" }
+        return host
+    }
+
+    /// Synchronous remote lookup, called on popover open (the
+    /// `GitBranchInventory` precedent) — never per prompt, so an unclicked
+    /// pill costs zero subprocesses. One `git remote -v` answers the whole
+    /// question (origin, else first remote), so a hung git costs one 1s
+    /// timeout, not a chain of them.
+    static func resolve(repoRoot: String) -> GitRemoteWebInfo? {
+        let listing = GitStatusFetcher.runGit(["-C", repoRoot, "--no-optional-locks", "remote", "-v"]) ?? ""
+        return preferredRemoteURL(inRemoteListing: listing).flatMap(parse(remoteURL:))
+    }
+
+    /// Picks origin's fetch URL, else the first remote's, from
+    /// `git remote -v` output (`name<TAB>url (fetch|push)` lines).
+    static func preferredRemoteURL(inRemoteListing output: String) -> String? {
+        var first: String?
+        for line in output.split(whereSeparator: \.isNewline) {
+            guard line.hasSuffix(" (fetch)"), let tab = line.firstIndex(of: "\t") else { continue }
+            let url = line[line.index(after: tab)...]
+                .dropLast(" (fetch)".count)
+                .trimmingCharacters(in: .whitespaces)
+            if line[..<tab] == "origin" { return url }
+            if first == nil { first = url }
+        }
+        return first
+    }
+
+    /// Parses the common remote-URL shapes into an https page:
+    ///   git@github.com:owner/repo.git         (scp-like)
+    ///   ssh://git@github.com[:port]/owner/repo.git
+    ///   https://github.com/owner/repo[.git]
+    ///   git://github.com/owner/repo.git
+    /// Returns nil for local remotes (`file://`, absolute / relative paths).
+    static func parse(remoteURL raw: String) -> GitRemoteWebInfo? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let webOrigin: String
+        var path: String
+        if trimmed.contains("://") {
+            guard let url = URL(string: trimmed),
+                  let scheme = url.scheme?.lowercased(),
+                  ["https", "http", "ssh", "git"].contains(scheme),
+                  let host = url.host, !host.isEmpty
+            else { return nil }
+            if scheme == "http" || scheme == "https" {
+                // An http(s) remote's scheme/host/port ARE the web page's —
+                // keep them (a :8443 GitLab lives at :8443; an http-only
+                // forge has no https side). ssh/git ports are transport
+                // ports, not web ports, so those map to bare https below.
+                webOrigin = "\(scheme)://\(host)" + (url.port.map { ":\($0)" } ?? "")
+            } else {
+                webOrigin = "https://\(host)"
+            }
+            path = url.path
+        } else if let colon = trimmed.firstIndex(of: ":") {
+            // scp-like `[user@]host:path`. A user-less form is legal git but
+            // indistinguishable from odd local paths, so require no "/" on
+            // the host side.
+            let head = String(trimmed[..<colon])
+            let host = head.split(separator: "@").last.map(String.init) ?? head
+            guard !host.isEmpty, !host.contains("/") else { return nil }
+            webOrigin = "https://\(host)"
+            path = String(trimmed[trimmed.index(after: colon)...])
+        } else {
+            return nil
+        }
+        path = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if path.lowercased().hasSuffix(".git") { path.removeLast(4) }
+        guard !path.isEmpty, let web = URL(string: "\(webOrigin)/\(path)") else { return nil }
+        return GitRemoteWebInfo(webURL: web)
     }
 }

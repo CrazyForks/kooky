@@ -2,6 +2,11 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.37.0 — 2026-07-19
+
+- New: git repo in the status bar — the pane status bar now shows the active tab's repository name. Click it to open the repo on GitHub (GitLab / Bitbucket and self-hosted instances are recognized too), copy the repo URL, or reveal the repo folder in Finder.
+- The slot sits next to the git branch and can be reordered or hidden in Settings → Status Bar like every other slot.
+
 ## v0.36.0 — 2026-07-17
 
 - New: keep-awake — kooky can stop your Mac from sleeping while work is running. A breathing status light sits at the top right; click it to cycle Off → Auto → Always (also in Settings → General).

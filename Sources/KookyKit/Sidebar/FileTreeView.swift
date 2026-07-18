@@ -284,10 +284,7 @@ private struct FileTreeRowView: View {
                     NSWorkspace.shared.open(node.url)
                 }
             }
-            KookyMenuRow(title: "Reveal in Finder") {
-                isContextMenuOpen = false
-                NSWorkspace.shared.activateFileViewerSelecting([node.url])
-            }
+            RevealInFinderMenuRow(url: node.url) { isContextMenuOpen = false }
             KookyMenuDivider()
             KookyMenuRow(title: "Copy Path") {
                 isContextMenuOpen = false

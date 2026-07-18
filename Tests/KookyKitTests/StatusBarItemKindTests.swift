@@ -23,6 +23,7 @@ final class StatusBarItemKindTests: XCTestCase {
         XCTAssertEqual(StatusBarItemKind.pythonVenv.rawValue, "python-venv")
         XCTAssertEqual(StatusBarItemKind.nodeVersion.rawValue, "node-version")
         XCTAssertEqual(StatusBarItemKind.proxy.rawValue, "proxy")
+        XCTAssertEqual(StatusBarItemKind.gitRepo.rawValue, "git-repo")
         XCTAssertEqual(StatusBarItemKind.gitBranch.rawValue, "git-branch")
         XCTAssertEqual(StatusBarItemKind.gitDiff.rawValue, "git-diff")
     }

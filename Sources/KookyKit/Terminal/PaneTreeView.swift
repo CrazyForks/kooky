@@ -154,6 +154,7 @@ enum StatusBarItemKind: String, CaseIterable, Codable, Hashable, Sendable {
     case nodeVersion = "node-version"
     case proxy
     case remoteLogin = "remote-login"
+    case gitRepo = "git-repo"
     case gitBranch = "git-branch"
     case gitDiff = "git-diff"
 
@@ -165,6 +166,7 @@ enum StatusBarItemKind: String, CaseIterable, Codable, Hashable, Sendable {
         case .nodeVersion: return "Node version"
         case .proxy: return "Proxy"
         case .remoteLogin: return "Remote Login"
+        case .gitRepo: return "Git repo"
         case .gitBranch: return "Git branch"
         case .gitDiff: return "Git diff"
         }
@@ -182,6 +184,7 @@ enum StatusBarItemKind: String, CaseIterable, Codable, Hashable, Sendable {
         case .nodeVersion: return "hexagon"
         case .proxy: return "network"
         case .remoteLogin: return "person.fill"
+        case .gitRepo: return "folder"
         case .gitBranch: return "arrow.triangle.branch"
         case .gitDiff: return "plusminus"
         }
@@ -197,7 +200,8 @@ enum StatusBarItemKind: String, CaseIterable, Codable, Hashable, Sendable {
     /// touched Settings → Status Bar. Tool-call activity goes first so a
     /// fresh Settings → Status Bar list renders it at the top.
     static let defaultOrder: [StatusBarItemKind] = [
-        .toolCallActivity, .codexUsage, .remoteLogin, .pythonVenv, .nodeVersion, .proxy, .gitBranch, .gitDiff,
+        .toolCallActivity, .codexUsage, .remoteLogin, .pythonVenv, .nodeVersion, .proxy, .gitRepo, .gitBranch,
+        .gitDiff,
     ]
 }
 
@@ -222,6 +226,7 @@ func paneStatusBarHasData(session: Session) -> Bool {
         case .nodeVersion: if session.environment.nodeVersion != nil { return true }
         case .proxy: if session.environment.proxy != nil { return true }
         case .remoteLogin: if session.remoteHost != nil { return true }
+        case .gitRepo: if session.gitStatus.repoRoot != nil { return true }
         case .gitBranch: if session.gitStatus.branch != nil { return true }
         case .gitDiff: if session.gitStatus.branch != nil && session.gitStatus.filesChanged > 0 { return true }
         }
@@ -393,6 +398,7 @@ private struct PaneStatusBar: View {
         case .nodeVersion: nodeSegment
         case .proxy: proxySegment
         case .remoteLogin: remoteLoginSegment
+        case .gitRepo: repoSegment
         case .gitBranch: branchSegment
         case .gitDiff: diffSegment
         }
@@ -443,6 +449,13 @@ private struct PaneStatusBar: View {
                     .truncationMode(.middle)
                     .foregroundStyle(Theme.chromeForeground)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var repoSegment: some View {
+        if let root = session.gitStatus.repoRoot {
+            GitRepoStatusSegment(repoRoot: root)
         }
     }
 
@@ -598,15 +611,56 @@ struct SignedNumber: View {
     }
 }
 
-/// A `StatusSegment` you can click — opens a popover listing alternatives,
-/// click one to inject a shell command. Shared shell for both the Node
-/// version switcher and the git branch switcher; new switchers (Python
-/// versions, mise tools, …) just instantiate with their own loader +
-/// formatter.
-///
-/// `loadItems` is called only on click, not on `onAppear` — popover content
-/// is what triggers the inventory work, so a tab the user never opens the
-/// switcher on does zero filesystem / subprocess.
+/// Shared shell for every clickable status-bar pill: `StatusSegment` label,
+/// hover/open fill, click → `KookyMenuList` popover. `onOpen` runs right
+/// before the popover presents — inventories load on click, never per
+/// prompt, so a pill the user never opens does zero filesystem /
+/// subprocess. `content` receives a `dismiss` closure for its rows to
+/// close the popover.
+private struct PopoverStatusSegment<Content: View>: View {
+    let systemImage: String
+    let label: String
+    let helpText: String
+    let popoverWidth: CGFloat
+    let popoverMaxHeight: CGFloat
+    var onOpen: () -> Void = {}
+    @ViewBuilder var content: (@escaping () -> Void) -> Content
+
+    @State private var isOpen = false
+    @State private var isHovered = false
+
+    var body: some View {
+        Button {
+            onOpen()
+            isOpen.toggle()
+        } label: {
+            StatusSegment(systemImage: systemImage) {
+                Text(label)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .foregroundStyle(Theme.chromeForeground)
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(isHovered || isOpen ? Theme.chromeHover : .clear)
+            )
+        }
+        .buttonStyle(.plain)
+        .contentShape(RoundedRectangle(cornerRadius: 4))
+        .help(helpText)
+        .onHover { isHovered = $0 }
+        .popover(isPresented: $isOpen, arrowEdge: .bottom) {
+            KookyMenuList(width: popoverWidth, maxHeight: popoverMaxHeight) {
+                content { isOpen = false }
+            }
+        }
+    }
+}
+
+/// A pill listing alternatives — click one to inject a shell command.
+/// Shared by the Node version switcher and the git branch switcher; new
+/// switchers (Python versions, mise tools, …) just instantiate with their
+/// own loader + formatter.
 private struct SwitchableStatusSegment<Item: Hashable>: View {
     let systemImage: String
     let label: String
@@ -620,48 +674,70 @@ private struct SwitchableStatusSegment<Item: Hashable>: View {
     let commandFor: (Item) -> String
     let session: Session
 
-    @State private var isSwitcherOpen = false
-    @State private var isHovered = false
     @State private var items: [Item] = []
 
     var body: some View {
-        Button {
-            items = loadItems()
-            isSwitcherOpen.toggle()
-        } label: {
-            StatusSegment(systemImage: systemImage) {
-                Text(label)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .foregroundStyle(Theme.chromeForeground)
-            }
-            .background(
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(isHovered || isSwitcherOpen ? Theme.chromeHover : .clear)
-            )
-        }
-        .buttonStyle(.plain)
-        .contentShape(RoundedRectangle(cornerRadius: 4))
-        .help(helpText)
-        .onHover { isHovered = $0 }
-        .popover(isPresented: $isSwitcherOpen, arrowEdge: .bottom) {
-            KookyMenuList(width: popoverWidth, maxHeight: popoverMaxHeight) {
-                if items.isEmpty {
-                    KookyMenuRow(title: emptyMessage, isDisabled: true) {}
-                } else {
-                    ForEach(items, id: \.self) { item in
-                        let current = isCurrent(item)
-                        KookyMenuRow(
-                            title: titleFor(item),
-                            isDisabled: current,
-                            leading: { menuRowCheckmark(visible: current) }
-                        ) {
-                            isSwitcherOpen = false
-                            session.engine.sendInput(commandFor(item))
-                        }
+        PopoverStatusSegment(
+            systemImage: systemImage,
+            label: label,
+            helpText: helpText,
+            popoverWidth: popoverWidth,
+            popoverMaxHeight: popoverMaxHeight,
+            onOpen: { items = loadItems() }
+        ) { dismiss in
+            if items.isEmpty {
+                KookyMenuRow(title: emptyMessage, isDisabled: true) {}
+            } else {
+                ForEach(items, id: \.self) { item in
+                    let current = isCurrent(item)
+                    KookyMenuRow(
+                        title: titleFor(item),
+                        isDisabled: current,
+                        leading: { menuRowCheckmark(visible: current) }
+                    ) {
+                        dismiss()
+                        session.engine.sendInput(commandFor(item))
                     }
                 }
             }
+        }
+    }
+}
+
+/// Repo-name pill → popover: open the repo's web page, copy its URL,
+/// Reveal in Finder. The remote is resolved on click, not per prompt — the
+/// fetcher only carries the repo root, so an unclicked pill costs zero
+/// extra subprocesses.
+private struct GitRepoStatusSegment: View {
+    let repoRoot: String
+
+    @State private var remote: GitRemoteWebInfo?
+
+    var body: some View {
+        PopoverStatusSegment(
+            systemImage: "folder",
+            label: (repoRoot as NSString).lastPathComponent,
+            helpText: repoRoot,
+            popoverWidth: 230,
+            popoverMaxHeight: 320,
+            onOpen: { remote = GitRemoteWebInfo.resolve(repoRoot: repoRoot) }
+        ) { dismiss in
+            if let remote {
+                KookyMenuRow(title: "Open on \(remote.forgeName)") {
+                    dismiss()
+                    NSWorkspace.shared.open(remote.webURL)
+                }
+                Divider()
+                KookyMenuRow(title: "Copy Repo URL") {
+                    dismiss()
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(remote.webURL.absoluteString, forType: .string)
+                }
+            } else {
+                KookyMenuRow(title: "No remote configured", isDisabled: true) {}
+                Divider()
+            }
+            RevealInFinderMenuRow(url: URL(fileURLWithPath: repoRoot, isDirectory: true), dismiss: dismiss)
         }
     }
 }
@@ -673,44 +749,27 @@ private struct ProxyStatusSegment: View {
     let info: ProxyInfo
     let session: Session
 
-    @State private var isPopoverOpen = false
-    @State private var isHovered = false
-
     var body: some View {
-        Button {
-            isPopoverOpen.toggle()
-        } label: {
-            StatusSegment(systemImage: "network") {
-                Text(info.summary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .foregroundStyle(Theme.chromeForeground)
-            }
-            .background(
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(isHovered || isPopoverOpen ? Theme.chromeHover : .clear)
-            )
-        }
-        .buttonStyle(.plain)
-        .contentShape(RoundedRectangle(cornerRadius: 4))
-        .help("Show proxy env (click text to copy)")
-        .onHover { isHovered = $0 }
-        .popover(isPresented: $isPopoverOpen, arrowEdge: .bottom) {
-            KookyMenuList(width: 380, maxHeight: 240) {
-                ForEach(info.entries, id: \.self) { entry in
-                    ProxyEntryRow(entry: entry) {
-                        // Click entry text → copy raw `name=value` to clipboard.
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(entry, forType: .string)
-                        isPopoverOpen = false
-                    } onUnset: { name in
-                        // `unset` lowercase + uppercase together — corporate
-                        // shells often export both forms; clearing just one
-                        // leaves the other in effect.
-                        let upper = name.uppercased()
-                        session.engine.sendInput("unset \(name) \(upper)\r")
-                        isPopoverOpen = false
-                    }
+        PopoverStatusSegment(
+            systemImage: "network",
+            label: info.summary,
+            helpText: "Show proxy env (click text to copy)",
+            popoverWidth: 380,
+            popoverMaxHeight: 240
+        ) { dismiss in
+            ForEach(info.entries, id: \.self) { entry in
+                ProxyEntryRow(entry: entry) {
+                    // Click entry text → copy raw `name=value` to clipboard.
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(entry, forType: .string)
+                    dismiss()
+                } onUnset: { name in
+                    // `unset` lowercase + uppercase together — corporate
+                    // shells often export both forms; clearing just one
+                    // leaves the other in effect.
+                    let upper = name.uppercased()
+                    session.engine.sendInput("unset \(name) \(upper)\r")
+                    dismiss()
                 }
             }
         }

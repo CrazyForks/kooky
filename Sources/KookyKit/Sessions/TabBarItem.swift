@@ -81,10 +81,7 @@ struct TabBarItem: View {
                     onDuplicate()
                 }
                 KookyMenuDivider()
-                KookyMenuRow(title: "Reveal in Finder") {
-                    isContextMenuOpen = false
-                    NSWorkspace.shared.activateFileViewerSelecting([tab.currentDirectory])
-                }
+                RevealInFinderMenuRow(url: tab.currentDirectory) { isContextMenuOpen = false }
             }
             .padding(Theme.space1)
             .frame(minWidth: 240)

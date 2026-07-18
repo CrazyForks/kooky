@@ -58,7 +58,7 @@ AI コーディングのために作られた、ミニマルでモダンな macO
 
 **エディタやターミナルで開く。** 上部 chrome の分割ボタンが、現在の tab のディレクトリを別のアプリに渡します。アイコンをクリックすると直前に使ったアプリで再度開き、シェブロンをクリックすると Mac にインストール済みの対応アプリから選べます: VS Code · Cursor · Windsurf · Zed · Sublime Text · Antigravity · Trae · Kiro · Xcode · IntelliJ IDEA · PyCharm · WebStorm · Terminal · iTerm · Ghostty · Warp · Finder。Settings → Open in で並べ替えや非表示ができます。
 
-**作業環境の状態が一目で見える。** pane 下部のステータスバーに Git branch + diff (`N files +X −Y`)、Python venv、Node バージョン、有効中の proxy (`https_proxy` / `http_proxy` / `all_proxy`)、そしてリモートに SSH したときのログイン先 `user@host` (Settings → General で有効化) を表示。agent の Bash ツールや別ターミナルで branch を切り替えても自動で更新されます。Node バージョンや Git branch の pill をクリックすればコマンドを打たずに切り替え可能、proxy pill をクリックすると完全な `name=value` を表示してコピーできます。
+**作業環境の状態が一目で見える。** pane 下部のステータスバーに Git リポジトリ + branch + diff (`N files +X −Y`)、Python venv、Node バージョン、有効中の proxy (`https_proxy` / `http_proxy` / `all_proxy`)、そしてリモートに SSH したときのログイン先 `user@host` (Settings → General で有効化) を表示。agent の Bash ツールや別ターミナルで branch を切り替えても自動で更新されます。Node バージョンや Git branch の pill をクリックすればコマンドを打たずに切り替え可能、リポジトリの pill をクリックすると GitHub (GitLab / Bitbucket も対応) で開く・URL のコピー・Finder で表示ができ、proxy pill をクリックすると完全な `name=value` を表示してコピーできます。
 
 **SwiftUI ネイティブ、ミニマルな chrome。** Onest + JetBrains Mono。カスタム About パネル、ショートカットヒント付きのネイティブメニュー、日本語 IME を完全サポート。
 
@@ -116,7 +116,7 @@ Xcode 26+ と macOS 14+ (Sonoma —— `@Observable` の最低システム要件
 ./scripts/setup-libghostty.sh        # 初回のみ：プリビルドの libghostty xcframework を Vendor/ にダウンロード
 swift build
 swift run                            # 開発モードで直接起動
-swift test                           # 523 個のユニットテスト
+swift test                           # 547 個のユニットテスト
 
 ./scripts/build-app.sh               # dist/Kooky.app を出力
 ./scripts/build-dmg.sh --build       # dist/Kooky-vX.Y.Z.dmg を出力

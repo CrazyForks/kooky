@@ -58,7 +58,7 @@ A minimal modern terminal built for AI coding. Sidebar workspaces; horizontal / 
 
 **Open in your editor or terminal.** A split button in the top bar hands the current tab's directory to another app. Click the icon to reopen in your last-used app, or the chevron to pick from any supported app installed on your Mac: VS Code · Cursor · Windsurf · Zed · Sublime Text · Antigravity · Trae · Kiro · Xcode · IntelliJ IDEA · PyCharm · WebStorm · Terminal · iTerm · Ghostty · Warp · Finder. Reorder or hide them under Settings → Open in.
 
-**Live workspace state.** Pane status bar shows git branch + diff (`N files +X −Y`), Python venv, Node version, active proxy (`https_proxy` / `http_proxy` / `all_proxy`), and — when you SSH into a remote — the `user@host` you're logged into (turn it on under Settings → General). Auto-refreshes when an agent's Bash tool or another terminal switches branches. Click the Node or branch pill to switch versions / branches without typing; click the proxy pill to see and copy the full `name=value`.
+**Live workspace state.** Pane status bar shows the git repo + branch + diff (`N files +X −Y`), Python venv, Node version, active proxy (`https_proxy` / `http_proxy` / `all_proxy`), and — when you SSH into a remote — the `user@host` you're logged into (turn it on under Settings → General). Auto-refreshes when an agent's Bash tool or another terminal switches branches. Click the Node or branch pill to switch versions / branches without typing; click the repo pill to open it on GitHub (GitLab / Bitbucket too), copy its URL, or reveal it in Finder; click the proxy pill to see and copy the full `name=value`.
 
 **SwiftUI-native, minimal chrome.** Onest + JetBrains Mono. Custom About panel, native menus with shortcut hints, full IME support.
 
@@ -116,7 +116,7 @@ Requires Xcode 26+ and macOS 14+ (Sonoma — `@Observable` is the floor).
 ./scripts/setup-libghostty.sh        # one-time: fetch the libghostty xcframework
 swift build
 swift run                            # dev mode
-swift test                           # 523 unit tests
+swift test                           # 547 unit tests
 
 ./scripts/build-app.sh               # writes dist/Kooky.app
 ./scripts/build-dmg.sh --build       # writes dist/Kooky-vX.Y.Z.dmg

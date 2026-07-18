@@ -89,10 +89,7 @@ struct SidebarWorkspaceRow: View {
                     }
                 }
                 KookyMenuDivider()
-                KookyMenuRow(title: "Reveal in Finder") {
-                    isContextMenuOpen = false
-                    NSWorkspace.shared.activateFileViewerSelecting([workspace.workingDirectory])
-                }
+                RevealInFinderMenuRow(url: workspace.workingDirectory) { isContextMenuOpen = false }
             }
             .padding(Theme.space1)
             .frame(minWidth: 240)

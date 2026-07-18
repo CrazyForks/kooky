@@ -102,6 +102,21 @@ extension KookyMenuRow where Leading == EmptyView {
     }
 }
 
+/// The shared "Reveal in Finder" popover row — tab menu, workspace menu,
+/// file tree, and the status bar's repo pill all offer it; the 4th call
+/// site made it a primitive.
+struct RevealInFinderMenuRow: View {
+    let url: URL
+    let dismiss: () -> Void
+
+    var body: some View {
+        KookyMenuRow(title: "Reveal in Finder") {
+            dismiss()
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        }
+    }
+}
+
 extension View {
     /// 2pt drop-target indicator anchored to one edge of the view, animated on
     /// the `active` toggle. Used by reorder gestures (sidebar workspaces, tab
