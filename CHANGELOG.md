@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.37.1 — 2026-07-19
+
+- Fixed: programs running inside kooky that ask for macOS privacy-protected data — Calendars, Reminders, Contacts, Photos, Apple Events, local network, and more — now get the system permission prompt, and kooky appears under System Settings → Privacy & Security. Previously these requests were silently denied with no way to grant access. (#31)
+
 ## v0.37.0 — 2026-07-19
 
 - New: git repo in the status bar — the pane status bar now shows the active tab's repository name. Click it to open the repo on GitHub (GitLab / Bitbucket and self-hosted instances are recognized too), copy the repo URL, or reveal the repo folder in Finder.
