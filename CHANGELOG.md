@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.37.2 — 2026-07-20
+
+- Fixed: clicking the Node version, git branch, or git repo pill in the status bar could show a wrong empty menu ("No nvm versions found" / "No remote configured") even when versions, branches, or a remote existed. The menu now loads its list reliably every time it opens.
+
 ## v0.37.1 — 2026-07-19
 
 - Fixed: programs running inside kooky that ask for macOS privacy-protected data — Calendars, Reminders, Contacts, Photos, Apple Events, local network, and more — now get the system permission prompt, and kooky appears under System Settings → Privacy & Security. Previously these requests were silently denied with no way to grant access. (#31)

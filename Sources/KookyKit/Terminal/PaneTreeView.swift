@@ -612,18 +612,23 @@ struct SignedNumber: View {
 }
 
 /// Shared shell for every clickable status-bar pill: `StatusSegment` label,
-/// hover/open fill, click → `KookyMenuList` popover. `onOpen` runs right
-/// before the popover presents — inventories load on click, never per
-/// prompt, so a pill the user never opens does zero filesystem /
-/// subprocess. `content` receives a `dismiss` closure for its rows to
-/// close the popover.
+/// hover/open fill, click → `KookyMenuList` popover. `content` receives a
+/// `dismiss` closure for its rows to close the popover. Inventory work
+/// belongs in a child view INSIDE `content` that loads into its own
+/// `@State` on `.onAppear` (see `SwitcherMenuContent`) — once per
+/// presentation, zero cost for an unclicked pill. Two traps, both hit:
+/// do NOT load into the CALLER's `@State` from the click action (the
+/// popover content is hosted in its own view graph and reads that write
+/// back stale — the "No nvm versions found" bug), and do NOT load via a
+/// bare `let` at the top of `content` (the closure re-evaluates on every
+/// host re-render while the popover stays open — per-prompt git
+/// subprocesses on the main thread).
 private struct PopoverStatusSegment<Content: View>: View {
     let systemImage: String
     let label: String
     let helpText: String
     let popoverWidth: CGFloat
     let popoverMaxHeight: CGFloat
-    var onOpen: () -> Void = {}
     @ViewBuilder var content: (@escaping () -> Void) -> Content
 
     @State private var isOpen = false
@@ -631,7 +636,6 @@ private struct PopoverStatusSegment<Content: View>: View {
 
     var body: some View {
         Button {
-            onOpen()
             isOpen.toggle()
         } label: {
             StatusSegment(systemImage: systemImage) {
@@ -674,33 +678,66 @@ private struct SwitchableStatusSegment<Item: Hashable>: View {
     let commandFor: (Item) -> String
     let session: Session
 
-    @State private var items: [Item] = []
-
     var body: some View {
         PopoverStatusSegment(
             systemImage: systemImage,
             label: label,
             helpText: helpText,
             popoverWidth: popoverWidth,
-            popoverMaxHeight: popoverMaxHeight,
-            onOpen: { items = loadItems() }
+            popoverMaxHeight: popoverMaxHeight
         ) { dismiss in
-            if items.isEmpty {
-                KookyMenuRow(title: emptyMessage, isDisabled: true) {}
-            } else {
-                ForEach(items, id: \.self) { item in
-                    let current = isCurrent(item)
-                    KookyMenuRow(
-                        title: titleFor(item),
-                        isDisabled: current,
-                        leading: { menuRowCheckmark(visible: current) }
-                    ) {
-                        dismiss()
-                        session.engine.sendInput(commandFor(item))
+            SwitcherMenuContent(
+                emptyMessage: emptyMessage,
+                loadItems: loadItems,
+                isCurrent: isCurrent,
+                titleFor: titleFor,
+                commandFor: commandFor,
+                session: session,
+                dismiss: dismiss
+            )
+        }
+    }
+}
+
+/// Rows of a `SwitchableStatusSegment` popover. Owns the loaded inventory in
+/// its own `@State` (same view graph as the popover, so the write is visible)
+/// and loads it in `.onAppear` — identity persists across the content
+/// closure's re-evaluations while the popover is open, so the load runs once
+/// per presentation, not once per host re-render.
+private struct SwitcherMenuContent<Item: Hashable>: View {
+    let emptyMessage: String
+    let loadItems: () -> [Item]
+    let isCurrent: (Item) -> Bool
+    let titleFor: (Item) -> String
+    let commandFor: (Item) -> String
+    let session: Session
+    let dismiss: () -> Void
+
+    /// nil = not loaded yet (renders nothing for the pre-`onAppear` frame);
+    /// empty = loaded, genuinely no items → show `emptyMessage`.
+    @State private var items: [Item]?
+
+    var body: some View {
+        Group {
+            if let items {
+                if items.isEmpty {
+                    KookyMenuRow(title: emptyMessage, isDisabled: true) {}
+                } else {
+                    ForEach(items, id: \.self) { item in
+                        let current = isCurrent(item)
+                        KookyMenuRow(
+                            title: titleFor(item),
+                            isDisabled: current,
+                            leading: { menuRowCheckmark(visible: current) }
+                        ) {
+                            dismiss()
+                            session.engine.sendInput(commandFor(item))
+                        }
                     }
                 }
             }
         }
+        .onAppear { items = loadItems() }
     }
 }
 
@@ -711,33 +748,54 @@ private struct SwitchableStatusSegment<Item: Hashable>: View {
 private struct GitRepoStatusSegment: View {
     let repoRoot: String
 
-    @State private var remote: GitRemoteWebInfo?
-
     var body: some View {
         PopoverStatusSegment(
             systemImage: "folder",
             label: (repoRoot as NSString).lastPathComponent,
             helpText: repoRoot,
             popoverWidth: 230,
-            popoverMaxHeight: 320,
-            onOpen: { remote = GitRemoteWebInfo.resolve(repoRoot: repoRoot) }
+            popoverMaxHeight: 320
         ) { dismiss in
-            if let remote {
-                KookyMenuRow(title: "Open on \(remote.forgeName)") {
-                    dismiss()
-                    NSWorkspace.shared.open(remote.webURL)
+            GitRepoMenuContent(repoRoot: repoRoot, dismiss: dismiss)
+        }
+    }
+}
+
+/// Rows of the repo pill's popover. Same load-once-per-presentation shape as
+/// `SwitcherMenuContent` — `resolve` spawns `git remote -v`, which must not
+/// re-run on every host re-render while the popover is open.
+private struct GitRepoMenuContent: View {
+    let repoRoot: String
+    let dismiss: () -> Void
+
+    /// `loaded` distinguishes "not resolved yet" from "resolved, no remote".
+    @State private var remote: GitRemoteWebInfo?
+    @State private var loaded = false
+
+    var body: some View {
+        Group {
+            if loaded {
+                if let remote {
+                    KookyMenuRow(title: "Open on \(remote.forgeName)") {
+                        dismiss()
+                        NSWorkspace.shared.open(remote.webURL)
+                    }
+                    Divider()
+                    KookyMenuRow(title: "Copy Repo URL") {
+                        dismiss()
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(remote.webURL.absoluteString, forType: .string)
+                    }
+                } else {
+                    KookyMenuRow(title: "No remote configured", isDisabled: true) {}
+                    Divider()
                 }
-                Divider()
-                KookyMenuRow(title: "Copy Repo URL") {
-                    dismiss()
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(remote.webURL.absoluteString, forType: .string)
-                }
-            } else {
-                KookyMenuRow(title: "No remote configured", isDisabled: true) {}
-                Divider()
+                RevealInFinderMenuRow(url: URL(fileURLWithPath: repoRoot, isDirectory: true), dismiss: dismiss)
             }
-            RevealInFinderMenuRow(url: URL(fileURLWithPath: repoRoot, isDirectory: true), dismiss: dismiss)
+        }
+        .onAppear {
+            remote = GitRemoteWebInfo.resolve(repoRoot: repoRoot)
+            loaded = true
         }
     }
 }
