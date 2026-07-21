@@ -2,6 +2,11 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.37.3 — 2026-07-21
+
+- New: click the git diff pill (±) in the status bar to see which files changed — one row per file with its own +/− line counts, adding up to the totals on the pill. A "Show in File Tree" shortcut at the bottom jumps to the file tree, where changed files carry the same badges.
+- Fixed: status bar pill menus (Node version, git branch, git repo, proxy) could open blank or show "No … found" even when the data existed — most visibly on macOS 26.5, where an affected menu could stay stuck that way permanently. Menus now display their content reliably every time they open.
+
 ## v0.37.2 — 2026-07-20
 
 - Fixed: clicking the Node version, git branch, or git repo pill in the status bar could show a wrong empty menu ("No nvm versions found" / "No remote configured") even when versions, branches, or a remote existed. The menu now loads its list reliably every time it opens.

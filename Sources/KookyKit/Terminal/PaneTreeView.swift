@@ -483,23 +483,7 @@ private struct PaneStatusBar: View {
     private var diffSegment: some View {
         let s = session.gitStatus
         if s.branch != nil, s.filesChanged > 0 {
-            StatusSegment(systemImage: "plusminus") {
-                // Order mirrors `git diff --shortstat` itself: files → +N → −N.
-                // File count in chromeMuted (it's a count, not a delta) so the
-                // saturated +/- pair pops as the actual change signal.
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("\(s.filesChanged)")
-                        .foregroundStyle(Theme.chromeMuted)
-                    if s.insertions > 0 {
-                        SignedNumber(sign: "+", value: s.insertions, color: Theme.gitInsertion)
-                    }
-                    if s.deletions > 0 {
-                        // Unicode minus (U+2212), not hyphen — balanced
-                        // typographic pair with `+`.
-                        SignedNumber(sign: "−", value: s.deletions, color: Theme.gitDeletion)
-                    }
-                }
-            }
+            GitDiffStatusSegment(session: session, workspace: workspace, store: store)
         }
     }
 }
@@ -611,68 +595,153 @@ struct SignedNumber: View {
     }
 }
 
+/// The `+X −Y` cluster (muted `±` when neither count exists — binary or
+/// mode-only change) — single source for the file tree's diff badges and
+/// the diff popover's rows, so the sign glyphs (typographic minus U+2212),
+/// colors, and binary fallback stay one system across both surfaces.
+struct DiffCountBadge: View {
+    let insertions: Int
+    let deletions: Int
+    let fontSize: CGFloat
+
+    var body: some View {
+        HStack(spacing: 5) {
+            if insertions > 0 {
+                SignedNumber(sign: "+", value: insertions, color: Theme.gitInsertion)
+            }
+            if deletions > 0 {
+                SignedNumber(sign: "−", value: deletions, color: Theme.gitDeletion)
+            }
+            if insertions == 0 && deletions == 0 {
+                Text("±").foregroundStyle(Theme.chromeMuted)
+            }
+        }
+        .font(Theme.mono(fontSize))
+        .fixedSize()
+    }
+}
+
 /// Shared shell for every clickable status-bar pill: `StatusSegment` label,
-/// hover/open fill, click → `KookyMenuList` popover. `content` receives a
-/// `dismiss` closure for its rows to close the popover. Inventory work
-/// belongs in a child view INSIDE `content` that loads into its own
-/// `@State` on `.onAppear` (see `SwitcherMenuContent`) — once per
-/// presentation, zero cost for an unclicked pill. Two traps, both hit:
-/// do NOT load into the CALLER's `@State` from the click action (the
-/// popover content is hosted in its own view graph and reads that write
-/// back stale — the "No nvm versions found" bug), and do NOT load via a
-/// bare `let` at the top of `content` (the closure re-evaluates on every
-/// host re-render while the popover stays open — per-prompt git
-/// subprocesses on the main thread).
-private struct PopoverStatusSegment<Content: View>: View {
+/// hover/open fill, click → `KookyMenuList` popover. `loadSnapshot` runs
+/// off-main via a cancellable `.task` (a slow git spawn can't block the UI
+/// thread — the detach lives HERE so callers can't forget it) and the result
+/// is stored in the SAME item that triggers the presentation.
+/// `.popover(item:)` then hands that immutable snapshot to its independently
+/// hosted content on the first frame.
+///
+/// Keeping inventory in the caller's separate `@State` is not sufficient:
+/// on macOS 26.5 the popover host can retain the pre-write value even if
+/// presentation is deferred a runloop tick. Loading from `.onAppear` is also
+/// unsafe because empty initial content can freeze the popover at zero height.
+private struct PopoverStatusSegment<Snapshot: Sendable, Label: View, Content: View>: View {
     let systemImage: String
-    let label: String
     let helpText: String
     let popoverWidth: CGFloat
     let popoverMaxHeight: CGFloat
-    @ViewBuilder var content: (@escaping () -> Void) -> Content
+    let loadSnapshot: @Sendable () -> Snapshot
+    var onSnapshotLoaded: (Snapshot) -> Void = { _ in }
+    @ViewBuilder var label: () -> Label
+    @ViewBuilder var content: (Snapshot, @escaping () -> Void) -> Content
 
-    @State private var isOpen = false
+    @State private var presentation: PopoverPresentation<Snapshot>?
+    @State private var loadRequest: UUID?
     @State private var isHovered = false
 
     var body: some View {
         Button {
-            isOpen.toggle()
+            toggleMenu()
         } label: {
             StatusSegment(systemImage: systemImage) {
-                Text(label)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .foregroundStyle(Theme.chromeForeground)
+                label()
             }
             .background(
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(isHovered || isOpen ? Theme.chromeHover : .clear)
+                    .fill(isHovered || presentation != nil || loadRequest != nil ? Theme.chromeHover : .clear)
             )
         }
         .buttonStyle(.plain)
         .contentShape(RoundedRectangle(cornerRadius: 4))
         .help(helpText)
         .onHover { isHovered = $0 }
-        .popover(isPresented: $isOpen, arrowEdge: .bottom) {
+        .popover(item: $presentation, arrowEdge: .bottom) { presented in
             KookyMenuList(width: popoverWidth, maxHeight: popoverMaxHeight) {
-                content { isOpen = false }
+                content(presented.value) { presentation = nil }
             }
         }
+        .task(id: loadRequest) {
+            guard let request = loadRequest else { return }
+            let loader = loadSnapshot
+            let snapshot = await Task.detached(priority: .userInitiated) { loader() }.value
+            guard !Task.isCancelled, loadRequest == request else { return }
+            // Set the item first: `onSnapshotLoaded` may refresh outer observed
+            // state (the git pill totals), but the popover already owns its
+            // immutable first-frame payload before that re-render is scheduled.
+            presentation = PopoverPresentation(value: snapshot)
+            onSnapshotLoaded(snapshot)
+            loadRequest = nil
+        }
+    }
+
+    private func toggleMenu() {
+        if presentation != nil {
+            presentation = nil
+            return
+        }
+        // A second click while loading cancels the request. `.task(id:)`
+        // handles view-disappearance cancellation as well.
+        loadRequest = loadRequest == nil ? UUID() : nil
+    }
+}
+
+/// Text-label convenience — keeps the pre-generalization signature so the
+/// node / branch / repo / proxy pills stay untouched. `AnyView` because the
+/// styled Text's modifier chain has no utterable concrete type (the
+/// `HoverableIconButton` precedent).
+extension PopoverStatusSegment where Label == AnyView {
+    init(
+        systemImage: String,
+        label: String,
+        helpText: String,
+        popoverWidth: CGFloat,
+        popoverMaxHeight: CGFloat,
+        loadSnapshot: @escaping @Sendable () -> Snapshot,
+        onSnapshotLoaded: @escaping (Snapshot) -> Void = { _ in },
+        @ViewBuilder content: @escaping (Snapshot, @escaping () -> Void) -> Content
+    ) {
+        self.init(
+            systemImage: systemImage,
+            helpText: helpText,
+            popoverWidth: popoverWidth,
+            popoverMaxHeight: popoverMaxHeight,
+            loadSnapshot: loadSnapshot,
+            onSnapshotLoaded: onSnapshotLoaded,
+            label: {
+                AnyView(
+                    Text(label)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .foregroundStyle(Theme.chromeForeground)
+                )
+            },
+            content: content
+        )
     }
 }
 
 /// A pill listing alternatives — click one to inject a shell command.
 /// Shared by the Node version switcher and the git branch switcher; new
 /// switchers (Python versions, mise tools, …) just instantiate with their
-/// own loader + formatter.
-private struct SwitchableStatusSegment<Item: Hashable>: View {
+/// own loader + formatter. Inventory becomes the presentation snapshot so
+/// the menu's first frame is complete — see
+/// `PopoverStatusSegment`'s presentation contract.
+private struct SwitchableStatusSegment<Item: Hashable & Sendable>: View {
     let systemImage: String
     let label: String
     let helpText: String
     let popoverWidth: CGFloat
     let popoverMaxHeight: CGFloat
     let emptyMessage: String
-    let loadItems: () -> [Item]
+    let loadItems: @Sendable () -> [Item]
     let isCurrent: (Item) -> Bool
     let titleFor: (Item) -> String
     let commandFor: (Item) -> String
@@ -684,67 +753,32 @@ private struct SwitchableStatusSegment<Item: Hashable>: View {
             label: label,
             helpText: helpText,
             popoverWidth: popoverWidth,
-            popoverMaxHeight: popoverMaxHeight
-        ) { dismiss in
-            SwitcherMenuContent(
-                emptyMessage: emptyMessage,
-                loadItems: loadItems,
-                isCurrent: isCurrent,
-                titleFor: titleFor,
-                commandFor: commandFor,
-                session: session,
-                dismiss: dismiss
-            )
-        }
-    }
-}
-
-/// Rows of a `SwitchableStatusSegment` popover. Owns the loaded inventory in
-/// its own `@State` (same view graph as the popover, so the write is visible)
-/// and loads it in `.onAppear` — identity persists across the content
-/// closure's re-evaluations while the popover is open, so the load runs once
-/// per presentation, not once per host re-render.
-private struct SwitcherMenuContent<Item: Hashable>: View {
-    let emptyMessage: String
-    let loadItems: () -> [Item]
-    let isCurrent: (Item) -> Bool
-    let titleFor: (Item) -> String
-    let commandFor: (Item) -> String
-    let session: Session
-    let dismiss: () -> Void
-
-    /// nil = not loaded yet (renders nothing for the pre-`onAppear` frame);
-    /// empty = loaded, genuinely no items → show `emptyMessage`.
-    @State private var items: [Item]?
-
-    var body: some View {
-        Group {
-            if let items {
-                if items.isEmpty {
-                    KookyMenuRow(title: emptyMessage, isDisabled: true) {}
-                } else {
-                    ForEach(items, id: \.self) { item in
-                        let current = isCurrent(item)
-                        KookyMenuRow(
-                            title: titleFor(item),
-                            isDisabled: current,
-                            leading: { menuRowCheckmark(visible: current) }
-                        ) {
-                            dismiss()
-                            session.engine.sendInput(commandFor(item))
-                        }
+            popoverMaxHeight: popoverMaxHeight,
+            loadSnapshot: loadItems
+        ) { items, dismiss in
+            if items.isEmpty {
+                KookyMenuRow(title: emptyMessage, isDisabled: true) {}
+            } else {
+                ForEach(items, id: \.self) { item in
+                    let current = isCurrent(item)
+                    KookyMenuRow(
+                        title: titleFor(item),
+                        isDisabled: current,
+                        leading: { menuRowCheckmark(visible: current) }
+                    ) {
+                        dismiss()
+                        session.engine.sendInput(commandFor(item))
                     }
                 }
             }
         }
-        .onAppear { items = loadItems() }
     }
 }
 
 /// Repo-name pill → popover: open the repo's web page, copy its URL,
-/// Reveal in Finder. The remote is resolved on click, not per prompt — the
-/// fetcher only carries the repo root, so an unclicked pill costs zero
-/// extra subprocesses.
+/// Reveal in Finder. The remote is resolved into the presentation snapshot
+/// on click, so an unclicked pill costs zero subprocesses and the first frame
+/// carries the final rows.
 private struct GitRepoStatusSegment: View {
     let repoRoot: String
 
@@ -754,49 +788,137 @@ private struct GitRepoStatusSegment: View {
             label: (repoRoot as NSString).lastPathComponent,
             helpText: repoRoot,
             popoverWidth: 230,
-            popoverMaxHeight: 320
-        ) { dismiss in
-            GitRepoMenuContent(repoRoot: repoRoot, dismiss: dismiss)
+            popoverMaxHeight: 320,
+            loadSnapshot: { [repoRoot] in GitRemoteWebInfo.resolve(repoRoot: repoRoot) }
+        ) { remote, dismiss in
+            if let remote {
+                KookyMenuRow(title: "Open on \(remote.forgeName)") {
+                    dismiss()
+                    NSWorkspace.shared.open(remote.webURL)
+                }
+                Divider()
+                KookyMenuRow(title: "Copy Repo URL") {
+                    dismiss()
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(remote.webURL.absoluteString, forType: .string)
+                }
+            } else {
+                KookyMenuRow(title: "No remote configured", isDisabled: true) {}
+            }
+            Divider()
+            RevealInFinderMenuRow(url: URL(fileURLWithPath: repoRoot, isDirectory: true), dismiss: dismiss)
         }
     }
 }
 
-/// Rows of the repo pill's popover. Same load-once-per-presentation shape as
-/// `SwitcherMenuContent` — `resolve` spawns `git remote -v`, which must not
-/// re-run on every host re-render while the popover is open.
-private struct GitRepoMenuContent: View {
-    let repoRoot: String
-    let dismiss: () -> Void
+/// The click-time payload for one diff-pill popover: the cwd it was fetched
+/// for (staleness guard) and the numstat result, which carries its own repo
+/// root (nil = git failed/timed out).
+private struct GitDiffPresentationSnapshot: Sendable {
+    let cwdPath: String
+    let diff: GitDiffSnapshot?
+}
 
-    /// `loaded` distinguishes "not resolved yet" from "resolved, no remote".
-    @State private var remote: GitRemoteWebInfo?
-    @State private var loaded = false
+/// The diff pill: count + colored ±N composite label; popover lists one
+/// changed file per row with the same `+X −Y` badge language as the file
+/// tree, plus a footer that jumps to the tree itself. numstat runs in
+/// the presentation snapshot on click — never per host re-render, and the
+/// menu's first frame is complete.
+private struct GitDiffStatusSegment: View {
+    @Bindable var session: Session
+    @Bindable var workspace: Workspace
+    let store: WorkspaceStore
 
     var body: some View {
-        Group {
-            if loaded {
-                if let remote {
-                    KookyMenuRow(title: "Open on \(remote.forgeName)") {
-                        dismiss()
-                        NSWorkspace.shared.open(remote.webURL)
+        let status = session.gitStatus
+        let cwdPath = session.currentDirectory.path
+        PopoverStatusSegment(
+            systemImage: "plusminus",
+            helpText: "Show changed files",
+            popoverWidth: 320,
+            popoverMaxHeight: 360,
+            loadSnapshot: {
+                GitDiffPresentationSnapshot(
+                    cwdPath: cwdPath,
+                    diff: GitStatusFetcher.diffSnapshot(cwd: cwdPath)
+                )
+            },
+            onSnapshotLoaded: { loaded in
+                // The popover rows and the pill totals come from the same
+                // numstat, so fold the fresher totals into the pill — via the
+                // store so the fetcher's generation token and the file-tree
+                // badge piggyback stay in the loop (a view-local write would
+                // let an in-flight prompt fetch overwrite this, and would
+                // move the pill while the tree badges stay stale).
+                guard let diff = loaded.diff else { return }
+                store.applyDiffSnapshot(diff, for: session, cwdPath: loaded.cwdPath)
+            },
+            label: {
+                // Order mirrors `git diff --shortstat` itself: files → +N → −N.
+                // File count in chromeMuted (it's a count, not a delta) so the
+                // saturated +/- pair pops as the actual change signal.
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("\(status.filesChanged)")
+                        .foregroundStyle(Theme.chromeMuted)
+                    if status.insertions > 0 {
+                        SignedNumber(sign: "+", value: status.insertions, color: Theme.gitInsertion)
                     }
-                    Divider()
-                    KookyMenuRow(title: "Copy Repo URL") {
-                        dismiss()
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(remote.webURL.absoluteString, forType: .string)
+                    if status.deletions > 0 {
+                        // Unicode minus (U+2212), not hyphen — balanced
+                        // typographic pair with `+`.
+                        SignedNumber(sign: "−", value: status.deletions, color: Theme.gitDeletion)
                     }
-                } else {
-                    KookyMenuRow(title: "No remote configured", isDisabled: true) {}
-                    Divider()
                 }
-                RevealInFinderMenuRow(url: URL(fileURLWithPath: repoRoot, isDirectory: true), dismiss: dismiss)
+            }
+        ) { loaded, dismiss in
+            if let diff = loaded.diff, diff.entries.isEmpty {
+                KookyMenuRow(title: "No changes found", isDisabled: true) {}
+            } else if let diff = loaded.diff {
+                ForEach(diff.entries, id: \.path) { entry in
+                    GitDiffFileRow(entry: entry)
+                }
+            } else {
+                KookyMenuRow(title: "Unable to load changes", isDisabled: true) {}
+            }
+            Divider()
+            KookyMenuRow(title: "Show in File Tree") {
+                dismiss()
+                withAnimation(Theme.chromeTransition) {
+                    // A status-bar click does not focus its pane. Promote the
+                    // session explicitly, then root the tree at the SAME repo
+                    // whose repo-wide diff the popover just displayed — the
+                    // root travels inside the numstat snapshot, never from
+                    // the pill's possibly-stale `gitStatus`.
+                    store.activateTab(session, in: workspace)
+                    store.revealFileTree(
+                        root: (loaded.diff?.repoRoot).map { URL(fileURLWithPath: $0, isDirectory: true) }
+                    )
+                }
             }
         }
-        .onAppear {
-            remote = GitRemoteWebInfo.resolve(repoRoot: repoRoot)
-            loaded = true
+        .id(cwdPath)
+    }
+}
+
+/// Display-only row: repo-root-relative path + its `+X −Y` slice. Not a
+/// `KookyMenuRow` — file rows carry no action, so no hover affordance.
+/// Binary / mode-only changes (no countable lines) show the file tree's
+/// muted ±.
+private struct GitDiffFileRow: View {
+    let entry: GitDiffFileEntry
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(entry.path)
+                .font(Theme.display(12.5, weight: .regular))
+                .foregroundStyle(Theme.chromeForeground)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            DiffCountBadge(insertions: entry.insertions, deletions: entry.deletions, fontSize: 11)
         }
+        .padding(.horizontal, Theme.space2 + 2)
+        .padding(.vertical, 5)
     }
 }
 
@@ -813,9 +935,10 @@ private struct ProxyStatusSegment: View {
             label: info.summary,
             helpText: "Show proxy env (click text to copy)",
             popoverWidth: 380,
-            popoverMaxHeight: 240
-        ) { dismiss in
-            ForEach(info.entries, id: \.self) { entry in
+            popoverMaxHeight: 240,
+            loadSnapshot: { info.entries }
+        ) { entries, dismiss in
+            ForEach(entries, id: \.self) { entry in
                 ProxyEntryRow(entry: entry) {
                     // Click entry text → copy raw `name=value` to clipboard.
                     NSPasteboard.general.clearContents()

@@ -36,6 +36,24 @@ final class GitStatusFetcherTests: XCTestCase {
         XCTAssertTrue(GitStatusFetcher.parseNumstat("").isEmpty)
     }
 
+    func testOrderedDiffEntriesSortsByPath() {
+        // Diff pill popover rows: numstat order (git's index order) is
+        // replaced by an explicit path sort; binary (`-`) and rename records
+        // survive the mapping with the parse's semantics intact.
+        let raw = "0\t7\tzeta/tail.md\u{0}-\t-\timg/icon.png\u{0}5\t1\t\u{0}old/Name.swift\u{0}alpha/Name.swift\u{0}"
+        let entries = GitStatusFetcher.orderedDiffEntries(numstat: raw)
+        XCTAssertEqual(entries.map(\.path), ["alpha/Name.swift", "img/icon.png", "zeta/tail.md"])
+        XCTAssertEqual(entries[0].insertions, 5)
+        XCTAssertEqual(entries[0].deletions, 1)
+        XCTAssertEqual(entries[1].insertions, 0)
+        XCTAssertEqual(entries[1].deletions, 0)
+
+        let snapshot = GitDiffSnapshot(repoRoot: "/tmp/repo", entries: entries)
+        XCTAssertEqual(snapshot.filesChanged, 3)
+        XCTAssertEqual(snapshot.insertions, 5)
+        XCTAssertEqual(snapshot.deletions, 8)
+    }
+
     // MARK: - runGit pipe draining
 
     func testRunGitDrainsOutputLargerThanPipeBuffer() throws {

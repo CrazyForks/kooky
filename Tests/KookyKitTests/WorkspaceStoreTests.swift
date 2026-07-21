@@ -1256,6 +1256,101 @@ final class WorkspaceStoreTests: XCTestCase {
         XCTAssertNotNil(store.pendingRenameWorkspace)
     }
 
+    func testRevealFileTreePromotesSidebarToFullFilesMode() {
+        // Diff pill popover's "Show in File Tree": whatever state the sidebar
+        // is in, it must land visible + full (the tree only mounts in the
+        // full sidebar) with files content.
+        let store = makeStore()
+        store.addWorkspace(workingDirectory: projectA)
+
+        store.setSidebarMode(.hidden)
+        store.revealFileTree(root: projectA)
+        XCTAssertEqual(store.sidebarMode, .full)
+        XCTAssertEqual(store.sidebarContent, .files)
+        XCTAssertEqual(store.fileTreeRoot?.path, projectA.path)
+
+        store.setSidebarMode(.compact)
+        store.setSidebarContent(.workspaces)
+        store.revealFileTree()
+        XCTAssertEqual(store.sidebarMode, .full)
+        XCTAssertEqual(store.sidebarContent, .files)
+
+        // Already full + files: a no-op, not a mode bounce.
+        store.revealFileTree()
+        XCTAssertEqual(store.sidebarMode, .full)
+        XCTAssertEqual(store.sidebarContent, .files)
+        XCTAssertEqual(store.fileTreeRoot?.path, store.active?.diskPath.path)
+    }
+
+    func testFileTreeRepoRootOverrideClearsWhenAnotherTabActivates() throws {
+        let store = makeStore()
+        let workspace = try XCTUnwrap(store.active)
+        let first = try XCTUnwrap(workspace.activeSession)
+        let second = store.addTab(
+            in: workspace,
+            template: .terminal,
+            initialCwd: projectB
+        )
+
+        store.activateTab(first, in: workspace)
+        store.revealFileTree(root: projectA)
+        XCTAssertEqual(store.fileTreeRoot?.path, projectA.path)
+
+        store.activateTab(second, in: workspace)
+        XCTAssertEqual(store.fileTreeRoot?.path, projectB.path)
+    }
+
+    func testApplyDiffSnapshotFoldsTotalsBehindCwdAndRepoGuards() throws {
+        // Diff pill click refresh: totals fold into the pill only when the
+        // session is still at the cwd the snapshot was fetched for AND the
+        // snapshot describes the repo the pill currently shows; branch /
+        // repoRoot are untouched (numstat carries no branch info).
+        let store = makeStore()
+        store.addWorkspace(workingDirectory: projectA)
+        let session = try XCTUnwrap(store.active?.activeSession)
+        session.gitStatus = GitStatus(
+            branch: "main", repoRoot: projectA.path,
+            filesChanged: 1, insertions: 2, deletions: 3
+        )
+        let entries = [
+            GitDiffFileEntry(path: "a.swift", insertions: 10, deletions: 4),
+            GitDiffFileEntry(path: "b.swift", insertions: 5, deletions: 1),
+        ]
+        let snapshot = GitDiffSnapshot(repoRoot: projectA.path, entries: entries)
+
+        // Stale click result (cwd moved while git was in flight) → ignored.
+        store.applyDiffSnapshot(snapshot, for: session, cwdPath: "/tmp/elsewhere")
+        XCTAssertEqual(session.gitStatus.filesChanged, 1)
+
+        // Mid-`cd` across repos: snapshot from a repo the pill isn't showing
+        // (its branch/root still belong to the old one) → ignored.
+        let foreign = GitDiffSnapshot(repoRoot: projectB.path, entries: entries)
+        store.applyDiffSnapshot(foreign, for: session, cwdPath: session.currentDirectory.path)
+        XCTAssertEqual(session.gitStatus.filesChanged, 1)
+
+        store.applyDiffSnapshot(snapshot, for: session, cwdPath: session.currentDirectory.path)
+        XCTAssertEqual(session.gitStatus.filesChanged, 2)
+        XCTAssertEqual(session.gitStatus.insertions, 15)
+        XCTAssertEqual(session.gitStatus.deletions, 5)
+        XCTAssertEqual(session.gitStatus.branch, "main")
+        XCTAssertEqual(session.gitStatus.repoRoot, projectA.path)
+    }
+
+    func testFileTreeRootOverrideCannotResurrectAfterDirectActiveWrite() throws {
+        // `addTab` promotes the new session by writing active ids directly
+        // (bypassing `activateTab`) — the override must die there, not lie
+        // dormant and resurrect when the original session reactivates.
+        let store = makeStore()
+        let workspace = try XCTUnwrap(store.active)
+        let revealed = try XCTUnwrap(workspace.activeSession)
+        store.revealFileTree(root: projectB)
+        XCTAssertEqual(store.fileTreeRoot?.path, projectB.path)
+
+        _ = store.addTab(in: workspace, template: .terminal)
+        store.activateTab(revealed, in: workspace)
+        XCTAssertEqual(store.fileTreeRoot?.path, workspace.diskPath.path)
+    }
+
     func testTerminateCancelsFileTreeWatchers() {
         let store = makeStore()
         store.addWorkspace(workingDirectory: projectA)

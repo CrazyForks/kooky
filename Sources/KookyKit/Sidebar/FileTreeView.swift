@@ -19,7 +19,7 @@ struct FileTreeView: View {
             content
         }
         .onAppear {
-            activationToken = model.activate(root: store.active?.diskPath)
+            activationToken = model.activate(root: store.fileTreeRoot)
             store.refreshFileTreeGitDiff()
         }
         // Tokened: an animated unmount's late onDisappear must not deactivate
@@ -28,7 +28,7 @@ struct FileTreeView: View {
         // Follows the active workspace, and — for plain workspaces, where
         // `diskPath == workingDirectory` — OSC 7 cwd drift; worktrees stay
         // pinned via `worktreePath`.
-        .onChange(of: store.active?.diskPath.path) { _, newPath in
+        .onChange(of: store.fileTreeRoot?.path) { _, newPath in
             model.setRoot(newPath.map { URL(fileURLWithPath: $0) })
             store.refreshFileTreeGitDiff()
         }
@@ -333,20 +333,8 @@ private struct FileTreeRowView: View {
             ? (row.isExpanded ? nil : model.gitDiffDirTotals[row.id])
             : model.gitDiff[row.id]
         if let counts {
-            HStack(spacing: 5) {
-                if counts.insertions > 0 {
-                    SignedNumber(sign: "+", value: counts.insertions, color: Theme.gitInsertion)
-                }
-                if counts.deletions > 0 {
-                    SignedNumber(sign: "−", value: counts.deletions, color: Theme.gitDeletion)
-                }
-                if counts.insertions == 0 && counts.deletions == 0 {
-                    Text("±").foregroundStyle(Theme.chromeMuted)
-                }
-            }
-            .font(Theme.mono(10))
-            .padding(.leading, Theme.space1)
-            .fixedSize()
+            DiffCountBadge(insertions: counts.insertions, deletions: counts.deletions, fontSize: 10)
+                .padding(.leading, Theme.space1)
         }
     }
 }

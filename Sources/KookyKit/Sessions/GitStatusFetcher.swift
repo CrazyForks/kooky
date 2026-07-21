@@ -25,6 +25,28 @@ struct GitFileDiff: Equatable {
     var deletions: Int
 }
 
+/// One row of the diff pill's popover: repo-root-relative path (numstat's
+/// native form — right for display) plus its slice of the diff.
+struct GitDiffFileEntry: Equatable, Sendable {
+    var path: String
+    var insertions: Int
+    var deletions: Int
+}
+
+/// One atomic `git diff --numstat` result for the diff pill. Rows, totals,
+/// AND the repo root come from the same click-time fetch, so the popover can
+/// never disagree with the numbers it refreshes on the pill, and "Show in
+/// File Tree" can never jump to a repo other than the one listed (the pill's
+/// own `gitStatus.repoRoot` can be stale mid-`cd` across repos).
+struct GitDiffSnapshot: Equatable, Sendable {
+    var repoRoot: String
+    var entries: [GitDiffFileEntry]
+
+    var filesChanged: Int { entries.count }
+    var insertions: Int { entries.reduce(0) { $0 + $1.insertions } }
+    var deletions: Int { entries.reduce(0) { $0 + $1.deletions } }
+}
+
 /// Spawns `git` on a background queue to populate `Session.gitStatus`.
 /// Refreshes are kicked from `WorkspaceStore` on (a) tab spawn, (b) cwd
 /// change via OSC 7, and (c) command finished via OSC 133;D. No polling.
@@ -48,6 +70,14 @@ final class GitStatusFetcher {
     /// paths (repo-root-joined), matching the file tree's row ids.
     func fetchFileDiffs(id: UUID, cwd: URL, completion: @MainActor @escaping ([String: GitFileDiff]) -> Void) {
         fetchTokened(id: id, cwd: cwd, work: Self.runFileDiffs, completion: completion)
+    }
+
+    /// Marks any in-flight fetch for `id` stale — its completion is dropped
+    /// when it lands. For results that arrive from OUTSIDE the fetch pipeline
+    /// (the diff pill's click-time numstat): applying one without bumping the
+    /// token would let a slower, older prompt-driven fetch overwrite it.
+    func invalidateInFlight(id: UUID) {
+        generation[id] = (generation[id] ?? 0) + 1
     }
 
     /// Shared dispatch shape for both fetches: bump the caller's generation
@@ -89,13 +119,31 @@ final class GitStatusFetcher {
         return result
     }
 
+    /// Popover companion to `fetchFileDiffs` — the same numstat diff, but
+    /// ordered by path and keeping the repo-root-relative paths for display.
+    /// Called off-main on pill click, so an unclicked pill costs zero extra
+    /// subprocesses and a slow repo cannot block the UI thread. Nil means a
+    /// git command failed/timed out (or no worktree); an empty snapshot is a
+    /// real clean tree.
+    nonisolated static func diffSnapshot(cwd: String) -> GitDiffSnapshot? {
+        guard let root = runGit(["-C", cwd, "--no-optional-locks", "rev-parse", "--show-toplevel"]),
+              let raw = runGit(["-C", cwd, "--no-optional-locks", "diff", "--numstat", "-z", "HEAD"])
+        else { return nil }
+        return GitDiffSnapshot(repoRoot: root, entries: orderedDiffEntries(numstat: raw))
+    }
+
+    /// Pure sort behind `diffSnapshot`, split out for tests.
+    nonisolated static func orderedDiffEntries(numstat raw: String) -> [GitDiffFileEntry] {
+        parseNumstat(raw).sorted { $0.path < $1.path }
+    }
+
     /// Parses `git diff --numstat -z` output. Records are NUL-separated:
     /// `ins\tdel\tpath` for normal entries; a rename emits `ins\tdel\t`
     /// followed by TWO extra NUL fields (pre-path, post-path) — we keep the
     /// post-path (the name on disk now). Binary files print `-` for both
     /// counts → (0, 0).
-    nonisolated static func parseNumstat(_ raw: String) -> [(path: String, insertions: Int, deletions: Int)] {
-        var entries: [(String, Int, Int)] = []
+    nonisolated static func parseNumstat(_ raw: String) -> [GitDiffFileEntry] {
+        var entries: [GitDiffFileEntry] = []
         let fields = raw.split(separator: "\0", omittingEmptySubsequences: false).map(String.init)
         var i = 0
         while i < fields.count {
@@ -113,7 +161,7 @@ final class GitStatusFetcher {
                 i += 2
             }
             guard !path.isEmpty else { continue }
-            entries.append((path, ins, del))
+            entries.append(GitDiffFileEntry(path: path, insertions: ins, deletions: del))
         }
         return entries
     }
@@ -262,7 +310,7 @@ enum GitBranchInventory {
 }
 
 /// Browsable https page of a git remote, for the status bar's repo popover.
-struct GitRemoteWebInfo: Equatable {
+struct GitRemoteWebInfo: Equatable, Sendable {
     var webURL: URL
 
     var host: String { webURL.host ?? "" }
@@ -277,11 +325,10 @@ struct GitRemoteWebInfo: Equatable {
         return host
     }
 
-    /// Synchronous remote lookup, called on popover open (the
-    /// `GitBranchInventory` precedent) — never per prompt, so an unclicked
-    /// pill costs zero subprocesses. One `git remote -v` answers the whole
-    /// question (origin, else first remote), so a hung git costs one 1s
-    /// timeout, not a chain of them.
+    /// Synchronous remote lookup, dispatched off-main when the popover opens
+    /// — never per prompt, so an unclicked pill costs zero subprocesses. One
+    /// `git remote -v` answers the whole question (origin, else first remote),
+    /// so a hung git costs one 1s timeout, not a chain of them.
     static func resolve(repoRoot: String) -> GitRemoteWebInfo? {
         let listing = GitStatusFetcher.runGit(["-C", repoRoot, "--no-optional-locks", "remote", "-v"]) ?? ""
         return preferredRemoteURL(inRemoteListing: listing).flatMap(parse(remoteURL:))

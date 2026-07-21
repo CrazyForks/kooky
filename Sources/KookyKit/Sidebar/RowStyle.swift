@@ -102,6 +102,17 @@ extension KookyMenuRow where Leading == EmptyView {
     }
 }
 
+/// One immutable data snapshot tied to one popover presentation — the
+/// canonical way to hand click-time data to `.popover` content: present via
+/// `.popover(item:)` with the loaded snapshot as the item, and the content
+/// closure receives it as a parameter. On macOS 26.5 this is the ONLY
+/// reliable path (see the CLAUDE.md popover rule); the fresh id also gives
+/// every reopen a new content identity.
+struct PopoverPresentation<Value>: Identifiable {
+    let id = UUID()
+    let value: Value
+}
+
 /// The shared "Reveal in Finder" popover row — tab menu, workspace menu,
 /// file tree, and the status bar's repo pill all offer it; the 4th call
 /// site made it a primitive.

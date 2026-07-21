@@ -88,6 +88,40 @@ final class WorkspaceStore {
     /// the sidebar unmounts whole while hidden — `terminate()` is the
     /// window-close backstop, `FileTreeView` pauses it via on(Dis)appear.
     let fileTree = FileTreeModel()
+    /// A diff-pill reveal temporarily roots the tree at that session's repo
+    /// instead of its cwd, so every repo-wide diff row is representable. Tied
+    /// to workspace + session identity; switching the sidebar away from files
+    /// or moving focus to another workspace/tab clears it and restores the
+    /// usual `Workspace.diskPath` behavior.
+    private struct FileTreeRootOverride {
+        let workspaceId: UUID
+        let sessionId: UUID
+        let root: URL
+    }
+    private var fileTreeRootOverride: FileTreeRootOverride?
+
+    /// Drops a root override that no longer matches the active workspace +
+    /// session, so a later re-activation of that session can't resurrect it.
+    /// Call after ANY direct active-identity write that bypasses
+    /// `activateTab`/`focusPane` — same scattered-sites contract as
+    /// `zoomedPaneId` (CLAUDE.md): addTab, close-collapse, cross-pane move,
+    /// zoom-button focus, split.
+    private func invalidateStaleFileTreeRootOverride() {
+        guard let override = fileTreeRootOverride else { return }
+        if override.workspaceId != active?.id
+            || override.sessionId != active?.activeSession?.id {
+            fileTreeRootOverride = nil
+        }
+    }
+
+    var fileTreeRoot: URL? {
+        guard let override = fileTreeRootOverride,
+              override.workspaceId == active?.id,
+              override.sessionId == active?.activeSession?.id else {
+            return active?.diskPath
+        }
+        return override.root
+    }
     /// Fired when the last workspace closes. `KookyWindowController` wires
     /// this to close its window — a window with zero workspaces is empty.
     var onBecameEmpty: (() -> Void)?
@@ -114,6 +148,10 @@ final class WorkspaceStore {
     /// Content-only swap — the sidebar keeps its width, so no size-propagation
     /// suspension is needed (that dance is for width-animating mode changes).
     func setSidebarContent(_ content: SidebarContent) {
+        // Gate on non-nil: `@Observable` notifies on every write, so an
+        // unconditional nil-over-nil here would invalidate `fileTreeRoot`
+        // observers on each no-op content set.
+        if content != .files, fileTreeRootOverride != nil { fileTreeRootOverride = nil }
         guard sidebarContent != content else { return }
         sidebarContent = content
         scheduleSave()
@@ -139,6 +177,23 @@ final class WorkspaceStore {
         // mode and fires stale on the next toggle.
         if sidebarContent == .files { setSidebarContent(.workspaces) }
         pendingRenameWorkspace = active
+    }
+
+    /// Diff pill popover's "Show in File Tree": switch the sidebar to files
+    /// mode, first promoting a hidden/compact sidebar to full — the tree
+    /// only mounts in the full sidebar (`SidebarView.fileTreeIsMounted`).
+    func revealFileTree(root: URL? = nil) {
+        if let root, let workspace = active, let session = workspace.activeSession {
+            fileTreeRootOverride = FileTreeRootOverride(
+                workspaceId: workspace.id,
+                sessionId: session.id,
+                root: root
+            )
+        } else {
+            fileTreeRootOverride = nil
+        }
+        setSidebarMode(.full)
+        setSidebarContent(.files)
     }
 
     private let engineFactory: @MainActor () -> any TerminalEngine
@@ -620,6 +675,7 @@ final class WorkspaceStore {
 
     func activateWorkspace(_ workspace: Workspace) {
         guard activeWorkspaceId != workspace.id else { return }
+        fileTreeRootOverride = nil
         activeWorkspaceId = workspace.id
         scheduleSave()
     }
@@ -753,6 +809,7 @@ final class WorkspaceStore {
         if workspace.activePaneId != target.id {
             workspace.activePaneId = target.id
         }
+        invalidateStaleFileTreeRootOverride()
         scheduleSave()
         return session
     }
@@ -812,6 +869,7 @@ final class WorkspaceStore {
                 workspace.workingDirectory = next.currentDirectory
             }
         }
+        invalidateStaleFileTreeRootOverride()
         scheduleSave()
     }
 
@@ -828,6 +886,7 @@ final class WorkspaceStore {
         if workspace.workingDirectory != session.currentDirectory {
             workspace.workingDirectory = session.currentDirectory
         }
+        invalidateStaleFileTreeRootOverride()
         scheduleSave()
     }
 
@@ -1019,6 +1078,7 @@ final class WorkspaceStore {
             workspace.workingDirectory = session.currentDirectory
             changed = true
         }
+        invalidateStaleFileTreeRootOverride()
         if changed { scheduleSave() }
     }
 
@@ -1042,6 +1102,7 @@ final class WorkspaceStore {
         suspendSizePropagationForLayoutAnimation(workspace.root.allEngines)
         workspace.activePaneId = paneId
         workspace.zoomedPaneId = workspace.isZoomed(paneId) ? nil : paneId
+        invalidateStaleFileTreeRootOverride()
         scheduleSave()
     }
 
@@ -1088,6 +1149,7 @@ final class WorkspaceStore {
         // zoom so the new pane is visible. Guarded so a no-op write
         // doesn't trigger an extra Observable invalidation.
         if workspace.zoomedPaneId != nil { workspace.zoomedPaneId = nil }
+        invalidateStaleFileTreeRootOverride()
         scheduleSave()
         return newPane
     }
@@ -1134,6 +1196,7 @@ final class WorkspaceStore {
                 workspace.workingDirectory = session.currentDirectory
             }
         }
+        invalidateStaleFileTreeRootOverride()
         scheduleSave()
     }
 
@@ -1153,6 +1216,7 @@ final class WorkspaceStore {
             workspace.workingDirectory = session.currentDirectory
             changed = true
         }
+        invalidateStaleFileTreeRootOverride()
         if changed { scheduleSave() }
     }
 
@@ -1664,6 +1728,36 @@ final class WorkspaceStore {
         guard fileTree.isShowing, let root = fileTree.rootURL else { return }
         gitStatusFetcher.fetchFileDiffs(id: fileTreeDiffFetchId, cwd: root) { [weak self] diffs in
             self?.fileTree.applyGitDiff(diffs)
+        }
+    }
+
+    /// Diff pill's click-time refresh: the popover's numstat snapshot carries
+    /// fresher totals than the last prompt-driven fetch, so fold them in
+    /// through the same seams a fetch result uses — mark any in-flight fetch
+    /// stale (a slower, older one must not overwrite this newer result) and
+    /// re-run the file-tree badge piggyback so tree badges and pill totals
+    /// can't drift (the M5.qqqq sums-by-construction invariant).
+    func applyDiffSnapshot(_ diff: GitDiffSnapshot, for session: Session, cwdPath: String) {
+        // Ignore a result whose world moved while git was in flight: the cwd
+        // changed, or the snapshot's repo isn't the one the pill currently
+        // shows (mid-`cd` across repos — the pill's branch/root still belong
+        // to the old repo; let the in-flight prompt fetch land the coherent
+        // new status instead of folding foreign totals into it).
+        guard session.currentDirectory.path == cwdPath,
+              session.gitStatus.repoRoot == diff.repoRoot else { return }
+        var refreshed = session.gitStatus
+        refreshed.filesChanged = diff.filesChanged
+        refreshed.insertions = diff.insertions
+        refreshed.deletions = diff.deletions
+        if refreshed != session.gitStatus {
+            gitStatusFetcher.invalidateInFlight(id: session.id)
+            session.gitStatus = refreshed
+        }
+        // Outside the totals gate: the file-level distribution can change
+        // while totals stay equal (revert a line here, add one there) — the
+        // tree's badges must follow the popover's rows regardless.
+        if fileTree.isShowing, active?.root.pane(containingSessionId: session.id) != nil {
+            refreshFileTreeGitDiff()
         }
     }
 
