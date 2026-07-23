@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.37.5 — 2026-07-23
+
+- Fixed: the Keep Awake breathing light no longer drives full-window SwiftUI layout every frame; it now uses a compositor-backed Core Animation layer, preventing excessive idle CPU usage. (#35)
+
 ## v0.37.4 — 2026-07-23
 
 - Fixed: Quick Open search pill overlap at narrow window widths, including compact and hidden sidebar states. (#36)

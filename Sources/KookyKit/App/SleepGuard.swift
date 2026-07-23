@@ -1,5 +1,6 @@
 import AppKit
 import IOKit.pwr_mgt
+import QuartzCore
 import SwiftUI
 
 // MARK: - Model
@@ -360,32 +361,14 @@ struct KeepAwakeButton: View {
 
     /// The light mirrors the dial one-to-one: gray = off, breathing dot =
     /// auto, breathing dot + ring = always. Whether protection is engaged
-    /// right now is the tooltip's job, not the light's. The on/off states
-    /// are separate view identities on purpose — the breathing
-    /// `phaseAnimator` is torn down with its branch, so no repeatForever
-    /// animation can leak into the off state.
+    /// right now is the tooltip's job, not the light's. The breathing branch
+    /// uses a Core Animation layer so its continuous opacity animation never
+    /// drives SwiftUI's view graph or window layout.
     @ViewBuilder
     private var indicatorDot: some View {
         if model.awakeMode != .off {
-            // Green throughout (deliberately NOT `activityRunning`, that
-            // token is blue — the sidebar's agent dot). The ring stays
-            // mounted and animates via opacity so the phaseAnimator's view
-            // identity never changes; both circles breathe in one phase.
-            let green = Theme.keepAwakeGreen
-            ZStack {
-                Circle()
-                    .stroke(green.opacity(0.55), lineWidth: 1)
-                    .frame(width: 13, height: 13)
-                    .opacity(model.awakeMode == .always ? 1 : 0)
-                    .animation(.easeInOut(duration: 0.3), value: model.awakeMode)
-                Circle()
-                    .fill(green)
-                    .frame(width: 7, height: 7)
-                    .shadow(color: green.opacity(0.85), radius: 3.5)
-            }
-            .phaseAnimator([0.5, 1.0]) { dot, phase in
-                dot.opacity(phase)
-            } animation: { _ in .easeInOut(duration: 1.5) }
+            KeepAwakeBreathingLight(showsRing: model.awakeMode == .always)
+                .frame(width: 13, height: 13)
         } else {
             Circle()
                 .fill(Theme.chromeMuted.opacity(0.45))
@@ -404,5 +387,114 @@ struct KeepAwakeButton: View {
         case .off:
             return "Keep awake: off (click for auto)"
         }
+    }
+}
+
+/// A tiny AppKit boundary for the one piece of chrome that animates forever.
+/// Core Animation interpolates the host layer's opacity in the render server;
+/// SwiftUI only updates this representable when the dial changes between
+/// `auto` and `always`.
+private struct KeepAwakeBreathingLight: NSViewRepresentable {
+    let showsRing: Bool
+
+    func makeNSView(context: Context) -> KeepAwakeBreathingLightView {
+        let view = KeepAwakeBreathingLightView()
+        view.setShowsRing(showsRing, animated: false)
+        return view
+    }
+
+    func updateNSView(_ view: KeepAwakeBreathingLightView, context: Context) {
+        view.setShowsRing(showsRing, animated: true)
+    }
+
+    static func dismantleNSView(_ view: KeepAwakeBreathingLightView, coordinator: Void) {
+        view.stopBreathing()
+    }
+}
+
+@MainActor
+private final class KeepAwakeBreathingLightView: NSView {
+    private static let dotSize: CGFloat = 7
+    private static let breathingAnimationKey = "kooky.keep-awake.breathing"
+
+    private let ringLayer = CALayer()
+    private let dotLayer = CALayer()
+    private var showsRing = false
+
+    init() {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.masksToBounds = false
+
+        // Green throughout (deliberately NOT `activityRunning`, which is
+        // blue). Both sublayers share the host layer's breathing opacity.
+        let green = NSColor(Theme.keepAwakeGreen)
+        ringLayer.borderColor = green.withAlphaComponent(0.55).cgColor
+        ringLayer.borderWidth = 1
+        ringLayer.opacity = 0
+
+        dotLayer.backgroundColor = green.cgColor
+        dotLayer.cornerRadius = Self.dotSize / 2
+        dotLayer.shadowColor = green.cgColor
+        dotLayer.shadowOpacity = 0.85
+        dotLayer.shadowRadius = 3.5
+        dotLayer.shadowOffset = .zero
+
+        layer?.addSublayer(ringLayer)
+        layer?.addSublayer(dotLayer)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not used")
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        ringLayer.frame = bounds
+        ringLayer.cornerRadius = min(bounds.width, bounds.height) / 2
+        dotLayer.bounds = CGRect(x: 0, y: 0, width: Self.dotSize, height: Self.dotSize)
+        dotLayer.position = CGPoint(x: bounds.midX, y: bounds.midY)
+        CATransaction.commit()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil {
+            stopBreathing()
+        } else {
+            startBreathing()
+        }
+    }
+
+    func setShowsRing(_ visible: Bool, animated: Bool) {
+        guard visible != showsRing else { return }
+        showsRing = visible
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(animated ? 0.3 : 0)
+        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeInEaseOut))
+        ringLayer.opacity = visible ? 1 : 0
+        CATransaction.commit()
+    }
+
+    private func startBreathing() {
+        guard layer?.animation(forKey: Self.breathingAnimationKey) == nil else { return }
+        let animation = CABasicAnimation(keyPath: "opacity")
+        animation.fromValue = 0.5
+        animation.toValue = 1
+        animation.duration = 1.5
+        animation.autoreverses = true
+        animation.repeatCount = .infinity
+        animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        layer?.add(animation, forKey: Self.breathingAnimationKey)
+    }
+
+    func stopBreathing() {
+        layer?.removeAnimation(forKey: Self.breathingAnimationKey)
     }
 }
