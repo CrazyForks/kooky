@@ -42,7 +42,7 @@ A minimal modern terminal built for AI coding. Sidebar workspaces; horizontal / 
 
 **Sidebar file tree.** A toggle at the bottom of the sidebar swaps the workspace list for a file tree of the active workspace's folder. Expand directories, double-click to open a file, right-click for Reveal in Finder / Copy Path / Insert Path into Terminal (file rows also get Open) — or just drag a file or folder straight into the terminal to insert its escaped path, same as a Finder drag. Changed files show their `+X −Y` line counts (the same numbers the status bar totals), and a collapsed folder rolls up its subtree's changes. The tree follows the active tab's directory (worktree workspaces stay pinned to their worktree folder) and refreshes live as files change on disk.
 
-**Friction-free input.** Click anywhere on the zsh prompt to move the shell cursor there (no modifier needed, same UX as ghostty.app). Drag a file or folder from Finder onto any pane to drop its escaped absolute path at the cursor.
+**Friction-free input.** Hold ⌘ and click a local file path such as `/path/file.swift:42` to open it in your preferred editor; web links can use a preferred browser (Settings → General → Open With). Click anywhere on the zsh prompt to move the shell cursor there (no modifier needed, same UX as ghostty.app). Drag a file or folder from Finder onto any pane to drop its escaped absolute path at the cursor.
 
 **Prompt composer (⌘L).** A chat-style box rises from the bottom of the pane for writing a long, multi-line prompt without a stray Return firing it off mid-thought. Return sends it to the current agent (or shell), Shift+Return adds a newline, Esc cancels and keeps your draft. Open it with ⌘L or the compose button in the pane status bar.
 

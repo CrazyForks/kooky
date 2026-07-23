@@ -102,7 +102,8 @@ final class KookySettingsModel {
     var sshRemoteAgentDetection: Bool = false
     /// Shows the `⌘P` search pill in the top chrome strip. When false the
     /// pill is hidden (the palette stays reachable via `⌘P` / the File menu).
-    /// Persisted under `general.showSearchPill` (only when non-default).
+    /// Persisted under `appearance.showSearchPill` (only when non-default).
+    /// The legacy `general.showSearchPill` key is still read during migration.
     var showSearchPill: Bool = true
     /// The sleep-protection dial (see `AwakeMode`): off / auto /
     /// always. `SleepGuard` observes this. The `always` notch needs the
@@ -129,6 +130,14 @@ final class KookySettingsModel {
     /// Last app picked from the "Open in" control — drives the split button's
     /// icon + plain-click target. Persisted under `openin.lastUsed`.
     var lastOpenInAppId: String? = nil
+    /// Preferred editor for filesystem links Cmd+Clicked in a terminal.
+    /// `nil` follows the macOS file association. Persisted under
+    /// `openin.fileLinks`.
+    var fileLinkAppId: String? = nil
+    /// Preferred browser for http/https links Cmd+Clicked in a terminal.
+    /// `nil` follows the macOS default browser. Persisted under
+    /// `openin.webLinks`.
+    var webLinkAppId: String? = nil
 
     private var saveWork: DispatchWorkItem?
 
@@ -202,7 +211,11 @@ final class KookySettingsModel {
         sshRemoteAgentDetection = (ssh["remoteAgentDetection"] as? Bool) ?? false
 
         let general = parsed["general"] as? [String: Any] ?? [:]
-        showSearchPill = (general["showSearchPill"] as? Bool) ?? true
+        let appearance = parsed["appearance"] as? [String: Any] ?? [:]
+        showSearchPill = Self.resolvedShowSearchPill(
+            appearance: appearance,
+            legacyGeneral: general
+        )
         awakeMode = (general["awakeMode"] as? String).flatMap(AwakeMode.init) ?? .auto
 
         let notifications = parsed["notifications"] as? [String: Any] ?? [:]
@@ -214,6 +227,8 @@ final class KookySettingsModel {
         openInAppOrder = (openin["order"] as? [String]) ?? []
         hiddenOpenInApps = Set((openin["hidden"] as? [String]) ?? [])
         lastOpenInAppId = openin["lastUsed"] as? String
+        fileLinkAppId = openin["fileLinks"] as? String
+        webLinkAppId = openin["webLinks"] as? String
 
         let rawCustom = (agents["custom"] as? [[String: Any]]) ?? []
         let builtinIds = Set(AgentTemplate.builtin.map(\.id))
@@ -376,12 +391,22 @@ final class KookySettingsModel {
         }
 
         var general = parsed["general"] as? [String: Any] ?? [:]
-        general["showSearchPill"] = showSearchPill ? nil : false
+        // One-way compatibility migration: read the old General key above,
+        // but only write the new Appearance key from now on.
+        general.removeValue(forKey: "showSearchPill")
         general["awakeMode"] = awakeMode == .auto ? nil : awakeMode.rawValue
         if general.isEmpty {
             parsed.removeValue(forKey: "general")
         } else {
             parsed["general"] = general
+        }
+
+        var appearance = parsed["appearance"] as? [String: Any] ?? [:]
+        appearance["showSearchPill"] = showSearchPill ? nil : false
+        if appearance.isEmpty {
+            parsed.removeValue(forKey: "appearance")
+        } else {
+            parsed["appearance"] = appearance
         }
 
         var notifications = parsed["notifications"] as? [String: Any] ?? [:]
@@ -398,6 +423,8 @@ final class KookySettingsModel {
         openin["order"] = openInAppOrder.isEmpty ? nil : openInAppOrder
         openin["hidden"] = hiddenOpenInApps.isEmpty ? nil : Array(hiddenOpenInApps).sorted()
         openin["lastUsed"] = lastOpenInAppId
+        openin["fileLinks"] = fileLinkAppId
+        openin["webLinks"] = webLinkAppId
         if openin.isEmpty {
             parsed.removeValue(forKey: "openin")
         } else {
@@ -462,6 +489,15 @@ final class KookySettingsModel {
 
     static let defaultThemeSelection = "__kooky-default-theme"
     static let customThemeSelection = "__kooky-custom-theme"
+
+    static func resolvedShowSearchPill(
+        appearance: [String: Any],
+        legacyGeneral: [String: Any]
+    ) -> Bool {
+        (appearance["showSearchPill"] as? Bool)
+            ?? (legacyGeneral["showSearchPill"] as? Bool)
+            ?? true
+    }
 
     var selectedTerminalTheme: KookyTerminalTheme? {
         terminalThemeChoices.first { $0.id == terminalThemeSelection }
@@ -640,6 +676,8 @@ struct KookySettingsView: View {
         .onChange(of: model.defaultAgentId) { _, _ in model.scheduleSave() }
         .onChange(of: model.openInAppOrder) { _, _ in model.scheduleSave() }
         .onChange(of: model.hiddenOpenInApps) { _, _ in model.scheduleSave() }
+        .onChange(of: model.fileLinkAppId) { _, _ in model.scheduleSave() }
+        .onChange(of: model.webLinkAppId) { _, _ in model.scheduleSave() }
 
         return core
             .onChange(of: model.customAgents) { _, _ in model.scheduleSave() }
@@ -696,27 +734,35 @@ struct KookySettingsView: View {
     @ViewBuilder
     private var detail: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 14) {
-                Text(selected.title)
-                    .font(Theme.display(22, weight: .medium))
-                    .foregroundStyle(Theme.chromeForeground)
-                // The Notifications section's master switch lives on the title
-                // row; its per-kind sub-toggles sit in the body below.
-                if selected == .notifications {
-                    Spacer(minLength: 14)
-                    Toggle("", isOn: $model.notificationsEnabled)
-                        .labelsHidden()
-                        .toggleStyle(.switch)
+            if selected == .general
+                || selected == .appearance
+                || selected == .codingAgents
+                || selected == .terminalPresets
+            {
+                Color.clear.frame(height: 26)
+            } else {
+                HStack(spacing: 14) {
+                    Text(selected.title)
+                        .font(Theme.display(18, weight: .medium))
+                        .foregroundStyle(Theme.chromeForeground)
+                    // The Notifications section's master switch lives on the title
+                    // row; its per-kind sub-toggles sit in the body below.
+                    if selected == .notifications {
+                        Spacer(minLength: 14)
+                        Toggle("", isOn: $model.notificationsEnabled)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                    }
                 }
-            }
-            .padding(.horizontal, 28)
-            .padding(.top, 26)
-            .padding(.bottom, 22)
-            Rectangle()
-                .fill(Theme.chromeHairline)
-                .frame(width: 32, height: 1)
                 .padding(.horizontal, 28)
-                .padding(.bottom, 18)
+                .padding(.top, 26)
+                .padding(.bottom, 22)
+                Rectangle()
+                    .fill(Theme.chromeHairline)
+                    .frame(width: 32, height: 1)
+                    .padding(.horizontal, 28)
+                    .padding(.bottom, 18)
+            }
             switch selected {
             case .general: generalDetail
             case .appearance: appearanceDetail
@@ -733,130 +779,145 @@ struct KookySettingsView: View {
 
     private var appearanceDetail: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SettingsRow(label: "theme") {
-                themeControl
-            }
-            SettingsHairline()
-            SettingsRow(label: "font-family") {
-                Picker("", selection: $model.fontFamily) {
-                    Text("Default").tag("")
-                    Divider()
-                    ForEach(Self.monospaceFamilies, id: \.self) { family in
-                        Text(family).tag(family)
+            SettingsSection(title: "Terminal") {
+                SettingsRow(label: "theme") {
+                    themeControl
+                }
+                SettingsHairline()
+                SettingsRow(label: "font-family") {
+                    Picker("", selection: $model.fontFamily) {
+                        Text("Default").tag("")
+                        Divider()
+                        ForEach(Self.monospaceFamilies, id: \.self) { family in
+                            Text(family).tag(family)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(minWidth: 180, alignment: .trailing)
+                }
+                SettingsHairline()
+                SettingsRow(label: "font-size") {
+                    HStack(spacing: 8) {
+                        Text("\(model.fontSize ?? Self.defaultFontSize)")
+                            .font(Theme.mono(12))
+                            .foregroundStyle(Theme.chromeForeground)
+                            .monospacedDigit()
+                            .frame(width: 28, alignment: .trailing)
+                        Stepper("", value: fontSizeBinding, in: 8...32)
+                            .labelsHidden()
                     }
                 }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .frame(minWidth: 180, alignment: .trailing)
+                SettingsHairline()
+                SettingsRow(label: "cursor-style") {
+                    Picker("", selection: $model.cursorStyle) {
+                        Text("Block").tag("block")
+                        Text("Underline").tag("underline")
+                        Text("Bar").tag("bar")
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(minWidth: 180, alignment: .trailing)
+                }
+                SettingsHairline()
+                SettingsRow(label: "liquid-glass") {
+                    // Real Liquid Glass on macOS 26+; no effect on older systems.
+                    // Tags are ghostty's `background-blur` values; "Off" stores
+                    // `false` so it overrides a glassy ghostty config.
+                    Picker("", selection: glassSelection) {
+                        Text("Off").tag("false")
+                        Text("Regular").tag("macos-glass-regular")
+                        Text("Clear").tag("macos-glass-clear")
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(minWidth: 180, alignment: .trailing)
+                }
+                Text("Requires macOS 26 or later.")
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.chromeMuted)
+                    .padding(.horizontal, 28)
+                    .padding(.top, 6)
+                    .padding(.bottom, 10)
+                terminalRestartCallout
             }
-            SettingsHairline()
-            SettingsRow(label: "font-size") {
-                HStack(spacing: 8) {
-                    Text("\(model.fontSize ?? Self.defaultFontSize)")
-                        .font(Theme.mono(12))
-                        .foregroundStyle(Theme.chromeForeground)
-                        .monospacedDigit()
-                        .frame(width: 28, alignment: .trailing)
-                    Stepper("", value: fontSizeBinding, in: 8...32)
+
+            SettingsSection(title: "Window Chrome") {
+                SettingsRow(label: "show-search-pill") {
+                    Toggle("", isOn: $model.showSearchPill)
                         .labelsHidden()
+                        .toggleStyle(.switch)
                 }
             }
-            SettingsHairline()
-            SettingsRow(label: "cursor-style") {
-                Picker("", selection: $model.cursorStyle) {
-                    Text("Block").tag("block")
-                    Text("Underline").tag("underline")
-                    Text("Bar").tag("bar")
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .frame(minWidth: 180, alignment: .trailing)
-            }
-            SettingsHairline()
-            SettingsRow(label: "liquid-glass") {
-                // Real Liquid Glass on macOS 26+; no effect on older systems.
-                // Tags are ghostty's `background-blur` values; "Off" stores
-                // `false` so it overrides a glassy ghostty config.
-                Picker("", selection: glassSelection) {
-                    Text("Off").tag("false")
-                    Text("Regular").tag("macos-glass-regular")
-                    Text("Clear").tag("macos-glass-clear")
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .frame(minWidth: 180, alignment: .trailing)
-            }
-            Text("Requires macOS 26 or later.")
-                .font(Theme.mono(11))
-                .foregroundStyle(Theme.chromeMuted)
-                .padding(.horizontal, 28)
-                .padding(.top, 6)
-                .padding(.bottom, 10)
-            terminalRestartCallout
+            .padding(.top, 22)
         }
     }
 
     private var generalDetail: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SettingsRow(label: "default-new-tab") {
-                Picker("", selection: $model.defaultAgentId) {
-                    Text("Ask each time").tag(String?.none)
-                    Divider()
-                    ForEach(AgentTemplate.visibleOrdered(model: model)) { template in
-                        Text(template.title).tag(String?.some(template.id))
+            SettingsSection(title: "Startup") {
+                SettingsRow(label: "default-new-tab") {
+                    Picker("", selection: $model.defaultAgentId) {
+                        Text("Ask each time").tag(String?.none)
+                        Divider()
+                        ForEach(AgentTemplate.visibleOrdered(model: model)) { template in
+                            Text(template.title).tag(String?.some(template.id))
+                        }
                     }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .frame(minWidth: 180, alignment: .trailing)
-            }
-            SettingsHairline()
-            SettingsRow(label: "top-bar-search") {
-                Toggle("", isOn: $model.showSearchPill)
                     .labelsHidden()
-                    .toggleStyle(.switch)
-            }
-            SettingsHairline()
-            // One dial, three notches of sleep protection (see AwakeMode).
-            // Segmented, not a menu — all three notches visible at once.
-            // The binding funnels through applyAwakeMode so the always-notch
-            // auth flow runs no matter which control moved the dial.
-            SettingsRow(label: "keep-awake") {
-                Picker("", selection: Binding(
-                    get: { model.awakeMode },
-                    set: { model.applyAwakeMode($0) }
-                )) {
-                    Text("Off").tag(AwakeMode.off)
-                    Text("Auto").tag(AwakeMode.auto)
-                    Text("Always").tag(AwakeMode.always)
+                    .pickerStyle(.menu)
+                    .frame(minWidth: 180, alignment: .trailing)
                 }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                // Segmented pickers greedily stretch on macOS; pin to the
-                // intrinsic width so the row's Spacer right-aligns it like
-                // every other trailing control.
-                .fixedSize()
             }
-            Text("Auto: stay awake while agents or SSH work even lid closed.\nAlways: always stay awake.")
-                .font(Theme.mono(11))
-                .foregroundStyle(Theme.chromeMuted)
-                .padding(.horizontal, 28)
-                .padding(.top, 6)
-                .padding(.bottom, 10)
-            SettingsHairline()
-            // SSH remote agent detection lives here now (it was its own
-            // one-toggle category before). The settings.json key stays
-            // `ssh.remoteAgentDetection`; only the UI home moved.
-            SettingsRow(label: "remote-agent-detection") {
-                Toggle("", isOn: $model.sshRemoteAgentDetection)
+
+            SettingsSection(title: "System") {
+                // One dial, three notches of sleep protection (see AwakeMode).
+                // Segmented, not a menu — all three notches visible at once.
+                // The binding funnels through applyAwakeMode so the always-notch
+                // auth flow runs no matter which control moved the dial.
+                SettingsRow(label: "keep-awake") {
+                    Picker("", selection: Binding(
+                        get: { model.awakeMode },
+                        set: { model.applyAwakeMode($0) }
+                    )) {
+                        Text("Off").tag(AwakeMode.off)
+                        Text("Auto").tag(AwakeMode.auto)
+                        Text("Always").tag(AwakeMode.always)
+                    }
                     .labelsHidden()
-                    .toggleStyle(.switch)
+                    .pickerStyle(.segmented)
+                    // Segmented pickers greedily stretch on macOS; pin to the
+                    // intrinsic width so the row's Spacer right-aligns it like
+                    // every other trailing control.
+                    .fixedSize()
+                }
+                Text("Auto: stay awake while agents or SSH work even lid closed.\nAlways: always stay awake.")
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.chromeMuted)
+                    .padding(.horizontal, 28)
+                    .padding(.top, 6)
+                    .padding(.bottom, 10)
+                SettingsHairline()
+                // SSH remote agent detection lives here now (it was its own
+                // one-toggle category before). The settings.json key stays
+                // `ssh.remoteAgentDetection`; only the UI home moved.
+                SettingsRow(label: "remote-agent-detection") {
+                    Toggle("", isOn: $model.sshRemoteAgentDetection)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                }
             }
+            .padding(.top, 22)
+
+            OpenWithPreferences(model: model)
+                .padding(.top, 22)
         }
     }
 
     private var terminalPresetsDetail: some View {
-        TerminalPresetsList(model: model)
+        SettingsSection(title: "Presets") {
+            TerminalPresetsList(model: model)
+        }
     }
 
     private var openInDetail: some View {
@@ -868,13 +929,15 @@ struct KookySettingsView: View {
     }
 
     private var codingAgentsDetail: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            AgentReorderList(model: model)
-            SettingsHairline()
-            SettingsRow(label: "resume-conversation-when-reopen") {
-                Toggle("", isOn: $model.resumeConversations)
-                    .labelsHidden()
-                    .toggleStyle(.switch)
+        SettingsSection(title: "Presets") {
+            VStack(alignment: .leading, spacing: 0) {
+                AgentReorderList(model: model)
+                SettingsHairline()
+                SettingsRow(label: "resume-conversation-when-reopen") {
+                    Toggle("", isOn: $model.resumeConversations)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                }
             }
         }
     }
@@ -1044,6 +1107,41 @@ private struct SettingsHairline: View {
             .fill(Theme.chromeHairline.opacity(0.55))
             .frame(height: 1)
             .padding(.horizontal, 28)
+    }
+}
+
+private struct SettingsSectionHeader: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(Theme.display(18, weight: .medium))
+            .foregroundStyle(Theme.chromeForeground)
+            .padding(.horizontal, 28)
+            .padding(.bottom, 14)
+    }
+}
+
+private struct SettingsSection<Content: View>: View {
+    let title: String
+    let content: Content
+
+    init(
+        title: String,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SettingsSectionHeader(title: title)
+            VStack(alignment: .leading, spacing: 0) {
+                content
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 }
 
@@ -1949,6 +2047,67 @@ private struct StatusBarRow: View {
         } else {
             EmptyView()
         }
+    }
+}
+
+/// Settings → General → Open With. Chooses the applications terminal links
+/// use. Installed
+/// apps are resolved on every appearance so installing an editor / browser
+/// while kooky is running is reflected the next time Settings opens.
+private struct OpenWithPreferences: View {
+    @Bindable var model: KookySettingsModel
+    @State private var refreshTick = 0
+
+    private var fileApps: [OpenInApp] {
+        OpenInResolver.installedFileLinkApps()
+    }
+
+    private var browserApps: [OpenInApp] {
+        OpenInResolver.installedBrowserLinkApps()
+    }
+
+    var body: some View {
+        let _ = refreshTick
+        return SettingsSection(title: "Open With") {
+            SettingsRow(label: "file-links") {
+                appPicker(selection: $model.fileLinkAppId, apps: fileApps)
+            }
+            SettingsHairline()
+            SettingsRow(label: "web-links") {
+                appPicker(selection: $model.webLinkAppId, apps: browserApps)
+            }
+        }
+        .onAppear {
+            OpenInResolver.invalidate()
+            refreshTick += 1
+        }
+    }
+
+    private func appPicker(
+        selection: Binding<String?>,
+        apps: [OpenInApp]
+    ) -> some View {
+        Picker("", selection: selection) {
+            Text("System Default").tag(String?.none)
+            if !apps.isEmpty {
+                Divider()
+                ForEach(apps) { app in
+                    HStack(spacing: 7) {
+                        OpenInAppIcon(app: app, size: 14)
+                        Text(app.title)
+                    }
+                    .tag(String?.some(app.id))
+                }
+            }
+            if let selected = selection.wrappedValue,
+               !apps.contains(where: { $0.id == selected }) {
+                Divider()
+                Text("Unavailable (\(selected))").tag(String?.some(selected))
+            }
+        }
+        .labelsHidden()
+        .pickerStyle(.menu)
+        .frame(minWidth: 180, alignment: .trailing)
     }
 }
 

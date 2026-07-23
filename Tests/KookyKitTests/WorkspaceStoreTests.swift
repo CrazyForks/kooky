@@ -1887,6 +1887,7 @@ final class WorkspaceStoreTests: XCTestCase {
         guard let session = ws.activeSession else { return XCTFail("expected initial session") }
         XCTAssertEqual(ws.sshRemoteHost, "deploy@example.com")
         XCTAssertEqual(session.sshWorkspaceHost, "deploy@example.com")
+        XCTAssertEqual(engine(session).isRemoteSessionProvider?(), true)
         XCTAssertEqual(
             engine(session).startedConfigs.last?.environment["KOOKY_AGENT"],
             "kooky-ssh 'deploy@example.com'"
@@ -2033,6 +2034,7 @@ final class WorkspaceStoreTests: XCTestCase {
         let store = makeStore()
         let ws = store.addWorkspace(workingDirectory: projectA)
         guard let session = ws.activeSession else { return XCTFail("expected session") }
+        XCTAssertEqual(engine(session).isRemoteSessionProvider?(), false)
 
         // A manually typed `ssh` (public shim) emits the remote-login marker.
         engine(session).emitTitle("\(RemoteLoginMarker.titlePrefix)deploy@example.com")
@@ -2042,6 +2044,8 @@ final class WorkspaceStoreTests: XCTestCase {
         // …but paste routing stays local, and the workspace is not promoted.
         XCTAssertNil(session.sshWorkspaceHost)
         XCTAssertNil(ws.sshRemoteHost)
+        XCTAssertEqual(engine(session).isRemoteSessionProvider?(), true,
+                       "manual SSH still owns remote file paths even though paste routing stays local")
         let next = store.addTab(in: ws, template: .terminal)
         XCTAssertNil(engine(next).startedConfigs.last?.environment["KOOKY_AGENT"])
     }
@@ -2066,6 +2070,7 @@ final class WorkspaceStoreTests: XCTestCase {
         // is the one true clear signal.
         engine(session).emitTitle(RemoteLoginMarker.logoutTitle)
         XCTAssertNil(session.remoteHost)
+        XCTAssertEqual(engine(session).isRemoteSessionProvider?(), false)
     }
 }
 

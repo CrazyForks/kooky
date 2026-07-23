@@ -104,7 +104,10 @@ private let kookyActionCb: ghostty_runtime_action_cb = { _, target, action in
     case GHOSTTY_ACTION_PWD:
         guard let cstr = action.action.pwd.pwd else { return true }
         let pwd = String(cString: cstr)
-        dispatchToView(userdata) { $0.onPwdChange?(pwd) }
+        dispatchToView(userdata) {
+            $0.currentDirectory = URL(fileURLWithPath: pwd)
+            $0.onPwdChange?(pwd)
+        }
         return true
     case GHOSTTY_ACTION_SET_TITLE, GHOSTTY_ACTION_SET_TAB_TITLE:
         // OSC 0 / OSC 2 (and ghostty's tab-title variant). An `ssh` session's
@@ -118,17 +121,16 @@ private let kookyActionCb: ghostty_runtime_action_cb = { _, target, action in
         dispatchToView(userdata) { $0.onTitleChange?(title) }
         return true
     case GHOSTTY_ACTION_OPEN_URL:
-        // libghostty resolves ⌘+click hits and hands us the URL string. We
-        // route it to the default browser, but return `false` when we can't
-        // parse the string so libghostty falls back to its own opener — some
-        // OSC 8 / unescaped `file://` shapes that `URL(string:)` rejects can
-        // still be opened by ghostty's built-in path.
+        // libghostty sends both real URLs and matched filesystem paths through
+        // this action. `URL(string:)` also accepts scheme-less paths, but those
+        // are not file URLs and NSWorkspace cannot open them as documents.
+        // Resolve on the originating view so relative paths use that session's
+        // live OSC-7 cwd and SSH paths can be suppressed safely.
         let urlAction = action.action.open_url
         guard let cstr = urlAction.url, urlAction.len > 0 else { return false }
         let buffer = UnsafeRawBufferPointer(start: cstr, count: Int(urlAction.len))
-        let urlString = String(decoding: buffer, as: UTF8.self)
-        guard let url = URL(string: urlString) else { return false }
-        DispatchQueue.main.async { NSWorkspace.shared.open(url) }
+        let rawTarget = String(decoding: buffer, as: UTF8.self)
+        dispatchToView(userdata) { $0.open(target: rawTarget) }
         return true
     case GHOSTTY_ACTION_MOUSE_SHAPE:
         let shape = action.action.mouse_shape
@@ -273,11 +275,11 @@ final class LibghosttyEngine: TerminalEngine {
         get { surfaceView.pasteUploadHostProvider }
         set { surfaceView.pasteUploadHostProvider = newValue }
     }
-    var foregroundPid: pid_t? {
-        guard let surface = surfaceView.surface else { return nil }
-        let pid = pid_t(ghostty_surface_foreground_pid(surface))
-        return pid > 0 ? pid : nil
+    var isRemoteSessionProvider: (() -> Bool)? {
+        get { surfaceView.isRemoteSessionProvider }
+        set { surfaceView.isRemoteSessionProvider = newValue }
     }
+    var foregroundPid: pid_t? { surfaceView.foregroundPid }
 
     init() {
         surfaceView = GhosttySurfaceView()
@@ -410,6 +412,13 @@ final class GhosttySurfaceView: NSView {
     var onSearchTotal: ((Int) -> Void)?
     var onSearchSelected: ((Int) -> Void)?
     var pasteUploadHostProvider: (() -> String?)?
+    var isRemoteSessionProvider: (() -> Bool)?
+    var currentDirectory: URL?
+    var foregroundPid: pid_t? {
+        guard let surface else { return nil }
+        let pid = pid_t(ghostty_surface_foreground_pid(surface))
+        return pid > 0 ? pid : nil
+    }
     /// Read in `viewDidMoveToWindow` to gate the mount-time first-responder
     /// grab; set by `TerminalView` from the pane's active state. See
     /// `TerminalEngine.grabsFocusOnMount` for the why (issue #24).
@@ -609,6 +618,7 @@ final class GhosttySurfaceView: NSView {
         lastBackingScale = window.backingScaleFactor
 
         let workingDir = config.workingDirectory ?? NSHomeDirectory()
+        currentDirectory = URL(fileURLWithPath: workingDir)
         // Merge our wrapper ZDOTDIR into the caller's env dict. AgentTemplate
         // populates KOOKY_AGENT here so the wrapper .zshrc auto-launches the
         // selected CLI before the user ever sees a shell prompt.
@@ -1197,6 +1207,41 @@ final class GhosttySurfaceView: NSView {
         // arrival, which a Return-key trigger would miss.
         onUserInput?()
         text.withCString { ghostty_surface_text(surface, $0, UInt(strlen($0))) }
+    }
+
+    /// Open a libghostty link action using the configured editor / browser,
+    /// falling back to the system default. URLs work in both local and remote
+    /// sessions; filesystem paths are local only because a remote path has no
+    /// safe LaunchServices meaning.
+    func open(target rawTarget: String) {
+        guard let target = TerminalOpenTargetResolver.resolve(
+            rawTarget,
+            currentDirectory: currentDirectory
+        ) else { return }
+
+        let model = KookySettingsModel.shared
+        switch target {
+        case .file:
+            let isRemote = isRemoteSessionProvider?() == true
+                || TerminalRemoteProcessDetector.isRemoteConnection(pid: foregroundPid)
+            guard !isRemote else { return }
+            let apps = OpenInResolver.installedFileLinkApps()
+            if let app = OpenInApp.preferred(id: model.fileLinkAppId, available: apps),
+               OpenInResolver.open(url: target.url, with: app) {
+                return
+            }
+        case .url(let url):
+            guard url.isWebLink else {
+                NSWorkspace.shared.open(url)
+                return
+            }
+            let apps = OpenInResolver.installedBrowserLinkApps()
+            if let app = OpenInApp.preferred(id: model.webLinkAppId, available: apps),
+               OpenInResolver.open(url: url, with: app) {
+                return
+            }
+        }
+        NSWorkspace.shared.open(target.url)
     }
 
     /// Drives the scroll indicator from libghostty's SCROLLBAR action. Skips

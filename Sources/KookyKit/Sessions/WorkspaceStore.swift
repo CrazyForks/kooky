@@ -1554,6 +1554,12 @@ final class WorkspaceStore {
         // signal with a marker→command-finished lifecycle that a remote
         // shell's own OSC 133;D can clear mid-connection.
         engine.pasteUploadHostProvider = { [weak session] in session?.sshWorkspaceHost }
+        // File paths printed by an SSH shell live on the remote machine. Keep
+        // ordinary web links openable, but prevent Cmd+Click from treating a
+        // remote absolute path as a coincidentally-existing local file.
+        engine.isRemoteSessionProvider = { [weak session] in
+            session?.sshWorkspaceHost != nil || session?.remoteHost != nil
+        }
         engine.onPwdChange = { [weak self, weak session, weak workspace] pwd in
             guard let session else { return }
             let url = URL(fileURLWithPath: pwd)

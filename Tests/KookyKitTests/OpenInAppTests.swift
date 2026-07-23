@@ -25,6 +25,34 @@ final class OpenInAppTests: XCTestCase {
         }
     }
 
+    func testFileLinkCatalogContainsEditorsButNotFolderOnlyApps() {
+        let ids = Set(OpenInApp.fileLinkCatalog.map(\.id))
+        XCTAssertTrue(ids.contains("vscode"))
+        XCTAssertTrue(ids.contains("cursor"))
+        XCTAssertTrue(ids.contains("xcode"))
+        XCTAssertFalse(ids.contains("terminal"))
+        XCTAssertFalse(ids.contains("finder"))
+    }
+
+    func testBrowserLinkCatalogIsValidAndUnique() {
+        let ids = OpenInApp.browserLinkCatalog.map(\.id)
+        XCTAssertEqual(ids.count, Set(ids).count)
+        XCTAssertTrue(ids.contains("safari"))
+        XCTAssertTrue(ids.contains("chrome"))
+        for browser in OpenInApp.browserLinkCatalog {
+            XCTAssertFalse(browser.title.isEmpty, "\(browser.id) missing title")
+            XCTAssertFalse(browser.bundleIdentifiers.isEmpty, "\(browser.id) missing bundle ids")
+        }
+    }
+
+    func testPreferredLinkAppUsesOnlyAvailableChoice() {
+        let available = [app("vscode"), app("cursor")]
+        XCTAssertEqual(OpenInApp.preferred(id: "cursor", available: available)?.id, "cursor")
+        XCTAssertNil(OpenInApp.preferred(id: nil, available: available))
+        XCTAssertNil(OpenInApp.preferred(id: "xcode", available: available))
+        XCTAssertNil(OpenInApp.preferred(id: "future-editor", available: available))
+    }
+
     func testOrderedRespectsUserOrderThenCatalog() {
         let apps = [app("vscode"), app("cursor"), app("finder")]
         let ordered = OpenInApp.ordered(apps, order: ["finder", "vscode"])

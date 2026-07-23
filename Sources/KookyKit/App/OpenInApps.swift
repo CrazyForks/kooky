@@ -53,6 +53,48 @@ extension OpenInApp {
     static let catalogById: [String: OpenInApp] =
         Dictionary(catalog.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
+    /// Editors / IDEs from the folder-oriented catalog that can also receive a
+    /// concrete file from a terminal Cmd+Click. Terminals and Finder stay in
+    /// the top-bar picker, but aren't meaningful "preferred editor" choices.
+    static let fileLinkCatalog: [OpenInApp] = {
+        let ids = [
+            "vscode", "cursor", "windsurf", "zed", "sublime",
+            "antigravity", "trae", "kiro", "xcode",
+            "intellij", "pycharm", "webstorm",
+        ]
+        return ids.compactMap { catalogById[$0] }
+    }()
+
+    /// Curated browser catalog for terminal web links. This is intentionally
+    /// separate from `catalog`: browsers shouldn't appear in the top-bar
+    /// "Open current folder in…" control. Candidate ids cover stable /
+    /// preview flavours without surfacing duplicate picker rows.
+    static let browserLinkCatalog: [OpenInApp] = [
+        OpenInApp(id: "safari", title: "Safari", bundleIdentifiers: ["com.apple.Safari", "com.apple.SafariTechnologyPreview"]),
+        OpenInApp(id: "chrome", title: "Google Chrome", bundleIdentifiers: ["com.google.Chrome", "com.google.Chrome.canary"]),
+        OpenInApp(id: "edge", title: "Microsoft Edge", bundleIdentifiers: ["com.microsoft.edgemac", "com.microsoft.edgemac.Beta", "com.microsoft.edgemac.Dev", "com.microsoft.edgemac.Canary"]),
+        OpenInApp(id: "firefox", title: "Firefox", bundleIdentifiers: ["org.mozilla.firefox", "org.mozilla.firefoxdeveloperedition"]),
+        OpenInApp(id: "brave", title: "Brave", bundleIdentifiers: ["com.brave.Browser", "com.brave.Browser.beta", "com.brave.Browser.nightly"]),
+        OpenInApp(id: "arc", title: "Arc", bundleIdentifiers: ["company.thebrowser.Browser"]),
+        OpenInApp(id: "dia", title: "Dia", bundleIdentifiers: ["company.thebrowser.dia"]),
+        OpenInApp(id: "comet", title: "Comet", bundleIdentifiers: ["ai.perplexity.comet"]),
+        OpenInApp(id: "surf", title: "Surf", bundleIdentifiers: ["ea.browser.deta.surf"]),
+        OpenInApp(id: "atlas", title: "ChatGPT Atlas", bundleIdentifiers: ["com.openai.atlas", "com.openai.atlas.web"]),
+        OpenInApp(id: "orion", title: "Orion", bundleIdentifiers: ["com.kagi.kagimacOS"]),
+        OpenInApp(id: "vivaldi", title: "Vivaldi", bundleIdentifiers: ["com.vivaldi.Vivaldi"]),
+        OpenInApp(id: "opera", title: "Opera", bundleIdentifiers: ["com.operasoftware.Opera"]),
+        OpenInApp(id: "chromium", title: "Chromium", bundleIdentifiers: ["org.chromium.Chromium"]),
+        OpenInApp(id: "zen", title: "Zen", bundleIdentifiers: ["app.zen-browser.zen"]),
+    ]
+
+    /// Resolve a persisted optional choice against the currently available
+    /// apps. `nil`, an unknown future id, or an uninstalled app all mean
+    /// "System Default".
+    static func preferred(id: String?, available: [OpenInApp]) -> OpenInApp? {
+        guard let id else { return nil }
+        return available.first { $0.id == id }
+    }
+
     /// Apply the user's saved order to a set of apps (typically the installed
     /// subset). Apps named in `order` come first in that order; the rest follow
     /// in catalog order. Unknown ids in `order` are ignored. Mirrors
@@ -122,6 +164,14 @@ enum OpenInResolver {
         return OpenInApp.ordered(installed, order: model.openInAppOrder)
     }
 
+    static func installedFileLinkApps() -> [OpenInApp] {
+        OpenInApp.fileLinkCatalog.filter { isInstalled($0) }
+    }
+
+    static func installedBrowserLinkApps() -> [OpenInApp] {
+        OpenInApp.browserLinkCatalog.filter { isInstalled($0) }
+    }
+
     /// Installed and not hidden — what the picker shows.
     static func visibleApps(model: KookySettingsModel) -> [OpenInApp] {
         installedApps(model: model).filter { !model.hiddenOpenInApps.contains($0.id) }
@@ -130,19 +180,28 @@ enum OpenInResolver {
     /// Open `directory` in `app`. Editors open the folder as a project,
     /// terminals open a new session there, Finder opens the folder window.
     static func open(directory: URL, with app: OpenInApp) {
-        guard var resolved = appURL(for: app) else { return }
+        _ = open(url: directory, with: app)
+    }
+
+    /// Open one file / folder / URL with a chosen application. Returns false
+    /// only when the app can no longer be resolved, allowing callers to fall
+    /// back to the normal macOS association.
+    @discardableResult
+    static func open(url: URL, with app: OpenInApp) -> Bool {
+        guard var resolved = appURL(for: app) else { return false }
         // The cached URL can point at an app moved/uninstalled mid-session. If
         // it's gone, bust the cache and re-resolve once so a plain left-zone
         // click doesn't silently no-op (the picker self-heals via invalidate(),
         // but the left zone never calls it).
         if !FileManager.default.fileExists(atPath: resolved.path) {
             urlCache.removeValue(forKey: app.id)
-            guard let fresh = appURL(for: app) else { return }
+            guard let fresh = appURL(for: app) else { return false }
             resolved = fresh
         }
         let config = NSWorkspace.OpenConfiguration()
         config.activates = true
-        NSWorkspace.shared.open([directory], withApplicationAt: resolved, configuration: config)
+        NSWorkspace.shared.open([url], withApplicationAt: resolved, configuration: config)
+        return true
     }
 
     static func invalidate() {

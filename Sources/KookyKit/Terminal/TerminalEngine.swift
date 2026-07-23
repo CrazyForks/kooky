@@ -87,6 +87,12 @@ protocol TerminalEngine: AnyObject {
     /// avoids. The engine asks at paste time instead of caching so tab moves
     /// across panes/windows can't strand a stale host.
     var pasteUploadHostProvider: (() -> String?)? { get set }
+    /// Whether filesystem paths emitted by this surface belong to a remote
+    /// machine. Plain URLs remain openable; only scheme-less/file URL targets
+    /// are suppressed so an SSH path can never accidentally open a same-named
+    /// local file. Asked at click time because remote-login markers can change
+    /// during a session.
+    var isRemoteSessionProvider: (() -> Bool)? { get set }
     /// PID of the foreground process inside the surface. Used only as an
     /// initial/fallback env snapshot before the prompt hook reports live
     /// `VIRTUAL_ENV` / `NVM_BIN`.

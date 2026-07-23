@@ -2,6 +2,12 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.39.0 — 2026-07-23
+
+- New: ⌘-click a file path printed in the terminal to open the underlying local file, including common `path:line[:column]` and `path#Lline[Ccolumn]` spellings. File links can use a preferred editor and web links a preferred browser under Settings → General → Open With; both fall back to the macOS default.
+- Safety: file links are suppressed inside SSH / mosh sessions so a remote path can never accidentally open a same-named local file, while ordinary web links remain openable.
+- Polish: Settings now uses clearer 18 pt subsection headings. The search-pill toggle moved to Appearance → Window Chrome, with the old `general.showSearchPill` setting migrated automatically.
+
 ## v0.38.0 — 2026-07-23
 
 - New: automatic conversation resume now works across all 13 built-in AI agents. Codex, Gemini CLI, OpenCode, Amp, Cursor CLI, Copilot CLI, Grok Build, Antigravity CLI, Kimi Code, Kiro CLI, and Droid join Claude Code and Pi; each agent reopens with its own native session ID and resume command after restarting kooky.

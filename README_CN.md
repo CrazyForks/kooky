@@ -42,7 +42,7 @@
 
 **侧边栏文件树。** 侧边栏底部的切换按钮把 workspace 列表换成当前 workspace 文件夹的文件树。目录可展开、双击文件用默认程序打开,右键有在访达显示 / 拷贝路径 / 把路径插入终端(文件行还多一个「打开」)—— 也可以直接把文件或文件夹拖进终端,escape 好的路径就插到光标处,跟从 Finder 拖进来一样。改动过的文件会显示 `+X −Y` 行数(和状态栏 git diff 同一套数字),折叠的文件夹汇总其子树的改动。文件树跟随当前 tab 的目录(worktree 工作区固定在各自的 worktree 目录),磁盘上文件一变就自动刷新。
 
-**输入顺手。** 在 zsh 提示行点哪儿光标就跳哪儿(不用按 modifier,跟 ghostty.app 一致)。从 Finder 把文件或文件夹拖到任意 pane,绝对路径会自动 escape 后插到光标位置。
+**输入顺手。** 按住 ⌘ 点击 `/path/file.swift:42` 这样的本地文件路径，就能用指定的编辑器打开；网页链接也能指定浏览器（Settings → General → Open With）。在 zsh 提示行点哪儿光标就跳哪儿(不用按 modifier,跟 ghostty.app 一致)。从 Finder 把文件或文件夹拖到任意 pane,绝对路径会自动 escape 后插到光标位置。
 
 **Prompt composer (⌘L)。** pane 底部升起一个聊天式输入框，让你安心写长的、多行的 prompt——不会手一抖回车就发出去。回车发给当前 agent（或 shell），Shift+回车换行，Esc 取消并保留草稿。⌘L 或 pane 底部状态栏的 compose 按钮打开。
 
