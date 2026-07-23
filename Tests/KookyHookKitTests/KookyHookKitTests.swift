@@ -103,6 +103,39 @@ final class KookyHookKitTests: XCTestCase {
         XCTAssertNil(KookyHookKit.parseClaudeConversationId(from: data))
     }
 
+    func testPersistentClaudeLifecycleMirrorsConversationId() {
+        XCTAssertTrue(
+            KookyHookKit.shouldMirrorClaudeConversationId(
+                payload: ["agent": "claude", "event": "running"],
+                environment: [:]
+            )
+        )
+    }
+
+    func testEphemeralClaudeLifecycleDoesNotMirrorConversationId() {
+        XCTAssertFalse(
+            KookyHookKit.shouldMirrorClaudeConversationId(
+                payload: ["agent": "claude", "event": "running"],
+                environment: [KookyHookKit.claudeNoSessionPersistenceKey: "1"]
+            )
+        )
+    }
+
+    func testClaudeToolAndNonClaudePayloadsDoNotMirrorConversationId() {
+        XCTAssertFalse(
+            KookyHookKit.shouldMirrorClaudeConversationId(
+                payload: ["agent": "claude", "kind": "tool"],
+                environment: [:]
+            )
+        )
+        XCTAssertFalse(
+            KookyHookKit.shouldMirrorClaudeConversationId(
+                payload: ["agent": "pi", "event": "running"],
+                environment: [:]
+            )
+        )
+    }
+
     // MARK: conversationId payload
 
     func testBuildConversationIdPayload() {

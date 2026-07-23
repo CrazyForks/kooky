@@ -173,6 +173,58 @@ final class AgentTemplateTests: XCTestCase {
         XCTAssertEqual(config.environment["KOOKY_AGENT"], "claude --resume abc-123 --model opus")
     }
 
+    func testClaudeNoSessionPersistenceDisablesConversationPersistence() {
+        XCTAssertFalse(
+            AgentTemplate.claudeCode.persistsConversation(
+                extraOptions: "--print --no-session-persistence"
+            )
+        )
+        XCTAssertEqual(
+            AgentTemplate.claudeCode.makeSessionConfig(
+                extraOptions: "--print --no-session-persistence",
+                resumeId: "ephemeral-id"
+            ).environment["KOOKY_AGENT"],
+            "claude --print --no-session-persistence"
+        )
+    }
+
+    func testClaudeNoSessionPersistenceDetectionRespectsShellWords() {
+        XCTAssertFalse(
+            AgentTemplate.claudeCode.persistsConversation(
+                extraOptions: #""--no-session-persistence" --model opus"#
+            )
+        )
+        XCTAssertTrue(
+            AgentTemplate.claudeCode.persistsConversation(
+                extraOptions: #"--system-prompt "mention --no-session-persistence here""#
+            )
+        )
+        XCTAssertTrue(
+            AgentTemplate.claudeCode.persistsConversation(
+                extraOptions: "# --no-session-persistence"
+            )
+        )
+    }
+
+    func testClaudeBasedCustomCommandCanDisableConversationPersistence() {
+        let template = AgentTemplate.fromCustom(
+            CustomAgentData(
+                id: "claude-print",
+                command: "claude --print --no-session-persistence",
+                baseAgentId: AgentTemplate.claudeCodeID
+            )
+        )
+        XCTAssertFalse(template.persistsConversation(extraOptions: nil))
+    }
+
+    func testNoSessionPersistenceOptionDoesNotAffectOtherAgents() {
+        XCTAssertTrue(
+            AgentTemplate.pi.persistsConversation(
+                extraOptions: "--no-session-persistence"
+            )
+        )
+    }
+
     func testMakeSessionConfigSkipsResumeWhenIdEmpty() {
         let config = AgentTemplate.claudeCode.makeSessionConfig(resumeId: "")
         XCTAssertEqual(config.environment["KOOKY_AGENT"], "claude")
@@ -224,6 +276,54 @@ final class AgentTemplateTests: XCTestCase {
         // session id and reports it via `kooky-hook pi conversation <id>`.
         let config = AgentTemplate.pi.makeSessionConfig(resumeId: "abc-123")
         XCTAssertEqual(config.environment["KOOKY_AGENT"], "pi --session abc-123")
+    }
+
+    func testMakeSessionConfigNormalizesLegacyPiFilenameStem() {
+        let legacy = "2026-07-14T19-24-02-459Z_019f6216-161b-737e-ba6b-0f974a7b7b8c"
+        let config = AgentTemplate.pi.makeSessionConfig(resumeId: legacy)
+        XCTAssertEqual(
+            config.environment["KOOKY_AGENT"],
+            "pi --session 019f6216-161b-737e-ba6b-0f974a7b7b8c"
+        )
+    }
+
+    func testMakeSessionConfigNormalizesLegacyPiFilenameStemForCustomAgent() {
+        let custom = AgentTemplate.fromCustom(
+            CustomAgentData(id: "pi-custom", command: "pi", baseAgentId: "pi")
+        )
+        let legacy = "2026-07-14T19-24-02-459Z_019f6216-161b-737e-ba6b-0f974a7b7b8c"
+        let config = custom.makeSessionConfig(resumeId: legacy)
+        XCTAssertEqual(
+            config.environment["KOOKY_AGENT"],
+            "pi --session 019f6216-161b-737e-ba6b-0f974a7b7b8c"
+        )
+    }
+
+    func testMakeSessionConfigPreservesPiCustomIdEndingInUUID() {
+        let id = "team_019f6216-161b-737e-ba6b-0f974a7b7b8c"
+        let config = AgentTemplate.pi.makeSessionConfig(resumeId: id)
+        XCTAssertEqual(config.environment["KOOKY_AGENT"], "pi --session \(id)")
+    }
+
+    func testMakeSessionConfigPreservesPiConversationIdCase() {
+        let id = "019F6216-161B-737E-BA6B-0F974A7B7B8C"
+        let config = AgentTemplate.pi.makeSessionConfig(resumeId: id)
+        XCTAssertEqual(config.environment["KOOKY_AGENT"], "pi --session \(id)")
+    }
+
+    func testMakeSessionConfigPreservesLegacyPiUUIDCaseWhenNormalizing() {
+        let legacy = "2026-07-14T19-24-02-459Z_019F6216-161B-737E-BA6B-0F974A7B7B8C"
+        let config = AgentTemplate.pi.makeSessionConfig(resumeId: legacy)
+        XCTAssertEqual(
+            config.environment["KOOKY_AGENT"],
+            "pi --session 019F6216-161B-737E-BA6B-0F974A7B7B8C"
+        )
+    }
+
+    func testMakeSessionConfigDoesNotNormalizeClaudeConversationId() {
+        let id = "2026-07-14T19-24-02-459Z_019f6216-161b-737e-ba6b-0f974a7b7b8c"
+        let config = AgentTemplate.claudeCode.makeSessionConfig(resumeId: id)
+        XCTAssertEqual(config.environment["KOOKY_AGENT"], "claude --resume \(id)")
     }
 
     func testReportsToolCallsOnlyForToolFeedingAgents() {

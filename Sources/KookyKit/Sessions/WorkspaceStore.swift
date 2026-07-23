@@ -1455,19 +1455,24 @@ final class WorkspaceStore {
     /// the workspace exists, so callbacks can't capture it here.
     private func spawnSession(template: AgentTemplate, initialCwd: URL, sessionId: UUID = UUID(), conversationId: String? = nil, initialPrompt: String? = nil, sshRemoteHost: String? = nil) -> Session {
         let engine = engineFactory()
+        let extraOptions = optionsProvider(template.id)
+        let persistsConversation = template.persistsConversation(extraOptions: extraOptions)
         // Resume gated by user setting — `resumeConversations` flips this off
         // when the user wants every Claude tab to start fresh without
         // losing the persisted conversation id (it stays on disk so the
         // setting can be flipped back on later). Non-resumable templates
         // ignore the value via `makeSessionConfig`'s own `supportsResume`
         // gate, so we don't have to re-check here.
-        let resumeId = resumeProvider() ? conversationId : nil
+        let normalizedConversationId = persistsConversation
+            ? template.normalizedConversationId(conversationId)
+            : nil
+        let resumeId = resumeProvider() ? normalizedConversationId : nil
         // The template owns SSH composition (kooky-ssh wrapping, dropping the
         // local-only resume id, forcing a wrapped shell) — see
         // `makeSessionConfig(sshHost:)`.
         let sshHost = Self.normalizedSSHHost(sshRemoteHost)
         var config = template.makeSessionConfig(
-            extraOptions: optionsProvider(template.id),
+            extraOptions: extraOptions,
             resumeId: resumeId,
             initialPrompt: initialPrompt,
             sshHost: sshHost
@@ -1488,7 +1493,7 @@ final class WorkspaceStore {
             engine: engine,
             currentDirectory: initialCwd,
             agent: template,
-            conversationId: conversationId
+            conversationId: normalizedConversationId
         )
         if let sshHost {
             session.sshWorkspaceHost = sshHost

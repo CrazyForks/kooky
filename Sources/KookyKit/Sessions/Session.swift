@@ -87,14 +87,10 @@ final class Session: Identifiable {
     /// filter in `onTitleChange` maps back to `nil` — so a leftover `ssh` /
     /// TUI title can't outlive the program once control returns to the prompt.
     var terminalTitle: String?
-    /// Last conversation id this tab's agent reported (currently only Claude
-    /// — its SessionStart / Stop / SessionEnd hook JSON input carries
-    /// `session_id`). Persisted via `PersistedTab.conversationId` so that the
-    /// next kooky launch can spawn the agent with `--resume <id>` and
-    /// continue the conversation where the user left off. Per-Session field
-    /// (not per-Pane / per-Workspace) because each tab is its own
-    /// conversation — `KOOKY_SURFACE_ID` already routes hook payloads to
-    /// the correct Session, so multi-tab Claude users don't cross-attribute.
+    /// Last resumable conversation id this tab's agent reported. Persisted
+    /// via `PersistedTab.conversationId` so the next kooky launch can resume
+    /// where the user left off. Per-Session because each tab owns its own
+    /// conversation and `KOOKY_SURFACE_ID` routes hook payloads precisely.
     var conversationId: String?
     /// Exit status of the most recent command — populated from libghostty's
     /// `OSC 133;D` event. `nil` until the shell reports its first finish (or

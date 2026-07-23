@@ -668,9 +668,9 @@ enum KookyShellIntegration {
       }
       const reportSession = async (ctx) => {
         try {
-          const file = ctx && ctx.sessionManager && ctx.sessionManager.getSessionFile()
-          if (!file) return
-          const id = file.split("/").pop().replace(/\\.jsonl$/, "")
+          const manager = ctx && ctx.sessionManager
+          if (!manager || !manager.getSessionFile()) return
+          const id = manager.getSessionId()
           if (id) await pi.exec(hookBin, ["pi", "conversation", id])
         } catch {}
       }
@@ -1009,13 +1009,26 @@ enum KookyShellIntegration {
     /// KookyHook helper. `KOOKY_AGENT_MARKERS` enables the OSC-title fallback
     /// for remote shells that can write terminal bytes but cannot reach the
     /// local unix socket. Outside both, transparent passthrough.
-    private static let claudeWrapperScript = """
+    static let claudeWrapperScript = """
     \(wrapperPreamble(binary: "claude"))
 
     \(ttyPassthroughGuard)
 
     if [[ -n "$KOOKY_SURFACE_ID" || -n "$KOOKY_AGENT_MARKERS" ]]; then
         \(agentMarkerCommand(slug: "claude", event: .running))
+        # Claude still emits lifecycle hooks (and a session_id) for
+        # --no-session-persistence runs. Mark only this wrapper invocation so
+        # KookyHook can decline that non-resumable id without disabling future
+        # normal Claude runs in the same terminal tab.
+        unset KOOKY_CLAUDE_NO_SESSION_PERSISTENCE
+        for _kooky_arg in "$@"; do
+            [[ "$_kooky_arg" == "--" ]] && break
+            if [[ "$_kooky_arg" == "--no-session-persistence" ]]; then
+                export KOOKY_CLAUDE_NO_SESSION_PERSISTENCE=1
+                break
+            fi
+        done
+        unset _kooky_arg
         if [[ -n "$KOOKY_SURFACE_ID" && -n "$KOOKY_HOOKS_PATH" ]]; then
             "$real" --settings "$KOOKY_HOOKS_PATH" "$@"
         else

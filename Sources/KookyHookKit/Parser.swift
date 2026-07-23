@@ -88,6 +88,23 @@ public enum KookyHookKit {
         return sessionId
     }
 
+    /// Wrapper-scoped marker for a Claude invocation whose session cannot be
+    /// resumed. The wrapper exports it only to that Claude process tree, so a
+    /// later normal `claude` run in the same terminal is unaffected.
+    public static let claudeNoSessionPersistenceKey = "KOOKY_CLAUDE_NO_SESSION_PERSISTENCE"
+
+    /// Whether the CLI should mirror this hook payload's Claude session id.
+    /// Lifecycle/tool routing still runs for ephemeral sessions; only the
+    /// separate conversation-id payload is suppressed.
+    public static func shouldMirrorClaudeConversationId(
+        payload: [String: String],
+        environment: [String: String]
+    ) -> Bool {
+        payload["agent"] == "claude"
+            && payload["kind"] != "tool"
+            && environment[claudeNoSessionPersistenceKey] != "1"
+    }
+
     /// ConversationId payload routed to `HookServer` so `WorkspaceStore`
     /// can persist it on `Session` and prepend `--resume <id>` to
     /// `KOOKY_AGENT` on next launch.

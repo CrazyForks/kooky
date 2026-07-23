@@ -46,6 +46,23 @@ final class ShellIntegrationTests: XCTestCase {
         }
     }
 
+    func testClaudeWrapperScopesNoSessionPersistenceToActualInvocation() {
+        let script = KookyShellIntegration.claudeWrapperScript
+        let scan = #"if [[ "$_kooky_arg" == "--no-session-persistence" ]]; then"#
+        let marker = "export KOOKY_CLAUDE_NO_SESSION_PERSISTENCE=1"
+        let launch = #""$real" --settings "$KOOKY_HOOKS_PATH" "$@""#
+
+        XCTAssertTrue(script.contains(scan))
+        XCTAssertTrue(script.contains("unset KOOKY_CLAUDE_NO_SESSION_PERSISTENCE"))
+        XCTAssertTrue(script.contains(#"[[ "$_kooky_arg" == "--" ]] && break"#))
+        XCTAssertTrue(script.contains(marker))
+        XCTAssertLessThan(
+            try XCTUnwrap(script.range(of: marker)?.lowerBound),
+            try XCTUnwrap(script.range(of: launch)?.lowerBound),
+            "marker must be inherited by Claude and its hook subprocesses"
+        )
+    }
+
     /// Tool-call lifecycle subscriptions added for the activity strip. These
     /// differ from lifecycle hooks: the third command argv preserves the raw
     /// event name (`PreToolUse` / `PostToolUse`) because `main.swift` reads
@@ -306,7 +323,15 @@ final class ShellIntegrationTests: XCTestCase {
         XCTAssertTrue(body.contains(#"ping("ended")"#))
         XCTAssertTrue(body.contains(#"pi.exec(hookBin, ["pi""#), "must ping KookyHook with the pi slug")
         // Reports the session id so kooky can resume (`pi --session <id>`).
-        XCTAssertTrue(body.contains("getSessionFile"), "must read pi's current session file")
+        XCTAssertTrue(body.contains("getSessionId"), "must read pi's canonical session id")
+        XCTAssertTrue(
+            body.contains("if (!manager || !manager.getSessionFile()) return"),
+            "must not persist an id for pi's ephemeral --no-session mode"
+        )
+        XCTAssertTrue(
+            body.contains("const id = manager.getSessionId()"),
+            "must not derive the id from pi's timestamp-prefixed filename"
+        )
         XCTAssertTrue(body.contains(#"["pi", "conversation", id]"#), "must report the session id for resume")
         XCTAssertTrue(body.contains("KOOKY_SURFACE_ID"))
         XCTAssertTrue(body.contains("KOOKY_HOOK_BIN"))

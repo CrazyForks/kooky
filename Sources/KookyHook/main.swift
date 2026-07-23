@@ -133,8 +133,13 @@ let eventSent = KookyHookKit.sendPayload(payloadObject, to: socketPath)
 //      the same id and fire 5× per turn — plenty to keep WorkspaceStore's
 //      `--resume` field fresh. applyConversationId dedups same-value writes
 //      but each call still pays a socket connect+write+close roundtrip.
-if payloadObject["agent"] == "claude",
-   payloadObject["kind"] != "tool",
+//   3. the actual Claude invocation is persistent — the wrapper marks
+//      `--no-session-persistence` process trees so their temporary ids never
+//      become future `--resume` targets.
+if KookyHookKit.shouldMirrorClaudeConversationId(
+    payload: payloadObject,
+    environment: ProcessInfo.processInfo.environment
+),
    let conversationId = KookyHookKit.parseClaudeConversationId(from: stdinData) {
     let payload = KookyHookKit.buildConversationIdPayload(
         surface: surface,

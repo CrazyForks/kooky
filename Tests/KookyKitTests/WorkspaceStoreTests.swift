@@ -1393,6 +1393,51 @@ final class WorkspaceStoreTests: XCTestCase {
         XCTAssertEqual(persistedTab?.conversationId, "convo-roundtrip")
     }
 
+    func testClaudeNoSessionPersistenceDropsResumeIdWithoutDisablingFutureCapture() {
+        let store = WorkspaceStore(
+            persistence: InMemoryPersistence(),
+            engineFactory: { TestEngine() },
+            optionsProvider: { id in
+                id == AgentTemplate.claudeCodeID
+                    ? "--print --no-session-persistence"
+                    : nil
+            },
+            resumeProvider: { true }
+        )
+        let ws = store.addWorkspace(workingDirectory: projectA)
+        let tab = store.addTab(
+            in: ws,
+            template: .claudeCode,
+            conversationId: "old-persisted-id"
+        )
+
+        XCTAssertEqual(
+            engine(tab).startedConfigs.last?.environment["KOOKY_AGENT"],
+            "claude --print --no-session-persistence"
+        )
+        XCTAssertNil(tab.conversationId)
+
+        // KookyHook suppresses the ephemeral run's id using the wrapper-scoped
+        // environment marker. The tab itself must remain capture-capable so a
+        // later normal, manually typed Claude run can persist its valid id.
+        store.applyConversationId(conversationId: "later-persistent-id", sessionId: tab.id)
+        XCTAssertEqual(tab.conversationId, "later-persistent-id")
+    }
+
+    func testPiLegacyConversationIdIsNormalizedBeforeSpawn() {
+        let legacy = "2026-07-14T19-24-02-459Z_019f6216-161b-737e-ba6b-0f974a7b7b8c"
+        let canonical = "019f6216-161b-737e-ba6b-0f974a7b7b8c"
+        let store = makeStore()
+        let ws = store.addWorkspace(workingDirectory: projectA)
+        let tab = store.addTab(in: ws, template: .pi, conversationId: legacy)
+
+        XCTAssertEqual(tab.conversationId, canonical)
+        XCTAssertEqual(
+            engine(tab).startedConfigs.last?.environment["KOOKY_AGENT"],
+            "pi --session \(canonical)"
+        )
+    }
+
     func testReopenLastClosedTabRestoresConversationId() {
         let store = makeStore()
         let ws = store.addWorkspace(workingDirectory: projectA)

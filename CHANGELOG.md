@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.37.6 — 2026-07-23
+
+- Fixed: Pi conversations now resume reliably after reopening kooky — canonical session UUIDs are saved instead of timestamped transcript filenames, legacy IDs are migrated, and non-persistent Pi / Claude sessions are no longer recorded as resumable. (#37)
+
 ## v0.37.5 — 2026-07-23
 
 - Fixed: the Keep Awake breathing light no longer drives full-window SwiftUI layout every frame; it now uses a compositor-backed Core Animation layer, preventing excessive idle CPU usage. (#35)

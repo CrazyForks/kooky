@@ -103,6 +103,76 @@ struct AgentTemplate: Identifiable, Hashable {
         tintHex.flatMap(Color.init(hex:))
     }
 
+    /// Pi's session filename is `<timestamp>_<uuid>.jsonl`, but `pi
+    /// --session` resolves the canonical UUID stored inside the JSONL
+    /// header. Older kooky builds persisted the filename stem, so trim that
+    /// legacy prefix for Pi and Pi-based custom agents. Unknown/future id
+    /// shapes pass through unchanged.
+    func normalizedConversationId(_ conversationId: String?) -> String? {
+        guard
+            let conversationId,
+            id == Self.piID || baseAgentId == Self.piID
+        else {
+            return conversationId
+        }
+
+        let legacyPrefix = #"^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z_"#
+        guard let prefixRange = conversationId.range(of: legacyPrefix, options: .regularExpression) else {
+            return conversationId
+        }
+        let candidate = String(conversationId[prefixRange.upperBound...])
+        guard UUID(uuidString: candidate) != nil else { return conversationId }
+        return candidate
+    }
+
+    /// Claude's `--no-session-persistence` still emits lifecycle hooks with
+    /// a `session_id`, but that id cannot be resumed. Snapshot this at spawn
+    /// time so the hook mirror cannot turn an ephemeral run into a persisted
+    /// `--resume` target. Other agents keep their own capture semantics (Pi's
+    /// extension already declines to report ids for ephemeral sessions).
+    func persistsConversation(extraOptions: String?) -> Bool {
+        guard id == Self.claudeCodeID || baseAgentId == Self.claudeCodeID else {
+            return true
+        }
+        let flag = "--no-session-persistence"
+        return !Self.containsShellWord(flag, in: initialCommand)
+            && !Self.containsShellWord(flag, in: extraOptions)
+    }
+
+    /// Finds one literal argv without evaluating user-authored shell syntax.
+    /// Quotes and escapes are folded into the current word; separators end it.
+    private static func containsShellWord(_ target: String, in source: String?) -> Bool {
+        guard let source else { return false }
+        var quote: Character?
+        var word = ""
+        var escaped = false
+
+        for character in source {
+            if escaped {
+                word.append(character)
+                escaped = false
+            } else if character == "\\", quote != "'" {
+                escaped = true
+            } else if let activeQuote = quote {
+                if character == activeQuote {
+                    quote = nil
+                } else {
+                    word.append(character)
+                }
+            } else if character == "'" || character == "\"" {
+                quote = character
+            } else if character == "#", word.isEmpty {
+                break
+            } else if character.isWhitespace || ";|&()<>".contains(character) {
+                if word == target { return true }
+                word = ""
+            } else {
+                word.append(character)
+            }
+        }
+        return word == target
+    }
+
     /// `extraOptions` is appended after `initialCommand` (space-separated)
     /// when forming `KOOKY_AGENT`. The wrapper rc's `eval` splits on
     /// whitespace, so the caller handles its own quoting for tokens that
@@ -180,7 +250,13 @@ struct AgentTemplate: Identifiable, Hashable {
         // Suppressed when `initialPrompt` is present — "Ask <agent>"
         // is a fresh question, not a continuation.
         var resumeFragment = ""
-        if trimmedPrompt.isEmpty, let flag = resumeFlag, let id = resumeId, !id.isEmpty {
+        if
+            trimmedPrompt.isEmpty,
+            persistsConversation(extraOptions: extraOptions),
+            let flag = resumeFlag,
+            let id = normalizedConversationId(resumeId),
+            !id.isEmpty
+        {
             resumeFragment = " \(flag) \(id)"
         }
         var promptFragment = ""
@@ -250,6 +326,9 @@ extension AgentTemplate {
     /// specific behaviour (the custom-agent env block) compare against this
     /// rather than a bare `"claude-code"` literal.
     static let claudeCodeID = "claude-code"
+    /// The builtin Pi id. Also marks custom templates whose resume ids use
+    /// Pi's canonical UUID format.
+    static let piID = "pi"
 
     static let terminal = AgentTemplate(
         id: "terminal",
@@ -415,7 +494,7 @@ extension AgentTemplate {
     /// monochrome (single fill, white-on-transparent) → registered in
     /// `AgentIcon.monochromeAssets` so it adapts to light themes.
     static let pi = AgentTemplate(
-        id: "pi",
+        id: piID,
         title: "Pi",
         symbol: "pi",
         iconAsset: "pi",
