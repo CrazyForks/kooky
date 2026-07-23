@@ -103,6 +103,36 @@ final class CodexUsageMonitorTests: XCTestCase {
         XCTAssertEqual(CodexUsageMonitor.sessionMetaCwd(atPath: file.path), "/Users/me/project")
     }
 
+    func testSessionMetaConversationIdPrefersCanonicalId() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kooky-codex-id-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("rollout-id.jsonl")
+        try """
+        {"type":"session_meta","payload":{"cwd":"/Users/me/project","id":"canonical-id","session_id":"legacy-id"}}
+        """.write(to: file, atomically: true, encoding: .utf8)
+        XCTAssertEqual(
+            CodexUsageMonitor.sessionMetaConversationId(atPath: file.path),
+            "canonical-id"
+        )
+    }
+
+    func testSessionMetaConversationIdFallsBackToSessionId() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kooky-codex-fallback-id-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("rollout-id.jsonl")
+        try """
+        {"type":"session_meta","payload":{"cwd":"/Users/me/project","session_id":"fallback-id"}}
+        """.write(to: file, atomically: true, encoding: .utf8)
+        XCTAssertEqual(
+            CodexUsageMonitor.sessionMetaConversationId(atPath: file.path),
+            "fallback-id"
+        )
+    }
+
     func testResolveRolloutMatchesCwd() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("kooky-codex-resolve-\(UUID().uuidString)")
@@ -153,6 +183,47 @@ final class CodexUsageMonitorTests: XCTestCase {
         // gauge stays empty instead of adopting a prior run's file.
         XCTAssertNil(CodexUsageMonitor.resolveRollout(
             forCwd: cwd, sessionsRoot: root, excluding: CodexUsageMonitor.recentRolloutPaths(under: root)))
+    }
+
+    func testResolveResumedRolloutMatchesPreexistingConversationId() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kooky-codex-resume-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        // Resuming is not restricted to the fresh-launch three-day scan: Codex
+        // can reopen an old rollout and append to it in place.
+        let dayDir = root.appendingPathComponent("2025/01/02")
+        try FileManager.default.createDirectory(at: dayDir, withIntermediateDirectories: true)
+        try """
+        {"type":"session_meta","payload":{"cwd":"/Users/me/proj","id":"wanted-id"}}
+        \(tokenCountLine)
+        """.write(
+            to: dayDir.appendingPathComponent("rollout-2025-01-02T10-00-00-wanted-id.jsonl"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try """
+        {"type":"session_meta","payload":{"cwd":"/Users/me/proj","id":"other-id"}}
+        """.write(
+            to: dayDir.appendingPathComponent("rollout-2025-01-02T11-00-00-other-id.jsonl"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let preexisting = CodexUsageMonitor.recentRolloutPaths(under: root)
+        XCTAssertTrue(preexisting.isEmpty)
+        XCTAssertEqual(
+            CodexUsageMonitor.resolveRollout(
+                conversationId: "wanted-id",
+                sessionsRoot: root
+            )?.lastPathComponent,
+            "rollout-2025-01-02T10-00-00-wanted-id.jsonl"
+        )
+        XCTAssertNil(
+            CodexUsageMonitor.resolveRollout(
+                conversationId: "missing-id",
+                sessionsRoot: root
+            )
+        )
     }
 
     func testRecentRolloutPathsListsRolloutFiles() throws {

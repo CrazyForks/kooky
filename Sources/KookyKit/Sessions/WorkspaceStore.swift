@@ -239,6 +239,9 @@ final class WorkspaceStore {
     /// Codex blocks the shell while running, so the file is the only live
     /// signal — torn down alongside `gitWatchers` at every close site.
     private let codexUsageMonitor = CodexUsageMonitor()
+    /// Reads Kiro's per-surface ACP recording and captures the exact id
+    /// returned by `session/new`, including in the current non-hookable TUI.
+    private let kiroConversationMonitor = KiroConversationMonitor()
 
     /// Snapshot of a closed tab's reopenable state. Workspace + pane IDs
     /// are best-effort routing — if either is gone by the time the user
@@ -250,7 +253,7 @@ final class WorkspaceStore {
         let customTitle: String?
         let workspaceId: UUID
         let paneId: UUID
-        /// Captured conversation id so `⌘⇧T` resumes the Claude session
+        /// Captured conversation id so `⌘⇧T` resumes the agent session
         /// the user just closed (subject to `resumeConversations` setting).
         let conversationId: String?
     }
@@ -658,6 +661,7 @@ final class WorkspaceStore {
             for tab in pane.tabs {
                 gitWatchers.removeValue(forKey: tab.id)?.cancel()
                 codexUsageMonitor.stop(sessionId: tab.id)
+                kiroConversationMonitor.stop(sessionId: tab.id, removeRecord: true)
                 tab.engine.terminate()
             }
         }
@@ -938,6 +942,7 @@ final class WorkspaceStore {
         draggingTabId = nil
         gitWatchers.removeValue(forKey: id)?.cancel()
         codexUsageMonitor.stop(sessionId: id)
+        kiroConversationMonitor.stop(sessionId: id)
         detachSession(session, from: pane, at: idx, in: workspace)
         return session
     }
@@ -994,6 +999,7 @@ final class WorkspaceStore {
         }
         gitWatchers.removeValue(forKey: session.id)?.cancel()
         codexUsageMonitor.stop(sessionId: session.id)
+        kiroConversationMonitor.stop(sessionId: session.id, removeRecord: true)
         session.engine.terminate()
         detachSession(session, from: pane, at: idx, in: workspace)
     }
@@ -1170,11 +1176,12 @@ final class WorkspaceStore {
         // Tear down per-session watchers before terminating engines — same
         // contract as closeTab / closeWorkspace. The non-root collapse path
         // below returns without routing through those, so without this the
-        // closed pane's git + Codex-usage watchers (DispatchSource fds) leak.
+        // closed pane's git + Codex/Kiro watchers (DispatchSource fds) leak.
         // Idempotent: the root path re-stops via closeWorkspace (no-op).
         for tab in pane.tabs {
             gitWatchers.removeValue(forKey: tab.id)?.cancel()
             codexUsageMonitor.stop(sessionId: tab.id)
+            kiroConversationMonitor.stop(sessionId: tab.id, removeRecord: true)
             tab.engine.terminate()
         }
         // Object identity, not id equality. After `splitPane`, the workspace
@@ -1269,7 +1276,10 @@ final class WorkspaceStore {
         // A non-`ended` event means the agent just (re)started — for Codex,
         // (re)point the usage watcher so a manually-typed `codex` lights up
         // and a relaunch follows the freshly-created rollout file.
-        if event != .ended { startCodexUsageIfNeeded(for: session) }
+        if event != .ended {
+            startCodexUsageIfNeeded(for: session)
+            startKiroConversationIfNeeded(for: session)
+        }
     }
 
     func applyShellEnvironment(_ env: [String: String], sessionId: UUID) {
@@ -1366,6 +1376,7 @@ final class WorkspaceStore {
         for watcher in gitWatchers.values { watcher.cancel() }
         gitWatchers.removeAll()
         codexUsageMonitor.stopAll()
+        kiroConversationMonitor.stopAll(removeRecords: true)
         fileTree.cancel()
     }
 
@@ -1458,15 +1469,27 @@ final class WorkspaceStore {
         let extraOptions = optionsProvider(template.id)
         let persistsConversation = template.persistsConversation(extraOptions: extraOptions)
         // Resume gated by user setting — `resumeConversations` flips this off
-        // when the user wants every Claude tab to start fresh without
+        // when the user wants every agent tab to start fresh without
         // losing the persisted conversation id (it stays on disk so the
-        // setting can be flipped back on later). Non-resumable templates
-        // ignore the value via `makeSessionConfig`'s own `supportsResume`
-        // gate, so we don't have to re-check here.
-        let normalizedConversationId = persistsConversation
+        // setting can be flipped back on later). Plain shells ignore the value
+        // through `makeSessionConfig`, so we don't have to re-check here.
+        var normalizedConversationId = persistsConversation
             ? template.normalizedConversationId(conversationId)
             : nil
         let resumeId = resumeProvider() ? normalizedConversationId : nil
+        // Grok accepts a caller-assigned UUID for a fresh session. Generate it
+        // before launch and persist the same value immediately, eliminating
+        // the hook/file-discovery race every other agent has to solve. When
+        // resume is disabled, an existing saved id deliberately gets replaced
+        // with a new one so this launch starts fresh.
+        let newSessionId: String?
+        if persistsConversation, resumeId == nil, template.preallocatesConversationId {
+            let id = UUID().uuidString
+            normalizedConversationId = id
+            newSessionId = id
+        } else {
+            newSessionId = nil
+        }
         // The template owns SSH composition (kooky-ssh wrapping, dropping the
         // local-only resume id, forcing a wrapped shell) — see
         // `makeSessionConfig(sshHost:)`.
@@ -1474,6 +1497,7 @@ final class WorkspaceStore {
         var config = template.makeSessionConfig(
             extraOptions: extraOptions,
             resumeId: resumeId,
+            newSessionId: newSessionId,
             initialPrompt: initialPrompt,
             sshHost: sshHost
         )
@@ -1520,7 +1544,11 @@ final class WorkspaceStore {
         refreshGitStatus(for: session)
         refreshEnvironment(for: session)
         installGitWatcher(for: session)
-        startCodexUsageIfNeeded(for: session)
+        startCodexUsageIfNeeded(
+            for: session,
+            resumingConversationId: resumeProvider() ? session.conversationId : nil
+        )
+        startKiroConversationIfNeeded(for: session)
         // Paste-time upload routing. Deliberately `sshWorkspaceHost` (spawn
         // pinned), NOT `remoteHost`: the latter is the status-bar display
         // signal with a marker→command-finished lifecycle that a remote
@@ -1633,6 +1661,9 @@ final class WorkspaceStore {
             // auth failure or `codex --help`, where `codexUsage` stayed nil.
             if session.codexUsage != nil { session.codexUsage = nil }
             self?.codexUsageMonitor.stop(sessionId: session.id)
+            // Kiro has returned control to the shell too, so its full ACP
+            // trace is now static and can be removed after the id was saved.
+            self?.kiroConversationMonitor.stop(sessionId: session.id, removeRecord: true)
             session.lastCommandExit = exit
             session.lastCommandDuration = duration
             // A non-zero exit on a backgrounded tab is worth a nudge;
@@ -1771,7 +1802,10 @@ final class WorkspaceStore {
     /// launched as Codex or restored as one) and on the `running` lifecycle
     /// event (covers a manually-typed `codex`, and a relaunch that opens a
     /// fresh rollout file). `start` is idempotent for an unchanged resolution.
-    private func startCodexUsageIfNeeded(for session: Session) {
+    private func startCodexUsageIfNeeded(
+        for session: Session,
+        resumingConversationId: String? = nil
+    ) {
         let key = session.displayAgent.baseAgentId ?? session.displayAgent.id
         guard key == AgentTemplate.codex.id else { return }
         // Resolve CODEX_HOME from the session's live shell env (a Dock-launched
@@ -1782,7 +1816,12 @@ final class WorkspaceStore {
         codexUsageMonitor.start(
             sessionId: session.id,
             cwd: session.currentDirectory,
-            sessionsRoot: root
+            sessionsRoot: root,
+            resumingConversationId: resumingConversationId,
+            conversationUpdate: { [weak self, weak session] id in
+                guard let self, let session else { return }
+                self.applyConversationId(conversationId: id, sessionId: session.id)
+            }
         ) { [weak session] usage in
             guard let session, session.codexUsage != usage else { return }
             session.codexUsage = usage
@@ -1832,5 +1871,15 @@ final class WorkspaceStore {
             sidebarContent: sidebarContent,
             sidebarWidth: Double(sidebarWidth)
         )
+    }
+
+    private func startKiroConversationIfNeeded(for session: Session) {
+        let key = session.displayAgent.baseAgentId ?? session.displayAgent.id
+        guard key == AgentTemplate.kiro.id else { return }
+        let path = KookyShellIntegration.kiroACPRecordPath(for: session.id)
+        kiroConversationMonitor.start(sessionId: session.id, path: path) { [weak self, weak session] id in
+            guard let self, let session else { return }
+            self.applyConversationId(conversationId: id, sessionId: session.id)
+        }
     }
 }

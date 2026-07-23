@@ -26,31 +26,24 @@ import KookyHookKit
 //                                            (extension-reported tool call — Pi)
 // Usage: kooky-hook env <VIRTUAL_ENV> <CONDA_DEFAULT_ENV> <NVM_BIN> <NVM_DIR> <NODE_VERSION> <https_proxy> <http_proxy> <all_proxy>
 // Reads:  $KOOKY_SURFACE_ID       UUID of the originating session
-// Reads:  stdin                   Claude pipes a JSON object on every
-//                                 hook event. For PreToolUse/PostToolUse
-//                                 it's the primary input; for lifecycle
-//                                 events we use it to mirror `session_id`
-//                                 back as a separate `kind: conversationId`
-//                                 payload so kooky can prepend
-//                                 `--resume <id>` on next launch.
+// Reads:  stdin                   Hook commands carrying --hook-stdin pipe a
+//                                 JSON object. The helper extracts that
+//                                 agent's exact session/conversation id and
+//                                 mirrors it as `kind: conversationId`.
 
 let surface = ProcessInfo.processInfo.environment["KOOKY_SURFACE_ID"] ?? ""
 guard !surface.isEmpty else { exit(0) }
 
 let socketPath = KookyHookKit.socketPath
 
-// Drain stdin once up-front so the tool-event parser (PreToolUse /
-// PostToolUse) and the conversationId mirror — both reading the same
-// Claude-supplied JSON — don't double-read a single-pass stream. Gated on
-// `agent == "claude"`: only Claude pipes JSON here, and it always writes one
-// object then closes. Every other caller (codex/bracket lifecycle pings, Pi's
-// argv modes, env snapshots) sends nothing on stdin, so draining is pointless
-// — and a detached caller can hand us a stdin pipe that never EOFs (a broker's
-// JSON-RPC stream that a spawned `app-server` inherits, pinged via the
-// wrapper), where readToEnd() would block forever. `isatty == 0` still guards
-// the tty case so the "binary not installed" branch never strands the tab.
+// Drain stdin once up-front so the tool parser and conversation-id mirror
+// don't double-read a single-pass stream. The explicit marker is essential:
+// bracket-wrapper pings inherit the agent invocation's stdin, which may be a
+// user-supplied pipe. Reading merely because `isatty == 0` would consume that
+// input before the real agent sees it.
 let agentArg = CommandLine.arguments.count >= 2 ? CommandLine.arguments[1] : ""
-let stdinData: Data = (agentArg == "claude" && isatty(fileno(stdin)) == 0)
+let readsHookStdin = CommandLine.arguments.contains(KookyHookKit.hookStdinMarker)
+let stdinData: Data = (readsHookStdin && isatty(fileno(stdin)) == 0)
     ? ((try? FileHandle.standardInput.readToEnd()) ?? Data())
     : Data()
 
@@ -122,25 +115,15 @@ if CommandLine.arguments.count >= 2, CommandLine.arguments[1] == "env" {
 
 let eventSent = KookyHookKit.sendPayload(payloadObject, to: socketPath)
 
-// Bonus payload: Claude pipes `session_id` on every hook (lifecycle +
-// tool). Mirror it so `WorkspaceStore` can persist the conversation id
-// on `Session` and prepend `--resume <id>` on next launch. Gated on:
-//   1. `agent == "claude"` — non-Claude agents skip it
-//   2. `kind != "tool"` — tool payloads fire 10-100× per Claude turn and
-//      each one ALSO carries session_id; mirroring on every Pre/PostToolUse
-//      would multiply IPC by N tool calls per turn. Lifecycle events
-//      (SessionStart/UserPromptSubmit/Stop/Notification/SessionEnd) carry
-//      the same id and fire 5× per turn — plenty to keep WorkspaceStore's
-//      `--resume` field fresh. applyConversationId dedups same-value writes
-//      but each call still pays a socket connect+write+close roundtrip.
-//   3. the actual Claude invocation is persistent — the wrapper marks
-//      `--no-session-persistence` process trees so their temporary ids never
-//      become future `--resume` targets.
-if KookyHookKit.shouldMirrorClaudeConversationId(
+// Bonus payload: hook stdin carries the exact session id for Claude, Gemini,
+// Copilot, Cursor, Kimi, Kiro, Droid, and Antigravity. Mirror it through the
+// same agent-neutral wire message that Pi/OpenCode/Amp use via argv.
+if KookyHookKit.shouldMirrorConversationId(
+    agent: agentArg,
     payload: payloadObject,
     environment: ProcessInfo.processInfo.environment
 ),
-   let conversationId = KookyHookKit.parseClaudeConversationId(from: stdinData) {
+   let conversationId = KookyHookKit.parseConversationId(from: stdinData, agent: agentArg) {
     let payload = KookyHookKit.buildConversationIdPayload(
         surface: surface,
         conversationId: conversationId

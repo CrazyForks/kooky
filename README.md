@@ -24,7 +24,7 @@ A minimal modern terminal built for AI coding. Sidebar workspaces; horizontal / 
 
 ![Vertical tabs on the left, one pane split into four](img/screenshot-2.png)
 
-**One-click AI agent sessions.** Claude Code · Codex · Gemini CLI · OpenCode · Amp · Cursor CLI · Copilot CLI · Grok Build · Antigravity CLI · Kimi Code · Pi · Kiro CLI · Droid. Pick one from the `+` menu; the agent boots before your first prompt prints. Claude conversations also auto-resume across kooky restarts so closing and reopening a tab picks up where you left off.
+**One-click AI agent sessions.** Claude Code · Codex · Gemini CLI · OpenCode · Amp · Cursor CLI · Copilot CLI · Grok Build · Antigravity CLI · Kimi Code · Pi · Kiro CLI · Droid. Pick one from the `+` menu; the agent boots before your first prompt prints. Agent conversations auto-resume across kooky restarts using each CLI's exact session ID, so closing and reopening a tab picks up where you left off.
 
 ![Every supported agent, each toggleable in Settings](img/screenshot-4.png)
 

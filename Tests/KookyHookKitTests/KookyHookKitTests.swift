@@ -103,6 +103,37 @@ final class KookyHookKitTests: XCTestCase {
         XCTAssertNil(KookyHookKit.parseClaudeConversationId(from: data))
     }
 
+    func testParseConversationIdUsesAgentSpecificKeys() {
+        let cases: [(String, String, String)] = [
+            ("gemini", "session_id", "gemini-session"),
+            ("copilot", "sessionId", "copilot-session"),
+            ("cursor-agent", "conversation_id", "cursor-session"),
+            ("kimi", "session_id", "kimi-session"),
+            ("kiro-cli", "session_id", "kiro-session"),
+            ("droid", "session_id", "droid-session"),
+            ("agy", "conversationId", "antigravity-session"),
+        ]
+        for (agent, key, id) in cases {
+            let data = try! JSONSerialization.data(withJSONObject: [key: id])
+            XCTAssertEqual(
+                KookyHookKit.parseConversationId(from: data, agent: agent),
+                id,
+                "wrong id parser for \(agent)"
+            )
+        }
+    }
+
+    func testParseConversationIdRejectsWrongAgentKeyAndUnknownAgent() {
+        let data = Data(#"{"session_id":"not-a-cursor-id"}"#.utf8)
+        XCTAssertNil(KookyHookKit.parseConversationId(from: data, agent: "cursor-agent"))
+        XCTAssertNil(KookyHookKit.parseConversationId(from: data, agent: "unknown"))
+    }
+
+    func testParseConversationIdTrimsWhitespace() {
+        let data = Data(#"{"session_id":"  session-1 \n"}"#.utf8)
+        XCTAssertEqual(KookyHookKit.parseConversationId(from: data, agent: "gemini"), "session-1")
+    }
+
     func testPersistentClaudeLifecycleMirrorsConversationId() {
         XCTAssertTrue(
             KookyHookKit.shouldMirrorClaudeConversationId(
@@ -134,6 +165,23 @@ final class KookyHookKitTests: XCTestCase {
                 environment: [:]
             )
         )
+    }
+
+    func testSupportedNonClaudeLifecycleMirrorsConversationId() {
+        for agent in ["gemini", "copilot", "cursor-agent", "kimi", "kiro-cli", "droid", "agy"] {
+            XCTAssertTrue(
+                KookyHookKit.shouldMirrorConversationId(
+                    agent: agent,
+                    payload: ["agent": agent, "event": "running"],
+                    environment: [:]
+                ),
+                "\(agent) hook ids must be mirrored"
+            )
+        }
+    }
+
+    func testHookStdinMarkerIsExplicit() {
+        XCTAssertEqual(KookyHookKit.hookStdinMarker, "--hook-stdin")
     }
 
     // MARK: conversationId payload

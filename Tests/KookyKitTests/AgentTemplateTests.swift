@@ -230,38 +230,39 @@ final class AgentTemplateTests: XCTestCase {
         XCTAssertEqual(config.environment["KOOKY_AGENT"], "claude")
     }
 
-    func testMakeSessionConfigIgnoresResumeOnUnsupportedBuiltins() {
-        // Codex / Cursor / Gemini / OpenCode / Copilot / Amp / Grok /
-        // Antigravity all support a resume flag syntactically but kooky
-        // doesn't have a reliable id-capture path for them yet, so we
-        // don't inject the flag — see AgentTemplate.supportsResume /
-        // resumeFlag.
-        let codexConfig = AgentTemplate.codex.makeSessionConfig(resumeId: "abc-123")
-        XCTAssertEqual(codexConfig.environment["KOOKY_AGENT"], "codex")
-        let copilotConfig = AgentTemplate.copilot.makeSessionConfig(resumeId: "abc-123")
-        XCTAssertEqual(copilotConfig.environment["KOOKY_AGENT"], "copilot")
-        let grokConfig = AgentTemplate.grok.makeSessionConfig(resumeId: "abc-123")
-        XCTAssertEqual(grokConfig.environment["KOOKY_AGENT"], "grok")
-        let antigravityConfig = AgentTemplate.antigravity.makeSessionConfig(resumeId: "abc-123")
-        XCTAssertEqual(antigravityConfig.environment["KOOKY_AGENT"], "agy")
-        let kimiConfig = AgentTemplate.kimi.makeSessionConfig(resumeId: "abc-123")
-        XCTAssertEqual(kimiConfig.environment["KOOKY_AGENT"], "kimi")
-        let kiroConfig = AgentTemplate.kiro.makeSessionConfig(resumeId: "abc-123")
-        XCTAssertEqual(kiroConfig.environment["KOOKY_AGENT"], "kiro-cli")
-        let droidConfig = AgentTemplate.droid.makeSessionConfig(resumeId: "abc-123")
-        XCTAssertEqual(droidConfig.environment["KOOKY_AGENT"], "droid")
+    func testMakeSessionConfigInjectsAgentSpecificResumeArguments() {
+        let expected: [(AgentTemplate, String)] = [
+            (.codex, "codex resume abc-123"),
+            (.gemini, "gemini --resume abc-123"),
+            (.opencode, "opencode --session abc-123"),
+            (.amp, "amp threads continue abc-123"),
+            (.cursor, "cursor-agent --resume=abc-123"),
+            (.copilot, "copilot --session-id abc-123"),
+            (.grok, "grok --resume abc-123"),
+            (.antigravity, "agy --conversation=abc-123"),
+            (.kimi, "kimi --session abc-123"),
+            (.kiro, "kiro-cli --resume-id abc-123"),
+            (.droid, "droid --resume abc-123"),
+        ]
+        for (template, command) in expected {
+            XCTAssertEqual(
+                template.makeSessionConfig(resumeId: "abc-123").environment["KOOKY_AGENT"],
+                command,
+                "wrong resume command for \(template.id)"
+            )
+        }
     }
 
-    func testSupportsResumeMatchesResumeFlag() {
-        XCTAssertTrue(AgentTemplate.claudeCode.supportsResume)
-        XCTAssertFalse(AgentTemplate.codex.supportsResume)
-        XCTAssertFalse(AgentTemplate.copilot.supportsResume)
-        XCTAssertFalse(AgentTemplate.grok.supportsResume)
-        XCTAssertFalse(AgentTemplate.antigravity.supportsResume)
-        XCTAssertFalse(AgentTemplate.kimi.supportsResume)
-        XCTAssertFalse(AgentTemplate.kiro.supportsResume)
-        XCTAssertFalse(AgentTemplate.droid.supportsResume)
-        XCTAssertTrue(AgentTemplate.pi.supportsResume)
+    func testEveryBuiltinAgentSupportsResume() {
+        XCTAssertFalse(AgentTemplate.terminal.supportsResume)
+        for template in AgentTemplate.builtin where !template.isShell {
+            XCTAssertTrue(template.supportsResume, "\(template.id) must declare a resume strategy")
+        }
+    }
+
+    func testResumeIdIsShellQuotedWhenUnexpectedCharactersAppear() {
+        let config = AgentTemplate.codex.makeSessionConfig(resumeId: "id; echo injected")
+        XCTAssertEqual(config.environment["KOOKY_AGENT"], "codex resume 'id; echo injected'")
     }
 
     func testMakeSessionConfigInjectsResumeForClaudeBasedCustom() {
@@ -342,7 +343,7 @@ final class AgentTemplateTests: XCTestCase {
 
     func testFromCustomInheritsReportsToolCallsFromBase() {
         // A custom built on Claude / Pi inherits the tool-call pill; one built
-        // on a non-reporting base (or none) does not — mirrors resumeFlag.
+        // on a non-reporting base (or none) does not — mirrors resumeStrategy.
         XCTAssertTrue(AgentTemplate.fromCustom(CustomAgentData(id: "c1", baseAgentId: "claude-code")).reportsToolCalls)
         XCTAssertTrue(AgentTemplate.fromCustom(CustomAgentData(id: "c2", baseAgentId: "pi")).reportsToolCalls)
         XCTAssertFalse(AgentTemplate.fromCustom(CustomAgentData(id: "c3", baseAgentId: "codex")).reportsToolCalls)

@@ -1438,6 +1438,50 @@ final class WorkspaceStoreTests: XCTestCase {
         )
     }
 
+    func testFreshGrokSessionPreallocatesAndPersistsExactId() throws {
+        let store = makeStore()
+        let ws = store.addWorkspace(workingDirectory: projectA)
+        let tab = store.addTab(in: ws, template: .grok)
+
+        let id = try XCTUnwrap(tab.conversationId)
+        XCTAssertNotNil(UUID(uuidString: id))
+        XCTAssertEqual(
+            engine(tab).startedConfigs.last?.environment["KOOKY_AGENT"],
+            "grok --session-id \(id)"
+        )
+    }
+
+    func testGrokRestoresExistingConversationWithResume() {
+        let store = makeStore()
+        let ws = store.addWorkspace(workingDirectory: projectA)
+        let tab = store.addTab(in: ws, template: .grok, conversationId: "grok-existing")
+
+        XCTAssertEqual(tab.conversationId, "grok-existing")
+        XCTAssertEqual(
+            engine(tab).startedConfigs.last?.environment["KOOKY_AGENT"],
+            "grok --resume grok-existing"
+        )
+    }
+
+    func testGrokResumeDisabledStartsAndStoresNewConversation() throws {
+        let store = WorkspaceStore(
+            persistence: InMemoryPersistence(),
+            engineFactory: { TestEngine() },
+            optionsProvider: { _ in nil },
+            resumeProvider: { false }
+        )
+        let ws = store.addWorkspace(workingDirectory: projectA)
+        let tab = store.addTab(in: ws, template: .grok, conversationId: "old-id")
+        let id = try XCTUnwrap(tab.conversationId)
+
+        XCTAssertNotEqual(id, "old-id")
+        XCTAssertNotNil(UUID(uuidString: id))
+        XCTAssertEqual(
+            engine(tab).startedConfigs.last?.environment["KOOKY_AGENT"],
+            "grok --session-id \(id)"
+        )
+    }
+
     func testReopenLastClosedTabRestoresConversationId() {
         let store = makeStore()
         let ws = store.addWorkspace(workingDirectory: projectA)

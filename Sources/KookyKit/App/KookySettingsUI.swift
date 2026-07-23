@@ -90,11 +90,10 @@ final class KookySettingsModel {
     /// Persisted under `statusbar.usageHidden`. An open `Set` (not a closed
     /// enum) so a future usage-reporting agent's id round-trips untouched.
     var hiddenUsageAgents: Set<String> = []
-    /// When true, kooky launches Claude tabs with `--resume <id>` using the
-    /// conversation id persisted on each tab (captured via Claude's hook
-    /// payload). When false, every Claude tab starts fresh — but the
-    /// persisted conversation id stays on disk so turning the toggle back
-    /// on resumes from where the user left off.
+    /// When true, kooky launches supported agent tabs with that CLI's exact
+    /// resume command using the conversation id persisted on each tab. When
+    /// false, every agent tab starts fresh — but the persisted conversation
+    /// id stays on disk so turning the toggle back on can resume it later.
     var resumeConversations: Bool = true
     /// Opt-in SSH integration for remote agent status. Disabled by default:
     /// when enabled, kooky installs an `ssh` wrapper that injects temporary

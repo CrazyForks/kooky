@@ -74,18 +74,45 @@ public enum KookyHookKit {
         ]
     }
 
-    /// Pulls `session_id` out of Claude Code's hook stdin JSON. Returns nil
-    /// on malformed input, missing field, wrong type, or empty string —
-    /// callers should treat nil as "nothing to relay" and move on. Other
-    /// agents either don't pipe stdin or don't expose a session id; the
-    /// caller gates on `agent == "claude"` before invoking this.
-    public static func parseClaudeConversationId(from data: Data) -> String? {
+    /// Marker appended only to commands launched by a real agent hook. Shell
+    /// wrapper lifecycle pings intentionally omit it: they inherit the
+    /// terminal's stdin, and draining a redirected stdin there could steal
+    /// the user's prompt before the agent reads it.
+    public static let hookStdinMarker = "--hook-stdin"
+
+    /// Pulls an exact conversation id out of an agent hook's stdin JSON.
+    /// Hook ecosystems disagree on casing, so the key mapping is explicit
+    /// per binary slug instead of accepting any vaguely id-shaped field (a
+    /// tool/subagent id must never become the tab's resume target).
+    public static func parseConversationId(from data: Data, agent: String) -> String? {
+        let keys: [String]
+        switch agent {
+        case "claude", "gemini", "kimi", "kiro-cli", "droid":
+            keys = ["session_id"]
+        case "copilot":
+            keys = ["sessionId", "session_id"]
+        case "cursor-agent":
+            keys = ["conversation_id", "conversationId"]
+        case "agy":
+            keys = ["conversationId"]
+        default:
+            return nil
+        }
         guard !data.isEmpty,
-              let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let sessionId = parsed["session_id"] as? String,
-              !sessionId.isEmpty
+              let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
-        return sessionId
+        for key in keys {
+            guard let raw = parsed[key] as? String else { continue }
+            let id = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !id.isEmpty { return id }
+        }
+        return nil
+    }
+
+    /// Backward-compatible spelling kept for focused Claude parser tests and
+    /// callers outside the executable target.
+    public static func parseClaudeConversationId(from data: Data) -> String? {
+        parseConversationId(from: data, agent: "claude")
     }
 
     /// Wrapper-scoped marker for a Claude invocation whose session cannot be
@@ -93,16 +120,33 @@ public enum KookyHookKit {
     /// later normal `claude` run in the same terminal is unaffected.
     public static let claudeNoSessionPersistenceKey = "KOOKY_CLAUDE_NO_SESSION_PERSISTENCE"
 
-    /// Whether the CLI should mirror this hook payload's Claude session id.
-    /// Lifecycle/tool routing still runs for ephemeral sessions; only the
-    /// separate conversation-id payload is suppressed.
+    /// Whether the CLI should mirror this hook payload's conversation id.
+    /// Tool payloads are deliberately skipped because lifecycle hooks already
+    /// carry the same id and tool-heavy turns would otherwise multiply IPC.
+    /// Claude's ephemeral process marker remains its one agent-specific veto.
+    public static func shouldMirrorConversationId(
+        agent: String,
+        payload: [String: String],
+        environment: [String: String]
+    ) -> Bool {
+        guard payload["agent"] == agent, payload["kind"] != "tool" else { return false }
+        if agent == "claude",
+           environment[claudeNoSessionPersistenceKey] == "1" {
+            return false
+        }
+        switch agent {
+        case "claude", "gemini", "copilot", "cursor-agent", "kimi", "kiro-cli", "droid", "agy":
+            return true
+        default:
+            return false
+        }
+    }
+
     public static func shouldMirrorClaudeConversationId(
         payload: [String: String],
         environment: [String: String]
     ) -> Bool {
-        payload["agent"] == "claude"
-            && payload["kind"] != "tool"
-            && environment[claudeNoSessionPersistenceKey] != "1"
+        shouldMirrorConversationId(agent: "claude", payload: payload, environment: environment)
     }
 
     /// ConversationId payload routed to `HookServer` so `WorkspaceStore`

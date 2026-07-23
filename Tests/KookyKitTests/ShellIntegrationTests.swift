@@ -26,7 +26,10 @@ final class ShellIntegrationTests: XCTestCase {
             let entries = try XCTUnwrap(hooks[event] as? [[String: Any]], "missing event \(event)")
             let inner = try XCTUnwrap((entries.first?["hooks"] as? [[String: Any]])?.first)
             XCTAssertEqual(inner["type"] as? String, "command")
-            XCTAssertEqual(inner["command"] as? String, "'\(Self.stubHook)' gemini \(state)")
+            XCTAssertEqual(
+                inner["command"] as? String,
+                "KOOKY_MANAGED_HOOK=1 '\(Self.stubHook)' gemini \(state) --hook-stdin"
+            )
         }
     }
 
@@ -42,7 +45,10 @@ final class ShellIntegrationTests: XCTestCase {
         ] {
             let entries = try XCTUnwrap(hooks[event] as? [[String: Any]], "missing event \(event)")
             let inner = try XCTUnwrap((entries.first?["hooks"] as? [[String: Any]])?.first)
-            XCTAssertEqual(inner["command"] as? String, "'\(Self.stubHook)' claude \(state)")
+            XCTAssertEqual(
+                inner["command"] as? String,
+                "KOOKY_MANAGED_HOOK=1 '\(Self.stubHook)' claude \(state) --hook-stdin"
+            )
         }
     }
 
@@ -77,7 +83,10 @@ final class ShellIntegrationTests: XCTestCase {
             let inner = try XCTUnwrap((entries.first?["hooks"] as? [[String: Any]])?.first)
             XCTAssertEqual(inner["type"] as? String, "command")
             // argv[2] = raw Claude event name (not a HookEvent rawValue)
-            XCTAssertEqual(inner["command"] as? String, "'\(Self.stubHook)' claude \(event)")
+            XCTAssertEqual(
+                inner["command"] as? String,
+                "KOOKY_MANAGED_HOOK=1 '\(Self.stubHook)' claude \(event) --hook-stdin"
+            )
         }
     }
 
@@ -153,10 +162,8 @@ final class ShellIntegrationTests: XCTestCase {
     }
 
     func testKimiWrapperBracketsRunningAndEnded() {
-        // Kimi's lifecycle hooks are TOML-only with no system-settings
-        // override, so it rides the generic bracket wrapper (running before
-        // exec, ended after exit) like grok / amp rather than a JSON hooks
-        // file. Regression guard for the v0.20.0 wiring.
+        // The wrapper remains the launch/exit fallback around Kimi's finer
+        // TOML lifecycle hooks.
         let script = KookyShellIntegration.bracketWrapperScript(slug: "kimi")
 
         XCTAssertTrue(script.contains("\"$KOOKY_HOOK_BIN\" kimi running"))
@@ -165,11 +172,9 @@ final class ShellIntegrationTests: XCTestCase {
     }
 
     func testGeminiWrapperBracketsRunningAndEnded() {
-        // Gemini's own GEMINI_CLI_SYSTEM_SETTINGS_PATH hooks have no launch event
-        // (earliest is BeforeAgent), so a manually-typed `gemini` showed no icon
-        // until the first prompt. It now also rides the bracket wrapper for the
-        // immediate launch promotion every other agent gets — the two coexist
-        // via same-value dedup. Regression guard.
+        // The wrapper gives an immediate launch promotion while Gemini's
+        // system-settings hooks provide the finer per-turn state. Same-value
+        // pings deduplicate.
         let script = KookyShellIntegration.bracketWrapperScript(slug: "gemini")
 
         XCTAssertTrue(script.contains("\"$KOOKY_HOOK_BIN\" gemini running"))
@@ -297,6 +302,101 @@ final class ShellIntegrationTests: XCTestCase {
         XCTAssertTrue(script.contains("exec \"$real\" \"$@\""), "must passthrough when KOOKY_SURFACE_ID is unset")
     }
 
+    func testCursorHooksMergePreservesUserEntriesAndAddsResumeIdCapture() throws {
+        let existing: [String: Any] = [
+            "version": 1,
+            "custom": "keep-me",
+            "hooks": [
+                "stop": [["command": "user-stop-hook"]],
+            ],
+        ]
+        let object = try XCTUnwrap(
+            KookyShellIntegration.cursorHooksObject(existing: existing, hookCmd: Self.stubHook)
+        )
+        XCTAssertEqual(object["custom"] as? String, "keep-me")
+        let hooks = try XCTUnwrap(object["hooks"] as? [String: Any])
+        let stop = try XCTUnwrap(hooks["stop"] as? [[String: Any]])
+        XCTAssertTrue(stop.contains { ($0["command"] as? String) == "user-stop-hook" })
+        XCTAssertTrue(stop.contains {
+            ($0["command"] as? String)?.contains("cursor-agent attention --hook-stdin") == true
+        })
+        let start = try XCTUnwrap((hooks["sessionStart"] as? [[String: Any]])?.last)
+        XCTAssertTrue((start["command"] as? String)?.contains("KOOKY_MANAGED_HOOK=1") == true)
+    }
+
+    func testDroidHooksMergePreservesUserGroups() throws {
+        let existing: [String: Any] = [
+            "logoAnimation": "once",
+            "hooks": [
+                "SessionStart": [[
+                    "matcher": "",
+                    "hooks": [["type": "command", "command": "user-hook"]],
+                ]],
+            ],
+        ]
+        let object = try XCTUnwrap(
+            KookyShellIntegration.droidHooksObject(existing: existing, hookCmd: Self.stubHook)
+        )
+        XCTAssertEqual(object["logoAnimation"] as? String, "once")
+        let hooks = try XCTUnwrap(object["hooks"] as? [String: Any])
+        let groups = try XCTUnwrap(hooks["SessionStart"] as? [[String: Any]])
+        XCTAssertEqual(groups.count, 2)
+        XCTAssertTrue(String(describing: groups).contains("user-hook"))
+        XCTAssertTrue(String(describing: groups).contains("droid running --hook-stdin"))
+        XCTAssertTrue(KookyShellIntegration.droidSettingsPath.hasSuffix("/.factory/settings.json"))
+    }
+
+    func testAntigravityHooksUseOwnedNamedCollection() throws {
+        let object = KookyShellIntegration.antigravityHooksObject(
+            existing: ["user-hook": ["enabled": true]],
+            hookCmd: Self.stubHook
+        )
+        XCTAssertNotNil(object["user-hook"])
+        let managed = try XCTUnwrap(object["kooky-managed-do-not-edit"] as? [String: Any])
+        XCTAssertTrue(String(describing: managed["PreInvocation"]).contains("agy running --hook-stdin"))
+        XCTAssertTrue(String(describing: managed["Stop"]).contains("agy attention --hook-stdin"))
+    }
+
+    func testKimiManagedTomlBlockIsIdempotentAndPreservesUserConfig() throws {
+        let existing = """
+        model = "kimi-for-coding"
+
+        [[hooks]]
+        event = "Notification"
+        command = "user-notify"
+        """
+        let once = try XCTUnwrap(
+            KookyShellIntegration.kimiConfigWithManagedHooks(existing: existing, hookCmd: Self.stubHook)
+        )
+        let twice = try XCTUnwrap(
+            KookyShellIntegration.kimiConfigWithManagedHooks(existing: once, hookCmd: Self.stubHook)
+        )
+        XCTAssertEqual(once, twice)
+        XCTAssertTrue(once.hasPrefix(existing), "bytes outside kooky's managed block must stay untouched")
+        XCTAssertTrue(twice.contains("user-notify"))
+        XCTAssertEqual(twice.components(separatedBy: "hooks begin").count - 1, 1)
+        XCTAssertTrue(twice.contains("kimi running --hook-stdin"))
+        XCTAssertTrue(twice.contains("kimi attention --hook-stdin"))
+    }
+
+    func testKimiManagedTomlRejectsHalfMarker() {
+        XCTAssertNil(
+            KookyShellIntegration.kimiConfigWithManagedHooks(
+                existing: "# kooky-managed-do-not-edit hooks begin\n",
+                hookCmd: Self.stubHook
+            )
+        )
+    }
+
+    func testCopilotHooksReadSessionIdFromStdin() throws {
+        let object = KookyShellIntegration.copilotHooksObject(hookCmd: Self.stubHook)
+        let hooks = try XCTUnwrap(object["hooks"] as? [String: Any])
+        let start = try XCTUnwrap((hooks["sessionStart"] as? [[String: Any]])?.first)
+        let command = try XCTUnwrap(start["bash"] as? String)
+        XCTAssertTrue(command.contains("copilot running --hook-stdin"))
+        XCTAssertTrue(command.contains("KOOKY_MANAGED_HOOK=1"))
+    }
+
     func testOpencodePluginShellsOutToHookBinForBothEvents() {
         let body = KookyShellIntegration.opencodePluginScript
 
@@ -305,8 +405,33 @@ final class ShellIntegrationTests: XCTestCase {
         XCTAssertTrue(body.contains(#"ping("running")"#))
         XCTAssertTrue(body.contains(#"ping("attention")"#))
         XCTAssertTrue(body.contains("opencode"), "plugin must pass agent slug to KookyHook")
+        XCTAssertTrue(body.contains("conversation"), "plugin must report the exact session id")
+        XCTAssertTrue(body.contains("sessionID"))
+        XCTAssertTrue(body.contains("client.session.get"), "every indirect event must resolve its session metadata")
+        XCTAssertTrue(body.contains("reportRootSession(sessionID)"))
+        XCTAssertTrue(body.contains("reportRootSession(event?.properties?.sessionID)"))
+        XCTAssertFalse(body.contains("reportSession(sessionID)"), "subagent ids must never bypass the root-session check")
+        XCTAssertTrue(body.contains("!info?.parentID"), "subagent ids must not replace the root session id")
         XCTAssertTrue(body.contains("KOOKY_SURFACE_ID"))
         XCTAssertTrue(body.contains("kooky-managed-do-not-edit"), "plugin must carry the upgrade-safety marker")
+    }
+
+    func testAmpPluginReportsThreadIdAndPerTurnLifecycle() {
+        let body = KookyShellIntegration.ampPluginScript
+        XCTAssertTrue(body.contains(#"amp.on("session.start""#))
+        XCTAssertTrue(body.contains("event?.thread?.id"))
+        XCTAssertTrue(body.contains(#"["amp", "conversation", id]"#))
+        XCTAssertTrue(body.contains(#"amp.on("agent.start""#))
+        XCTAssertTrue(body.contains(#"amp.on("agent.end""#))
+        XCTAssertTrue(body.contains("kooky-managed-do-not-edit"))
+    }
+
+    func testKiroWrapperScopesACPRecordingToKookyInvocation() {
+        let body = KookyShellIntegration.kiroWrapperScript
+        XCTAssertTrue(body.contains("KOOKY_KIRO_ACP_RECORD_PATH"))
+        XCTAssertTrue(body.contains(#"KIRO_ACP_RECORD_PATH="$KOOKY_KIRO_ACP_RECORD_PATH" "$real" "$@""#))
+        XCTAssertTrue(body.contains("\"$KOOKY_HOOK_BIN\" kiro-cli running"))
+        XCTAssertTrue(body.contains("exec \"$real\" \"$@\""), "outside kooky it must stay transparent")
     }
 
     func testPiExtensionSubscribesLifecycleEventsAndPingsHook() {
@@ -535,7 +660,10 @@ final class ShellIntegrationTests: XCTestCase {
         let hooks = try XCTUnwrap(object["hooks"] as? [String: Any])
         let entries = try XCTUnwrap(hooks["UserPromptSubmit"] as? [[String: Any]])
         let inner = try XCTUnwrap((entries.first?["hooks"] as? [[String: Any]])?.first)
-        XCTAssertEqual(inner["command"] as? String, "'\(Self.stubHook)' claude running")
+        XCTAssertEqual(
+            inner["command"] as? String,
+            "KOOKY_MANAGED_HOOK=1 '\(Self.stubHook)' claude running --hook-stdin"
+        )
     }
 
     func testBackslashEscapeFallsBackToQuoteOnNewlineToAvoidLineContinuation() {

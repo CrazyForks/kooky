@@ -2,6 +2,11 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.38.0 — 2026-07-23
+
+- New: automatic conversation resume now works across all 13 built-in AI agents. Codex, Gemini CLI, OpenCode, Amp, Cursor CLI, Copilot CLI, Grok Build, Antigravity CLI, Kimi Code, Kiro CLI, and Droid join Claude Code and Pi; each agent reopens with its own native session ID and resume command after restarting kooky.
+- Fixed: OpenCode child-agent sessions can no longer replace the root conversation's resume ID, and restored Codex sessions reconnect their usage gauge to the original rollout.
+
 ## v0.37.6 — 2026-07-23
 
 - Fixed: Pi conversations now resume reliably after reopening kooky — canonical session UUIDs are saved instead of timestamped transcript filenames, legacy IDs are migrated, and non-persistent Pi / Claude sessions are no longer recorded as resumable. (#37)

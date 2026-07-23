@@ -440,6 +440,31 @@ enum KookyShellIntegration {
             .appendingPathComponent(".copilot/hooks/kooky.json").path
     }()
 
+    static let cursorHooksPath: String = {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".cursor/hooks.json").path
+    }()
+
+    static let droidSettingsPath: String = {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".factory/settings.json").path
+    }()
+
+    static let antigravityHooksPath: String = {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".gemini/config/hooks.json").path
+    }()
+
+    static let kimiConfigPath: String = {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".kimi-code/config.toml").path
+    }()
+
+    static let ampPluginPath: String = {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/amp/plugins/kooky.ts").path
+    }()
+
     /// XDG plugin directory OpenCode auto-loads at startup. Honors
     /// `XDG_CONFIG_HOME` when set (the OpenCode launch is a child of the same
     /// shell, so a user-relocated config dir routes consistently between us
@@ -461,6 +486,16 @@ enum KookyShellIntegration {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }()
+
+    private static let kiroACPRecordDirectory: URL = {
+        let dir = kookyAppSupport("kiro-acp", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }()
+
+    static func kiroACPRecordPath(for sessionId: UUID) -> String {
+        kiroACPRecordDirectory.appendingPathComponent("\(sessionId.uuidString).jsonl").path
+    }
 
     /// Absolute path to the `KookyHook` helper we exec for IPC. We do NOT run
     /// it in place from the bundle: macOS Gatekeeper silently SIGKILLs an
@@ -508,11 +543,17 @@ enum KookyShellIntegration {
     ) -> [String: String] {
         let parentPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/local/bin:/usr/bin:/bin"
         let hooksPath = claudeCustomSettingsAgentId.map(claudeCustomSettingsPath(agentId:)) ?? claudeHooksPath
+        let kiroRecordPath = kiroACPRecordPath(for: sessionId)
+        // A restored tab reuses its surface UUID. Start this Kiro process with
+        // a clean ACP trace so an old `session/new` response cannot flash a
+        // stale conversation id before the new/resumed session records itself.
+        try? FileManager.default.removeItem(atPath: kiroRecordPath)
         var env: [String: String] = [
             "KOOKY_SURFACE_ID": sessionId.uuidString,
             "KOOKY_HOOKS_PATH": hooksPath,
             "KOOKY_BIN_DIR": kookyBinDirectory,
             "KOOKY_HOOK_BIN": kookyHookBinaryPath,
+            "KOOKY_KIRO_ACP_RECORD_PATH": kiroRecordPath,
             // KOOKY_AGENT_MARKERS is deliberately NOT set locally: the
             // KookyHook socket is the local status channel. OSC-title markers
             // are the ssh-remote fallback (the remote bootstrap exports the
@@ -561,7 +602,7 @@ enum KookyShellIntegration {
         writeWrapper(name: "agy", script: antigravityWrapperScript)
         writeWrapper(name: "kimi", script: bracketWrapperScript(slug: "kimi"))
         writeWrapper(name: "pi", script: bracketWrapperScript(slug: "pi"))
-        writeWrapper(name: "kiro-cli", script: bracketWrapperScript(slug: "kiro-cli"))
+        writeWrapper(name: "kiro-cli", script: kiroWrapperScript)
         writeWrapper(name: "droid", script: bracketWrapperScript(slug: "droid"))
         // Private ssh entry point for SSH workspaces — always installed,
         // unlike the public `ssh` shim below (user-setting gated because it
@@ -574,19 +615,16 @@ enum KookyShellIntegration {
         writeJSON(at: claudeHooksPath, object: claudeHooksObject(hookCmd: hookCmd))
         writeJSON(at: geminiDefaultsPath, object: geminiDefaultsObject(hookCmd: hookCmd))
         installCopilotHooksIfPresent(hookCmd: hookCmd)
+        installCursorHooksIfPresent(hookCmd: hookCmd)
+        installDroidHooksIfPresent(hookCmd: hookCmd)
+        installAntigravityHooksIfPresent(hookCmd: hookCmd)
+        installKimiHooksIfPresent(hookCmd: hookCmd)
+        installAmpPluginIfPresent()
         writeManagedFile(at: opencodePluginPath, contents: opencodePluginScript)
         installPiExtensionIfPresent()
         installFishVendorConf()
-        // Grok CLI has no JSON hook file like Claude — its `~/.grok/hooks/`
-        // is a script directory driven by env vars (GROK_HOOK_EVENT /
-        // GROK_SESSION_ID), so the bracket wrapper handles running/ended
-        // and full lifecycle integration requires a different code path.
-        //
-        // Kimi Code's hooks are TOML-only (`~/.kimi-code/config.toml`
-        // `[[hooks]]`) with no system-settings env-var override — so unlike
-        // Gemini we can't point it at a kooky-owned defaults file, and unlike
-        // Copilot it has no per-event hooks directory; the bracket wrapper
-        // gives running/ended until a config.toml-merge path exists.
+        // Grok doesn't need a hook for resume: kooky assigns its UUID before
+        // launch via `--session-id`, then uses `--resume` next time.
         //
         // Pi rides a kooky-managed TypeScript extension (installed only when
         // `~/.pi/` exists — see `installPiExtensionIfPresent`) that subscribes
@@ -594,11 +632,9 @@ enum KookyShellIntegration {
         // OpenCode plugin — so the dot also reaches `attention` (waiting on
         // you), not just the bracket wrapper's running/ended.
         //
-        // Kiro CLI (`kiro-cli`) is bracket-wrapper-only: its hooks are
-        // context-injection ("pre/post command" context for the model), not a
-        // lifecycle feed kooky can map to attention, so running/ended is all
-        // the wrapper surfaces. We wrap `kiro-cli`, never `kiro` (the IDE
-        // launcher).
+        // Kiro's exact id comes from its per-surface ACP recording path
+        // (`KIRO_ACP_RECORD_PATH`), not a user agent config. We wrap
+        // `kiro-cli`, never `kiro` (the IDE launcher).
     }
 
     static func refreshSshRemoteAgentDetection(enabled: Bool) {
@@ -625,6 +661,224 @@ enum KookyShellIntegration {
         let hooksDir = copilotHome.appendingPathComponent("hooks", isDirectory: true)
         try? FileManager.default.createDirectory(at: hooksDir, withIntermediateDirectories: true)
         writeManagedJSON(at: copilotHooksPath, object: copilotHooksObject(hookCmd: hookCmd))
+    }
+
+    private static let hookStdinMarker = "--hook-stdin"
+    private static let managedHookEnvironmentMarker = "KOOKY_MANAGED_HOOK=1"
+
+    private static func hookCommand(hookCmd: String, slug: String, state: HookEvent) -> String {
+        "\(managedHookEnvironmentMarker) \(quote(hookCmd)) \(slug) \(state.rawValue) \(hookStdinMarker)"
+    }
+
+    /// Cursor has one mergeable user hooks file. Preserve every user entry,
+    /// replacing only commands carrying kooky's process-local marker.
+    static func cursorHooksObject(
+        existing: [String: Any] = [:],
+        hookCmd: String
+    ) -> [String: Any]? {
+        var object = existing
+        if object["version"] == nil { object["version"] = 1 }
+        guard var hooks = object["hooks"] as? [String: Any] ?? (object["hooks"] == nil ? [:] : nil)
+        else { return nil }
+        let events: [(String, HookEvent)] = [
+            ("sessionStart", .running),
+            ("beforeSubmitPrompt", .running),
+            ("stop", .attention),
+            ("sessionEnd", .ended),
+        ]
+        for (event, state) in events {
+            guard var entries = hooks[event] as? [[String: Any]] ?? (hooks[event] == nil ? [] : nil)
+            else { return nil }
+            entries.removeAll(where: containsManagedHook)
+            entries.append(["command": hookCommand(hookCmd: hookCmd, slug: "cursor-agent", state: state)])
+            hooks[event] = entries
+        }
+        object["hooks"] = hooks
+        return object
+    }
+
+    /// Droid uses Claude-style matcher groups under the `hooks` key in its
+    /// user settings file. Merge a dedicated no-matcher group per event while
+    /// preserving every unrelated setting and user hook.
+    static func droidHooksObject(
+        existing: [String: Any] = [:],
+        hookCmd: String
+    ) -> [String: Any]? {
+        var object = existing
+        guard var hooks = object["hooks"] as? [String: Any] ?? (object["hooks"] == nil ? [:] : nil)
+        else { return nil }
+        let events: [(String, HookEvent)] = [
+            ("SessionStart", .running),
+            ("UserPromptSubmit", .running),
+            ("Stop", .attention),
+            ("Notification", .attention),
+            ("SessionEnd", .ended),
+        ]
+        for (event, state) in events {
+            guard var groups = hooks[event] as? [[String: Any]] ?? (hooks[event] == nil ? [] : nil)
+            else { return nil }
+            groups.removeAll(where: containsManagedHook)
+            groups.append([
+                "matcher": "",
+                "hooks": [[
+                    "type": "command",
+                    "command": hookCommand(hookCmd: hookCmd, slug: "droid", state: state),
+                    "timeout": 5,
+                ]],
+            ])
+            hooks[event] = groups
+        }
+        object["hooks"] = hooks
+        return object
+    }
+
+    /// Antigravity's hooks file is keyed by named hook collections, so one
+    /// kooky-owned key composes without touching any neighboring collection.
+    static func antigravityHooksObject(
+        existing: [String: Any] = [:],
+        hookCmd: String
+    ) -> [String: Any] {
+        var object = existing
+        let handler: (HookEvent) -> [String: Any] = { state in
+            [
+                "type": "command",
+                "command": hookCommand(hookCmd: hookCmd, slug: "agy", state: state),
+                "timeout": 5,
+            ]
+        }
+        object["kooky-managed-do-not-edit"] = [
+            "PreInvocation": [handler(.running)],
+            "PostInvocation": [handler(.attention)],
+            "Stop": [handler(.attention)],
+        ]
+        return object
+    }
+
+    private static func installCursorHooksIfPresent(hookCmd: String) {
+        installMergedJSONIfVendorPresent(
+            vendorHome: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cursor"),
+            path: cursorHooksPath
+        ) { cursorHooksObject(existing: $0, hookCmd: hookCmd) }
+    }
+
+    private static func installDroidHooksIfPresent(hookCmd: String) {
+        installMergedJSONIfVendorPresent(
+            vendorHome: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".factory"),
+            path: droidSettingsPath
+        ) { droidHooksObject(existing: $0, hookCmd: hookCmd) }
+    }
+
+    private static func installAntigravityHooksIfPresent(hookCmd: String) {
+        installMergedJSONIfVendorPresent(
+            vendorHome: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".gemini"),
+            path: antigravityHooksPath
+        ) { antigravityHooksObject(existing: $0, hookCmd: hookCmd) }
+    }
+
+    private static func installMergedJSONIfVendorPresent(
+        vendorHome: URL,
+        path: String,
+        transform: ([String: Any]) -> [String: Any]?
+    ) {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: vendorHome.path) else { return }
+        let url = URL(fileURLWithPath: path)
+        let existing: [String: Any]
+        if fm.fileExists(atPath: path) {
+            guard let data = try? Data(contentsOf: url),
+                  let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { return }  // malformed user config: never overwrite it
+            existing = parsed
+        } else {
+            existing = [:]
+        }
+        guard let merged = transform(existing) else { return }
+        try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        writeJSON(at: path, object: merged)
+    }
+
+    private static func containsManagedHook(_ value: [String: Any]) -> Bool {
+        containsManagedHookValue(value)
+    }
+
+    private static func containsManagedHookValue(_ value: Any) -> Bool {
+        if let string = value as? String {
+            return string.contains(managedHookEnvironmentMarker)
+        }
+        if let dictionary = value as? [String: Any] {
+            return dictionary.values.contains(where: containsManagedHookValue)
+        }
+        if let array = value as? [Any] {
+            return array.contains(where: containsManagedHookValue)
+        }
+        return false
+    }
+
+    /// Appends a clearly delimited block to Kimi's TOML. The user's bytes
+    /// outside that block are preserved verbatim; malformed half-markers make
+    /// us skip the write rather than guessing where their config ends.
+    static func kimiConfigWithManagedHooks(existing: String, hookCmd: String) -> String? {
+        let begin = "# kooky-managed-do-not-edit hooks begin"
+        let end = "# kooky-managed-do-not-edit hooks end"
+        let hasBegin = existing.contains(begin)
+        let hasEnd = existing.contains(end)
+        guard hasBegin == hasEnd else { return nil }
+
+        var base = existing
+        if hasBegin,
+           let start = base.range(of: begin),
+           let finish = base.range(of: end, range: start.upperBound..<base.endIndex) {
+            var upper = finish.upperBound
+            if upper < base.endIndex, base[upper] == "\n" {
+                upper = base.index(after: upper)
+            }
+            base.removeSubrange(start.lowerBound..<upper)
+        }
+
+        let events: [(String, HookEvent)] = [
+            ("SessionStart", .running),
+            ("UserPromptSubmit", .running),
+            ("Stop", .attention),
+            ("SessionEnd", .ended),
+        ]
+        let rules = events.map { event, state in
+            let command = hookCommand(hookCmd: hookCmd, slug: "kimi", state: state)
+            return """
+            [[hooks]]
+            event = "\(event)"
+            command = "\(tomlBasicString(command))"
+            timeout = 5
+            """
+        }.joined(separator: "\n\n")
+        let block = "\(begin)\n\(rules)\n\(end)\n"
+        guard !base.isEmpty else { return block }
+        let separator = base.hasSuffix("\n\n") ? "" : (base.hasSuffix("\n") ? "\n" : "\n\n")
+        return "\(base)\(separator)\(block)"
+    }
+
+    private static func tomlBasicString(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\n", with: "\\n")
+    }
+
+    private static func installKimiHooksIfPresent(hookCmd: String) {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".kimi-code", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: home.path) else { return }
+        let existing = (try? String(contentsOfFile: kimiConfigPath, encoding: .utf8)) ?? ""
+        guard let merged = kimiConfigWithManagedHooks(existing: existing, hookCmd: hookCmd) else { return }
+        try? merged.write(toFile: kimiConfigPath, atomically: true, encoding: .utf8)
+    }
+
+    private static func installAmpPluginIfPresent() {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/amp", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: home.path) else { return }
+        let url = URL(fileURLWithPath: ampPluginPath)
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        writeManagedFile(at: ampPluginPath, contents: ampPluginScript)
     }
 
     /// Writes the Pi extension only when the user already has a `~/.pi/`
@@ -825,10 +1079,13 @@ enum KookyShellIntegration {
             ("sessionEnd",          .ended),
         ]
         var hooks: [String: Any] = [:]
-        let quotedCmd = quote(hookCmd)
         for (event, state) in events {
             hooks[event] = [
-                ["type": "command", "bash": "\(quotedCmd) copilot \(state.rawValue)", "timeoutSec": 5]
+                [
+                    "type": "command",
+                    "bash": hookCommand(hookCmd: hookCmd, slug: "copilot", state: state),
+                    "timeoutSec": 5,
+                ]
             ]
         }
         return ["version": 1, "_kookyManaged": managedFileMarker, "hooks": hooks]
@@ -871,12 +1128,21 @@ enum KookyShellIntegration {
         // Claude / Gemini run `command` through `/bin/sh -c`, so an unquoted
         // `KookyHook` path breaks the moment the app lives under a path with
         // spaces or shell metacharacters (e.g. `/Applications/Kooky 2.app/…`).
-        let quotedCmd = quote(hookCmd)
         for (event, state) in events {
-            hooks[event] = [["hooks": [["type": "command", "command": "\(quotedCmd) \(slug) \(state.rawValue)"]]]]
+            hooks[event] = [[
+                "hooks": [[
+                    "type": "command",
+                    "command": hookCommand(hookCmd: hookCmd, slug: slug, state: state),
+                ]],
+            ]]
         }
         for event in passthroughEvents {
-            hooks[event] = [["hooks": [["type": "command", "command": "\(quotedCmd) \(slug) \(event)"]]]]
+            hooks[event] = [[
+                "hooks": [[
+                    "type": "command",
+                    "command": "\(managedHookEnvironmentMarker) \(quote(hookCmd)) \(slug) \(event) \(hookStdinMarker)",
+                ]],
+            ]]
         }
         return ["hooks": hooks]
     }
@@ -1363,6 +1629,35 @@ enum KookyShellIntegration {
     \(bracketBody(slug: "agy"))
     """
 
+    /// Kiro wrapper uses the generic lifecycle bracket plus one isolated ACP
+    /// recording path. The variable is scoped to the real Kiro process so a
+    /// user's own `KIRO_ACP_RECORD_PATH` remains untouched in their shell and
+    /// in Kiro runs outside kooky.
+    static let kiroWrapperScript = """
+    \(wrapperPreamble(binary: "kiro-cli"))
+
+    \(ttyPassthroughGuard)
+
+    if [[ -n "$KOOKY_SURFACE_ID" || -n "$KOOKY_AGENT_MARKERS" ]]; then
+        \(agentMarkerCommand(slug: "kiro-cli", event: .running))
+        if [[ -n "$KOOKY_SURFACE_ID" && -n "$KOOKY_HOOK_BIN" ]]; then
+            "$KOOKY_HOOK_BIN" kiro-cli running 2>/dev/null
+        fi
+        if [[ -n "$KOOKY_SURFACE_ID" && -n "$KOOKY_KIRO_ACP_RECORD_PATH" ]]; then
+            KIRO_ACP_RECORD_PATH="$KOOKY_KIRO_ACP_RECORD_PATH" "$real" "$@"
+        else
+            "$real" "$@"
+        fi
+        status=$?
+        if [[ -n "$KOOKY_SURFACE_ID" && -n "$KOOKY_HOOK_BIN" ]]; then
+            "$KOOKY_HOOK_BIN" kiro-cli ended 2>/dev/null
+        fi
+        \(agentMarkerCommand(slug: "kiro-cli", event: .ended))
+        exit $status
+    fi
+    exec "$real" "$@"
+    """
+
     /// Generic bracket wrapper for agents we can't drive mid-run state from
     /// (no hook system or no installed plugin yet). Sends `running` before
     /// exec and `ended` after exit; activity dot stays green for the whole
@@ -1402,6 +1697,36 @@ enum KookyShellIntegration {
         """
     }
 
+    /// Amp system plugin. `session.start` carries the exact thread id; agent
+    /// start/end events also upgrade the generic wrapper's whole-run green
+    /// state to per-turn running/attention.
+    static let ampPluginScript = """
+    // \(managedFileMarker) — reports Amp thread ids and lifecycle to KookyHook.
+    // Safe to delete; it is regenerated next time kooky launches.
+    import { spawn } from "node:child_process"
+    import type { PluginAPI } from "@ampcode/plugin"
+
+    export default function (amp: PluginAPI) {
+      const surface = process.env.KOOKY_SURFACE_ID
+      const hookBin = process.env.KOOKY_HOOK_BIN
+      if (!surface || !hookBin) return
+
+      const send = (args: string[]) => {
+        try {
+          const child = spawn(hookBin, args, { stdio: "ignore", env: process.env })
+          child.unref()
+        } catch {}
+      }
+      amp.on("session.start", async (event) => {
+        const id = event?.thread?.id
+        if (id) send(["amp", "conversation", id])
+        send(["amp", "running"])
+      })
+      amp.on("agent.start", async () => { send(["amp", "running"]) })
+      amp.on("agent.end", async () => { send(["amp", "attention"]) })
+    }
+    """
+
     /// OpenCode auto-loads any `.ts`/`.js` file in
     /// `$XDG_CONFIG_HOME/opencode/plugin/` (or `~/.config/opencode/plugin/`)
     /// at startup. The plugin runs in opencode's own Bun runtime, inherits
@@ -1414,7 +1739,7 @@ enum KookyShellIntegration {
     // \(managedFileMarker) — pings KookyHook on prompt-submit and turn-end so
     // the sidebar agent dot tracks per-session activity. Safe to delete; will
     // be regenerated next time kooky launches.
-    export const KookyPlugin = async ({ $ }) => {
+    export const KookyPlugin = async ({ $, client, directory }) => {
       const surface = process.env.KOOKY_SURFACE_ID
       const hookBin = process.env.KOOKY_HOOK_BIN
       if (!surface || !hookBin) return {}
@@ -1422,11 +1747,38 @@ enum KookyShellIntegration {
       const ping = async (state) => {
         try { await $`${hookBin} opencode ${state}`.quiet() } catch {}
       }
+      const reportSession = async (id) => {
+        if (!id) return
+        try { await $`${hookBin} opencode conversation ${id}`.quiet() } catch {}
+      }
+      const reportRootSession = async (id) => {
+        if (!id) return
+        try {
+          const response = await client.session.get({
+            path: { id },
+            query: { directory },
+          })
+          const info = response?.data
+          if (info?.id && !info?.parentID) await reportSession(info.id)
+        } catch {}
+      }
 
       return {
-        "chat.message": async () => { await ping("running") },
+        "chat.message": async ({ sessionID }) => {
+          await reportRootSession(sessionID)
+          await ping("running")
+        },
         event: async ({ event }) => {
-          if (event?.type === "session.idle") await ping("attention")
+          if (event?.type === "session.created") {
+            const info = event?.properties?.info
+            // Subagents also create sessions. Only the root chat belongs to
+            // this kooky tab; a child id would resume the wrong conversation.
+            if (info?.id && !info?.parentID) await reportSession(info.id)
+          }
+          if (event?.type === "session.idle") {
+            await reportRootSession(event?.properties?.sessionID)
+            await ping("attention")
+          }
         },
       }
     }

@@ -2,6 +2,55 @@ import AppKit
 import Foundation
 import SwiftUI
 
+/// How a CLI names and resumes one exact conversation.
+///
+/// Most agents take a flag followed by an id, while a few use a subcommand
+/// (`codex resume <id>`, `amp threads continue <id>`) or an equals-style
+/// option (`agy --conversation=<id>`). Grok is the outlier: it lets the
+/// caller assign the id for a fresh session, which is both more reliable and
+/// earlier than trying to discover the id from a later hook.
+enum ConversationResumeStrategy: Hashable {
+    case arguments([String])
+    case optionEquals(String)
+    case preallocated(newSessionArguments: [String], resumeArguments: [String])
+
+    var preallocatesNewSessionId: Bool {
+        if case .preallocated = self { return true }
+        return false
+    }
+
+    func resumeFragment(conversationId: String) -> String {
+        switch self {
+        case .arguments(let arguments):
+            return Self.argumentsFragment(arguments, conversationId: conversationId)
+        case .optionEquals(let option):
+            return " \(option)=\(Self.shellArgument(conversationId))"
+        case .preallocated(_, let resumeArguments):
+            return Self.argumentsFragment(resumeArguments, conversationId: conversationId)
+        }
+    }
+
+    func newSessionFragment(conversationId: String) -> String {
+        guard case .preallocated(let arguments, _) = self else { return "" }
+        return Self.argumentsFragment(arguments, conversationId: conversationId)
+    }
+
+    private static func argumentsFragment(_ arguments: [String], conversationId: String) -> String {
+        let prefix = arguments.joined(separator: " ")
+        return " \(prefix) \(shellArgument(conversationId))"
+    }
+
+    /// Keep normal UUID/thread ids readable in process listings, but quote
+    /// any unexpected value before it crosses the persisted-data → shell
+    /// boundary.
+    private static func shellArgument(_ value: String) -> String {
+        let isSafe = !value.isEmpty && value.allSatisfy {
+            $0.isASCII && ($0.isLetter || $0.isNumber || "-._:@/".contains($0))
+        }
+        return isSafe ? value : KookyShellIntegration.quote(value)
+    }
+}
+
 /// A named profile that turns into a `TerminalSessionConfig` when the user
 /// picks it from the "+" menu. The shell starts under our wrapper `.zshrc`
 /// (KookyShellIntegration), which sources the user's config, then — if
@@ -36,11 +85,11 @@ struct AgentTemplate: Identifiable, Hashable {
     /// path via `makeSessionConfig(initialPrompt:)`. Templates with
     /// `initialCommand == nil` (Terminal) ignore this entirely.
     let promptLaunchFlag: String?
-    /// CLI flag the agent's binary expects to resume a prior conversation.
-    /// Nil = no resume support (kooky doesn't have an id-capture path for
-    /// this agent yet). Claude Code = `--resume`; Grok = `--session`. Drives
-    /// `makeSessionConfig(resumeId:)` and `supportsResume`.
-    let resumeFlag: String?
+    /// Exact command shape used to resume a prior conversation. Nil means the
+    /// template has no automatic-resume integration. Drives
+    /// `makeSessionConfig(resumeId:)`, Grok's fresh-session preallocation,
+    /// and `supportsResume`.
+    let resumeStrategy: ConversationResumeStrategy?
     /// True when the agent feeds kooky per-tool-call activity — Claude via
     /// its `--settings` hooks (`PreToolUse` / `PostToolUse`), Pi via its
     /// extension's `tool_execution_start` / `_end` events. Drives the
@@ -80,7 +129,7 @@ struct AgentTemplate: Identifiable, Hashable {
         initialCommand: String?,
         baseAgentId: String? = nil,
         promptLaunchFlag: String? = nil,
-        resumeFlag: String? = nil,
+        resumeStrategy: ConversationResumeStrategy? = nil,
         reportsToolCalls: Bool = false,
         extraEnv: [String: String] = [:],
         extraCwd: String? = nil
@@ -93,7 +142,7 @@ struct AgentTemplate: Identifiable, Hashable {
         self.initialCommand = initialCommand
         self.baseAgentId = baseAgentId
         self.promptLaunchFlag = promptLaunchFlag
-        self.resumeFlag = resumeFlag
+        self.resumeStrategy = resumeStrategy
         self.reportsToolCalls = reportsToolCalls
         self.extraEnv = extraEnv
         self.extraCwd = extraCwd
@@ -178,12 +227,10 @@ struct AgentTemplate: Identifiable, Hashable {
     /// whitespace, so the caller handles its own quoting for tokens that
     /// contain spaces.
     ///
-    /// `resumeId`, when present and the template declares a `resumeFlag`,
-    /// prepends `<resumeFlag> <id>` to the launch command so the new tab
-    /// continues an existing conversation. Other agents leave `resumeFlag`
-    /// nil — their CLIs accept resume flags syntactically, but the
-    /// id-capture path (a hook payload carrying the session id) is not
-    /// implemented for them yet.
+    /// `resumeId`, when present and the template declares a resume strategy,
+    /// inserts the agent-specific exact-session arguments into the launch
+    /// command. `newSessionId` is used only by strategies that support caller-
+    /// assigned ids (currently Grok).
     ///
     /// `initialPrompt`, when non-empty, drives the right-click "Ask <agent>"
     /// path: the prompt is POSIX-quoted and inserted into `KOOKY_AGENT` as
@@ -195,6 +242,7 @@ struct AgentTemplate: Identifiable, Hashable {
     func makeSessionConfig(
         extraOptions: String? = nil,
         resumeId: String? = nil,
+        newSessionId: String? = nil,
         initialPrompt: String? = nil,
         sshHost: String? = nil
     ) -> TerminalSessionConfig {
@@ -226,10 +274,20 @@ struct AgentTemplate: Identifiable, Hashable {
             // bootstrap. Built WITHOUT the resume id — conversation state
             // lives on this machine, so `--resume <local-id>` on the remote
             // could only fail at launch.
-            let agentSuffix = launchCommand(extraOptions: extraOptions, resumeId: nil, initialPrompt: initialPrompt)
+            let agentSuffix = launchCommand(
+                extraOptions: extraOptions,
+                resumeId: nil,
+                newSessionId: nil,
+                initialPrompt: initialPrompt
+            )
                 .map { " -- \($0)" } ?? ""
             config.environment["KOOKY_AGENT"] = "kooky-ssh \(KookyShellIntegration.quote(sshHost))\(agentSuffix)"
-        } else if let launch = launchCommand(extraOptions: extraOptions, resumeId: resumeId, initialPrompt: initialPrompt) {
+        } else if let launch = launchCommand(
+            extraOptions: extraOptions,
+            resumeId: resumeId,
+            newSessionId: newSessionId,
+            initialPrompt: initialPrompt
+        ) {
             config.environment["KOOKY_AGENT"] = launch
         }
         return config
@@ -239,25 +297,36 @@ struct AgentTemplate: Identifiable, Hashable {
     /// prompt / extra-options fragments — or nil for plain shells. Single
     /// source for both the local launch and the remote (`kooky-ssh … -- <cmd>`)
     /// composition above.
-    private func launchCommand(extraOptions: String?, resumeId: String?, initialPrompt: String?) -> String? {
+    private func launchCommand(
+        extraOptions: String?,
+        resumeId: String?,
+        newSessionId: String?,
+        initialPrompt: String?
+    ) -> String? {
         guard let initialCommand else { return nil }
         let trimmedExtras = extraOptions?.trimmingCharacters(in: .whitespaces) ?? ""
         let trimmedPrompt = initialPrompt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        // Resume flag goes between binary name and options
-        // (`claude --resume <id> --model opus`) — each CLI takes it as
-        // a positional argument to its top-level command; appending
-        // after extras would still work but reads worse in `ps`.
+        // Resume arguments go between binary name and user options
+        // (`claude --resume <id> --model opus`). This is load-bearing for
+        // subcommand-shaped resumes such as `codex resume <id>`.
         // Suppressed when `initialPrompt` is present — "Ask <agent>"
         // is a fresh question, not a continuation.
         var resumeFragment = ""
         if
             trimmedPrompt.isEmpty,
             persistsConversation(extraOptions: extraOptions),
-            let flag = resumeFlag,
+            let strategy = resumeStrategy,
             let id = normalizedConversationId(resumeId),
             !id.isEmpty
         {
-            resumeFragment = " \(flag) \(id)"
+            resumeFragment = strategy.resumeFragment(conversationId: id)
+        } else if
+            persistsConversation(extraOptions: extraOptions),
+            let strategy = resumeStrategy,
+            let id = normalizedConversationId(newSessionId),
+            !id.isEmpty
+        {
+            resumeFragment = strategy.newSessionFragment(conversationId: id)
         }
         var promptFragment = ""
         if !trimmedPrompt.isEmpty {
@@ -278,7 +347,11 @@ struct AgentTemplate: Identifiable, Hashable {
     }
 
     var supportsResume: Bool {
-        resumeFlag != nil
+        resumeStrategy != nil
+    }
+
+    var preallocatesConversationId: Bool {
+        resumeStrategy?.preallocatesNewSessionId == true
     }
 
     /// Parses a `.env`-style block — one `KEY=VALUE` per line — into a
@@ -346,7 +419,7 @@ extension AgentTemplate {
         iconAsset: "claudecode",
         tintHex: "D97757",
         initialCommand: "claude",
-        resumeFlag: "--resume",
+        resumeStrategy: .arguments(["--resume"]),
         reportsToolCalls: true
     )
 
@@ -356,7 +429,8 @@ extension AgentTemplate {
         symbol: "chevron.left.forwardslash.chevron.right",
         iconAsset: "codex",
         tintHex: "7A9DFF",
-        initialCommand: "codex"
+        initialCommand: "codex",
+        resumeStrategy: .arguments(["resume"])
     )
 
     static let gemini = AgentTemplate(
@@ -365,7 +439,8 @@ extension AgentTemplate {
         symbol: "diamond",
         iconAsset: "gemini",
         tintHex: "3186FF",
-        initialCommand: "gemini"
+        initialCommand: "gemini",
+        resumeStrategy: .arguments(["--resume"])
     )
 
     static let opencode = AgentTemplate(
@@ -374,7 +449,8 @@ extension AgentTemplate {
         symbol: "curlybraces",
         iconAsset: "opencode",
         tintHex: "B0B0B0",
-        initialCommand: "opencode"
+        initialCommand: "opencode",
+        resumeStrategy: .arguments(["--session"])
     )
 
     static let amp = AgentTemplate(
@@ -384,7 +460,8 @@ extension AgentTemplate {
         iconAsset: "amp",
         tintHex: "E8B168",
         initialCommand: "amp",
-        promptLaunchFlag: "-x"
+        promptLaunchFlag: "-x",
+        resumeStrategy: .arguments(["threads", "continue"])
     )
 
     static let cursor = AgentTemplate(
@@ -393,7 +470,8 @@ extension AgentTemplate {
         symbol: "cube",
         iconAsset: "cursor",
         tintHex: "F54E00",
-        initialCommand: "cursor-agent"
+        initialCommand: "cursor-agent",
+        resumeStrategy: .optionEquals("--resume")
     )
 
     static let copilot = AgentTemplate(
@@ -403,7 +481,8 @@ extension AgentTemplate {
         iconAsset: "githubcopilot",
         tintHex: "6E40C9",
         initialCommand: "copilot",
-        promptLaunchFlag: "-p"
+        promptLaunchFlag: "-p",
+        resumeStrategy: .arguments(["--session-id"])
     )
 
     static let grok = AgentTemplate(
@@ -412,7 +491,11 @@ extension AgentTemplate {
         symbol: "x.square.fill",
         iconAsset: "grok",
         tintHex: "E8E8E8",
-        initialCommand: "grok"
+        initialCommand: "grok",
+        resumeStrategy: .preallocated(
+            newSessionArguments: ["--session-id"],
+            resumeArguments: ["--resume"]
+        )
     )
 
     /// Antigravity CLI — Google's Go-based successor to Gemini CLI; binary
@@ -431,12 +514,10 @@ extension AgentTemplate {
     /// runs the initial prompt and keeps the session alive. `-p`
     /// (`--print`) would single-shot exit.
     ///
-    /// Resume / mid-run attention dot deferred: Antigravity has hooks
-    /// (SessionStart / UserPromptSubmit / Stop per third-party docs) and
-    /// `--conversation <id>`, but the JSON schema, settings-file location,
-    /// and a system-inject env var (no `ANTIGRAVITY_CLI_SYSTEM_SETTINGS_PATH`
-    /// analogue of Gemini's) are all undocumented. Revisit when
-    /// antigravity.google/docs/hooks publishes the schema.
+    /// Antigravity's named hook collection reports `conversationId` to
+    /// kooky; a restored tab launches with `--conversation=<id>`. The same
+    /// hooks promote the wrapper's whole-run green state to per-turn
+    /// running/attention.
     static let antigravity = AgentTemplate(
         id: "antigravity",
         title: "Antigravity CLI",
@@ -444,25 +525,22 @@ extension AgentTemplate {
         iconAsset: "antigravity",
         tintHex: "4285F4",
         initialCommand: "agy",
-        promptLaunchFlag: "-i"
+        promptLaunchFlag: "-i",
+        resumeStrategy: .optionEquals("--conversation")
     )
 
     /// Kimi Code — Moonshot AI's coding CLI; binary `kimi` (npm
-    /// `@moonshot-ai/kimi-code`). Bracket wrapper only: Kimi ships a
-    /// Claude-style lifecycle-hook system, but declares it in TOML
-    /// (`~/.kimi-code/config.toml` `[[hooks]]`) with no system-settings
-    /// env-var override (no `GEMINI_CLI_SYSTEM_SETTINGS_PATH` analogue), so
-    /// kooky can't inject hooks non-invasively the way it does for
-    /// Claude / Gemini. running/ended come from the wrapper; mid-run
-    /// attention + tool-call pills are deferred until that TOML-merge path
-    /// is built.
+    /// `@moonshot-ai/kimi-code`). Kooky conservatively merges one delimited
+    /// managed block into `~/.kimi-code/config.toml` after Kimi has created
+    /// its home directory. Lifecycle hooks report `session_id` and upgrade
+    /// the bracket wrapper's whole-run green state to per-turn
+    /// running/attention.
     ///
     /// `-p` (`--prompt`) is Kimi's only prompt-passing flag and is
     /// non-interactive (streams the answer to stdout, then exits) — there's
     /// no interactive-with-prompt flag like Antigravity's `-i`, so
-    /// "Ask Kimi" single-shots rather than seeding a live session. Resume
-    /// (`--session` / `--continue`) stays unwired: like every non-Claude
-    /// agent, kooky has no id-capture path yet, so `resumeFlag` is nil.
+    /// "Ask Kimi" single-shots rather than seeding a live session. Restored
+    /// tabs use the exact hook-reported id via `--session <id>`.
     static let kimi = AgentTemplate(
         id: "kimi",
         title: "Kimi Code",
@@ -470,7 +548,8 @@ extension AgentTemplate {
         iconAsset: "kimi",
         tintHex: "C9C3D6",
         initialCommand: "kimi",
-        promptLaunchFlag: "-p"
+        promptLaunchFlag: "-p",
+        resumeStrategy: .arguments(["--session"])
     )
 
     /// Pi — Earendil's minimal terminal coding harness; binary `pi` (npm
@@ -484,7 +563,7 @@ extension AgentTemplate {
     ///
     /// `-p` is pi's one-off non-interactive prompt (streams output then exits),
     /// so "Ask Pi" single-shots rather than seeding a live session. Resume IS
-    /// wired: pi takes a launch-time `--session <id>` (`resumeFlag`), and the
+    /// wired: pi takes a launch-time `--session <id>`, and the
     /// extension hands kooky the current session id via
     /// `kooky-hook pi conversation <id>` — that reuses the generic
     /// `conversationId` path (persist on `Session` → prepend `--session <id>`
@@ -501,7 +580,7 @@ extension AgentTemplate {
         tintHex: "C2C5CE",
         initialCommand: "pi",
         promptLaunchFlag: "-p",
-        resumeFlag: "--session",
+        resumeStrategy: .arguments(["--session"]),
         reportsToolCalls: true
     )
 
@@ -510,17 +589,15 @@ extension AgentTemplate {
     /// `kiro-cli`, NOT `kiro`: the bare `kiro` command launches the Kiro IDE
     /// (a VS Code fork), so shimming it would hijack the editor — the distinct
     /// binary name means no readlink guard is needed (unlike Antigravity's
-    /// `agy`). Bracket wrapper only: Kiro's hooks are context-injection
-    /// ("pre/post command" context fed to the model), not lifecycle events
-    /// kooky can map to attention, so the dot comes from the wrapper's
-    /// running/ended.
+    /// `agy`). Kiro's dot still comes from the bracket wrapper's
+    /// running/ended lifecycle; exact session ids are captured separately
+    /// from a per-surface ACP trace selected with `KIRO_ACP_RECORD_PATH`.
     ///
     /// Prompt is positional (`kiro-cli -- "<prompt>"`) — `kiro-cli` with no
     /// subcommand defaults to `kiro-cli chat`, which takes the prompt as its
     /// first positional. (`--no-interactive` exists but single-shots like
-    /// Kimi's `-p`, so it's not used for Ask.) Resume stays unwired: Kiro has
-    /// `--resume` / `--resume-id <id>`, but like every non-Claude/Pi agent
-    /// kooky has no id-capture path, so `resumeFlag` is nil. The lobe-icon is
+    /// Kimi's `-p`, so it's not used for Ask.) Restored tabs launch with
+    /// `--resume-id <id>`. The lobe-icon is
     /// the full-color brand mark (purple tile + white ghost), rendered as-is on
     /// every theme like the codex / gemini / amp / antigravity marks — so it's
     /// deliberately NOT in `AgentIcon.monochromeAssets`; `tintHex: "9046FF"`
@@ -531,24 +608,21 @@ extension AgentTemplate {
         symbol: "cloud.fill",
         iconAsset: "kiro",
         tintHex: "9046FF",
-        initialCommand: "kiro-cli"
+        initialCommand: "kiro-cli",
+        resumeStrategy: .arguments(["--resume-id"])
     )
 
     /// Droid — Factory.ai's agentic coding CLI; binary `droid`
-    /// (curl-installed or npm `droid`). Bracket wrapper only: Droid has a
-    /// lifecycle-hook system (shell commands around tool events, configured
-    /// with `/hooks`), but it's declared in Droid's own config with no
-    /// system-settings env-var override (no `GEMINI_CLI_SYSTEM_SETTINGS_PATH`
-    /// analogue), so — like Kimi / Kiro — kooky can't inject hooks
-    /// non-invasively. running/ended come from the wrapper; mid-run attention
-    /// + tool-call pills are deferred until a config-merge path exists.
+    /// (curl-installed or npm `droid`). After Droid has created
+    /// `~/.factory`, kooky merges its own matcher groups into `hooks.json`
+    /// without replacing user hooks. The lifecycle feed reports
+    /// `session_id` and supplies per-turn running/attention.
     ///
     /// Prompt is positional — interactive `droid "<prompt>"` starts the REPL
     /// seeded with that query (`droid exec "<prompt>"` is the separate
     /// headless single-shot, not what Ask wants), so `promptLaunchFlag` is nil
-    /// and Ask sends `droid -- "<prompt>"`. Resume stays unwired: Droid has
-    /// `-r/--resume [id]`, but like every non-Claude/Pi agent kooky has no
-    /// id-capture path, so `resumeFlag` is nil. The brand mark is the white
+    /// and Ask sends `droid -- "<prompt>"`. Restored tabs launch with
+    /// `--resume <id>`. The brand mark is the white
     /// pinwheel on a black tile; extracted to white-on-transparent and
     /// registered in `AgentIcon.monochromeAssets` so the theme-adaptive
     /// tinting handles light themes (same treatment as grok / kimi / pi).
@@ -558,7 +632,8 @@ extension AgentTemplate {
         symbol: "asterisk",
         iconAsset: "droid",
         tintHex: "C9CDD3",
-        initialCommand: "droid"
+        initialCommand: "droid",
+        resumeStrategy: .arguments(["--resume"])
     )
 
     /// The 14 templates shipped with kooky. User-defined custom agents are
@@ -647,10 +722,10 @@ extension AgentTemplate {
     /// skips half-configured customs.
     static func fromCustom(_ data: CustomAgentData) -> AgentTemplate {
         let base = builtin.first { $0.id == data.baseAgentId }
-        // `promptLaunchFlag` + `resumeFlag` + `reportsToolCalls` follow the
+        // `promptLaunchFlag` + resume strategy + `reportsToolCalls` follow the
         // base unconditionally — they're properties of the binary (Copilot
         // needs `-p`, Amp needs `-x`; Claude needs `--resume`, Grok needs
-        // `--session`; Claude / Pi feed tool-call activity), not something the
+        // caller-assigned ids; Claude / Pi feed tool-call activity), not something the
         // user could meaningfully override per custom. Without inheritance, a
         // "Copilot Beta" custom built on Copilot would lose the flag and
         // right-click Ask would feed the prompt as a positional argv that
@@ -665,7 +740,7 @@ extension AgentTemplate {
             initialCommand: data.command.isEmpty ? base?.initialCommand : data.command,
             baseAgentId: data.baseAgentId.isEmpty ? nil : data.baseAgentId,
             promptLaunchFlag: base?.promptLaunchFlag,
-            resumeFlag: base?.resumeFlag,
+            resumeStrategy: base?.resumeStrategy,
             reportsToolCalls: base?.reportsToolCalls ?? false,
             extraEnv: parseEnv(data.env)
         )

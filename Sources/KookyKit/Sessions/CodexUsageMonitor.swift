@@ -68,6 +68,8 @@ struct CodexUsage: Equatable {
 /// later) and adopt only the cwd-matching file that ISN'T in that snapshot —
 /// this session's own. Codex can take 10–15s to write `session_meta` (auth +
 /// model load first), so the resolve retries until that file appears.
+/// Restored sessions are the inverse case: `codex resume` appends the existing
+/// rollout, so we locate it by the persisted conversation UUID instead.
 ///
 /// A single per-session generation counter guards every async hop (resolve,
 /// debounced read, retry): each captures the counter and only commits if it's
@@ -96,11 +98,16 @@ final class CodexUsageMonitor {
     /// adopt it by identity rather than a fragile launch-time comparison, and
     /// never mistake a prior/concurrent run's file for ours. Cleared on `stop`.
     private var preexisting: [UUID: Set<String>] = [:]
+    /// A restored/moved Codex process resumes by appending its original rollout,
+    /// so that file is intentionally inside `preexisting`. Preserve the exact
+    /// conversation id supplied during initial wiring across later lifecycle
+    /// `start` calls and retries; `stop` clears it before any fresh manual run.
+    private var resumedConversationIds: [UUID: String] = [:]
 
-    /// (Re)points the watcher for `sessionId` at this session's own rollout
-    /// (the cwd-matching one that did NOT pre-exist at first start) and
-    /// publishes the latest usage via `update`. When that file doesn't exist
-    /// yet (the launch → first-write race), it retries until it appears.
+    /// (Re)points the watcher for `sessionId` at this session's own rollout:
+    /// either the exact pre-existing UUID being resumed, or the fresh
+    /// cwd-matching file that did NOT pre-exist at first start. When that file
+    /// doesn't exist yet (the launch → first-write race), it retries.
     ///
     /// The gauge reflects only THIS session's own quota readings — it appears
     /// once Codex writes the session's first `token_count` (after the first
@@ -112,6 +119,8 @@ final class CodexUsageMonitor {
         cwd: URL,
         sessionsRoot: URL,
         attempt: Int = 0,
+        resumingConversationId: String? = nil,
+        conversationUpdate: @MainActor @escaping (String) -> Void = { _ in },
         update: @MainActor @escaping (CodexUsage?) -> Void
     ) {
         // Snapshot once, on the first start — taken before Codex has written its
@@ -122,17 +131,29 @@ final class CodexUsageMonitor {
         if preexisting[sessionId] == nil {
             preexisting[sessionId] = Self.recentRolloutPaths(under: sessionsRoot)
         }
+        if let id = resumingConversationId?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !id.isEmpty {
+            resumedConversationIds[sessionId] = id
+        }
         let exclude = preexisting[sessionId] ?? []
+        let resumedConversationId = resumedConversationIds[sessionId]
         let token = (generation[sessionId] ?? 0) + 1
         generation[sessionId] = token
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let active = Self.resolveRollout(forCwd: cwd, sessionsRoot: sessionsRoot, excluding: exclude)
+            let active = if let resumedConversationId {
+                Self.resolveRollout(conversationId: resumedConversationId, sessionsRoot: sessionsRoot)
+            } else {
+                Self.resolveRollout(forCwd: cwd, sessionsRoot: sessionsRoot, excluding: exclude)
+            }
             let seed = Self.currentUsage(activePath: active?.path)
+            let conversationId = active.flatMap { Self.sessionMetaConversationId(atPath: $0.path) }
             DispatchQueue.main.async {
                 // A stop() / newer start() bumped the generation while we
                 // resolved — abort so this stale task can't re-install a watcher
                 // or publish onto a closed / moved session.
                 guard let self, self.generation[sessionId] == token else { return }
+                if let conversationId { conversationUpdate(conversationId) }
                 if let seed { update(seed) }
                 guard let active else {
                     // Rollout not created yet. Codex can take 10–15s after launch
@@ -144,7 +165,10 @@ final class CodexUsageMonitor {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
                         guard let self, self.generation[sessionId] == token else { return }
                         self.start(sessionId: sessionId, cwd: cwd, sessionsRoot: sessionsRoot,
-                                   attempt: attempt + 1, update: update)
+                                   attempt: attempt + 1,
+                                   resumingConversationId: resumedConversationId,
+                                   conversationUpdate: conversationUpdate,
+                                   update: update)
                     }
                     return
                 }
@@ -164,6 +188,7 @@ final class CodexUsageMonitor {
         guard watches[sessionId] != nil || generation[sessionId] != nil else { return }
         generation[sessionId] = (generation[sessionId] ?? 0) + 1  // invalidate in-flight start / read / retry
         preexisting[sessionId] = nil
+        resumedConversationIds[sessionId] = nil
         if let watch = watches.removeValue(forKey: sessionId) {
             watch.pendingRead?.cancel()
             watch.source.cancel()
@@ -322,6 +347,34 @@ final class CodexUsageMonitor {
         return nil
     }
 
+    /// A resumed Codex appends the rollout that already existed before this
+    /// Kooky process launched. Match that file by its globally unique session
+    /// id instead of applying the fresh-launch exclusion snapshot.
+    nonisolated static func resolveRollout(
+        conversationId: String,
+        sessionsRoot: URL = CodexUsageMonitor.defaultSessionsRoot()
+    ) -> URL? {
+        let target = conversationId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty else { return nil }
+        // Unlike a fresh launch, a resumed conversation may be months old.
+        // Codex includes the session UUID at the end of every rollout filename,
+        // so walk the date hierarchy but parse only the single suffix match.
+        guard let enumerator = FileManager.default.enumerator(
+            at: sessionsRoot,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) else { return nil }
+        let suffix = "-\(target).jsonl"
+        while let url = enumerator.nextObject() as? URL {
+            guard url.lastPathComponent.hasPrefix("rollout-"),
+                  url.lastPathComponent.hasSuffix(suffix),
+                  sessionMetaConversationId(atPath: url.path) == target
+            else { continue }
+            return url
+        }
+        return nil
+    }
+
     /// The value to publish for a session: this session's own latest quota
     /// reading, or nil until its rollout carries one. Only ever this session's
     /// data — never a sibling session's (which could be stale). Used for both
@@ -357,6 +410,23 @@ final class CodexUsageMonitor {
     /// any fixed size — and a truncated chunk is invalid JSON that would never
     /// match, silently disabling the gauge for that session.
     nonisolated static func sessionMetaCwd(atPath path: String) -> String? {
+        sessionMetaPayload(atPath: path)?["cwd"] as? String
+    }
+
+    /// Codex writes both `id` and (on current builds) `session_id` in the
+    /// first session_meta payload. Prefer the documented/session-facing `id`
+    /// but retain the older key as a compatibility fallback.
+    nonisolated static func sessionMetaConversationId(atPath path: String) -> String? {
+        guard let payload = sessionMetaPayload(atPath: path) else { return nil }
+        for key in ["id", "session_id"] {
+            guard let raw = payload[key] as? String else { continue }
+            let id = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !id.isEmpty { return id }
+        }
+        return nil
+    }
+
+    private nonisolated static func sessionMetaPayload(atPath path: String) -> [String: Any]? {
         guard let fh = FileHandle(forReadingAtPath: path) else { return nil }
         defer { try? fh.close() }
         var data = Data()
@@ -371,10 +441,9 @@ final class CodexUsageMonitor {
         }
         guard
             let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let payload = obj["payload"] as? [String: Any],
-            let cwd = payload["cwd"] as? String
+            let payload = obj["payload"] as? [String: Any]
         else { return nil }
-        return cwd
+        return payload
     }
 
     // MARK: - Usage parsing (pure, background-safe)
