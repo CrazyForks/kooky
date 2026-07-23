@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.37.4 — 2026-07-23
+
+- Fixed: Quick Open search pill overlap at narrow window widths, including compact and hidden sidebar states. (#36)
+
 ## v0.37.3 — 2026-07-21
 
 - New: click the git diff pill (±) in the status bar to see which files changed — one row per file with its own +/− line counts, adding up to the totals on the pill. A "Show in File Tree" shortcut at the bottom jumps to the file tree, where changed files carry the same badges.

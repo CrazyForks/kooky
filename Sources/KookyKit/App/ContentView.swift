@@ -28,12 +28,11 @@ struct ContentView: View {
 
     /// Top 32pt strip. `window.isMovable = false` is set globally, so the
     /// `WindowDragHandle` background is the only place AppKit allows
-    /// window dragging. The `SearchTriggerPill` lives in an *inner* ZStack
-    /// scoped to the drag-handle area (not the whole strip) so it centers
-    /// in the available space and can't overlap the sidebar toggle when
-    /// the window is dragged narrow. `ViewThatFits` drops the pill
-    /// entirely once even the inner area can't hold its 280pt frame —
-    /// `⌘P` + the File menu still reach the palette.
+    /// window dragging. The responsive `SearchTriggerPill` is scoped to the
+    /// drag-handle area (not the whole strip), with an explicit safety gap
+    /// from the controls on either side. It condenses before disappearing,
+    /// so narrow windows keep a usable quick-open target whenever possible;
+    /// `⌘P` + the File menu remain available when it is fully hidden.
     private var topStrip: some View {
         HStack(spacing: 0) {
             Color.clear.frame(width: 82).allowsHitTesting(false)
@@ -49,12 +48,13 @@ struct ContentView: View {
             }
             WindowDragHandle()
                 .overlay {
-                    if KookySettingsModel.shared.showSearchPill {
-                        ViewThatFits(in: .horizontal) {
+                    GeometryReader { proxy in
+                        if KookySettingsModel.shared.showSearchPill,
+                           proxy.size.width >= SearchTriggerPill.minimumContainerWidth {
                             SearchTriggerPill {
                                 NSApp.sendAction(#selector(AppDelegate.handleQuickOpen), to: nil, from: nil)
                             }
-                            EmptyView()
+                            .frame(width: proxy.size.width, height: proxy.size.height)
                         }
                     }
                 }

@@ -7,6 +7,12 @@ import SwiftUI
 /// `windowId`).
 @MainActor
 final class KookyWindowController: NSWindowController, NSWindowDelegate {
+    /// Smallest width that keeps the fixed top-chrome controls plus the
+    /// 28pt search trigger and its 15pt safety gap on both sides. Pinning the
+    /// window itself avoids compact/hidden sidebars exposing a narrower layout
+    /// range than the full sidebar.
+    private static let minimumWindowWidth: CGFloat = 301
+
     let windowId: UUID
     let store: WorkspaceStore
     /// Set by `AppDelegate`. Fires from `windowWillClose` so the delegate
@@ -24,6 +30,12 @@ final class KookyWindowController: NSWindowController, NSWindowDelegate {
         super.init(window: Self.makeWindow())
         window?.delegate = self
         window?.contentView = NSHostingView(rootView: ContentView(store: store))
+        if let window {
+            window.minSize = NSSize(
+                width: Self.minimumWindowWidth,
+                height: window.minSize.height
+            )
+        }
         // The last workspace closing leaves an empty window — close it.
         store.onBecameEmpty = { [weak self] in self?.close() }
     }
@@ -68,5 +80,12 @@ final class KookyWindowController: NSWindowController, NSWindowDelegate {
 
     func windowDidBecomeKey(_ notification: Notification) {
         onDidBecomeKey?(self)
+    }
+
+    func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
+        NSSize(
+            width: max(frameSize.width, Self.minimumWindowWidth),
+            height: frameSize.height
+        )
     }
 }

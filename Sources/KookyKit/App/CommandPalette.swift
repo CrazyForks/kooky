@@ -414,31 +414,62 @@ final class CommandPaletteWindowController: NSWindowController {
 /// Clicks the floating palette open — same target as ⌘P. Rendered as
 /// an overlay on `WindowDragHandle` (scoped to the area right of the
 /// sidebar toggle) so the pill consumes its own clicks while drags on
-/// the surrounding empty area still move the window; `ContentView`'s
-/// `ViewThatFits` wrapper drops the pill entirely when the window is
-/// too narrow to hold its 280pt frame. Visually minimal — just a faint
-/// white wash that brightens on hover.
+/// the surrounding empty area still move the window. The ordered
+/// `ViewThatFits` presentations retain a useful trigger while progressively
+/// condensing from full to truncated to icon + shortcut to icon-only; only
+/// the final fallback disappears. Visually minimal — just a faint white wash
+/// that brightens on hover.
 struct SearchTriggerPill: View {
+    /// 28pt icon-only pill plus the 15pt safety gap on each side.
+    static let minimumContainerWidth: CGFloat = 58
+
     let onOpen: () -> Void
     @State private var isHovered: Bool = false
 
     var body: some View {
+        ViewThatFits(in: .horizontal) {
+            candidate(width: 280, showsLabel: true)
+            candidate(width: 180, showsLabel: true)
+            candidate(width: 52, showsLabel: false)
+            candidate(width: 28, showsLabel: false, showsShortcut: false)
+            EmptyView()
+        }
+    }
+
+    /// Keep the safety gap inside each `ViewThatFits` candidate so its width
+    /// participates in the fit decision instead of being compressed after a
+    /// presentation has already been selected.
+    private func candidate(
+        width: CGFloat,
+        showsLabel: Bool,
+        showsShortcut: Bool = true
+    ) -> some View {
+        pill(width: width, showsLabel: showsLabel, showsShortcut: showsShortcut)
+            .padding(.horizontal, 15)
+            .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private func pill(width: CGFloat, showsLabel: Bool, showsShortcut: Bool = true) -> some View {
         HStack(spacing: 7) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(Theme.chromeMuted)
-            Text("search workspace, tab, agent…")
-                .font(Theme.mono(11))
-                .foregroundStyle(Theme.chromeMuted)
-                .lineLimit(1)
-            Spacer(minLength: 14)
-            Text("⌘P")
-                .font(Theme.mono(10, weight: .medium))
-                .foregroundStyle(Theme.chromeMuted.opacity(0.55))
+            if showsLabel {
+                Text("search workspace, tab, agent…")
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.chromeMuted)
+                    .lineLimit(1)
+                Spacer(minLength: 14)
+            }
+            if showsShortcut {
+                Text("⌘P")
+                    .font(Theme.mono(10, weight: .medium))
+                    .foregroundStyle(Theme.chromeMuted.opacity(0.55))
+            }
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, showsLabel ? 10 : 6)
         .padding(.vertical, 4)
-        .frame(width: 280, height: 22)
+        .frame(width: width, height: 22)
         .background(
             RoundedRectangle(cornerRadius: 5, style: .continuous)
                 .fill(isHovered ? Theme.chromeActive : Theme.chromeHover)
