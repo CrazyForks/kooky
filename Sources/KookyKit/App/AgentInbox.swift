@@ -314,7 +314,7 @@ private struct InboxRow: View {
 /// `show` for a clean SwiftUI state, dismiss on resign-key). Anchored top-right
 /// (near the bell) rather than centered.
 @MainActor
-final class InboxWindowController: NSWindowController {
+final class InboxWindowController: NSWindowController, DismissablePanel {
     static let shared = InboxWindowController()
 
     private static let panelSize = NSSize(width: 420, height: 480)

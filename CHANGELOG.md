@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.39.1 — 2026-07-24
+
+- Fixed: ⌘W pressed while Settings, About, or another auxiliary window is in front now closes that window itself — panels and dialogs dismiss — instead of closing a terminal tab hidden behind it. ⌘⇧W no longer closes a hidden workspace either. (#38)
+
 ## v0.39.0 — 2026-07-23
 
 - New: ⌘-click a file path printed in the terminal to open the underlying local file, including common `path:line[:column]` and `path#Lline[Ccolumn]` spellings. File links can use a preferred editor and web links a preferred browser under Settings → General → Open With; both fall back to the macOS default.

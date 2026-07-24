@@ -441,6 +441,16 @@ final class WorkspaceStore {
         }
     }
 
+    /// ⌘W-on-a-sheet request, parked for `SidebarView` to cancel whichever
+    /// of its sheets is up (the sheet's `@State` lives in the view, so the
+    /// store can only signal). Identity-keyed so repeat requests re-fire.
+    /// Runtime-only.
+    var sheetDismissRequest: UUID?
+
+    func requestDismissActiveSheet() {
+        sheetDismissRequest = UUID()
+    }
+
     /// ⌘⇧R rename request, parked for `SidebarView` to act on. The active
     /// workspace's row may be unmounted — nested under a collapsed worktree
     /// parent, or scrolled out of the sidebar's `LazyVStack` — so the sidebar

@@ -191,13 +191,9 @@ struct SidebarView: View {
                 CreateSSHWorkspaceSheet(
                     create: { host in
                         store.addWorkspace(sshRemoteHost: host)
-                        store.pendingCreateSSHWorkspaceRequest = false
-                        sheet = nil
+                        dismissCurrentSheet()
                     },
-                    dismiss: {
-                        store.pendingCreateSSHWorkspaceRequest = false
-                        sheet = nil
-                    }
+                    dismiss: dismissCurrentSheet
                 )
             case .createWorktree(let source):
                 CreateWorktreeSheet(
@@ -219,10 +215,7 @@ struct SidebarView: View {
                     create: { request in
                         await store.createWorktree(source: source, request: request)
                     },
-                    dismiss: {
-                        store.pendingCreateWorktreeRequest = nil
-                        sheet = nil
-                    }
+                    dismiss: dismissCurrentSheet
                 )
             case .confirmRemoveWorktree(let workspace):
                 ConfirmRemoveWorktreeSheet(
@@ -234,13 +227,9 @@ struct SidebarView: View {
                             }
                         }
                         store.closeWorkspace(workspace)
-                        store.pendingRemovalRequest = nil
                         return .success
                     },
-                    dismiss: {
-                        store.pendingRemovalRequest = nil
-                        sheet = nil
-                    }
+                    dismiss: dismissCurrentSheet
                 )
             case .confirmCloseOthers(let request):
                 ConfirmBulkCloseSheet(
@@ -257,10 +246,7 @@ struct SidebarView: View {
                         }
                         return .success
                     },
-                    dismiss: {
-                        store.pendingCloseOthersRequest = nil
-                        sheet = nil
-                    }
+                    dismiss: dismissCurrentSheet
                 )
             case .confirmCloseSource(let request):
                 ConfirmBulkCloseSheet(
@@ -277,10 +263,7 @@ struct SidebarView: View {
                         }
                         return .success
                     },
-                    dismiss: {
-                        store.pendingCloseSourceRequest = nil
-                        sheet = nil
-                    }
+                    dismiss: dismissCurrentSheet
                 )
             }
         }
@@ -306,6 +289,11 @@ struct SidebarView: View {
         .onChange(of: store.pendingCreateSSHWorkspaceRequest) { _, pending in
             if pending { sheet = .createSSHWorkspace }
         }
+        // ⌘W while a sheet is key (AppDelegate can't reach the sheet's
+        // `@State` directly) — cancel it exactly like its cancel button.
+        .onChange(of: store.sheetDismissRequest) { _, _ in
+            dismissCurrentSheet()
+        }
         .onAppear {
             if let workspace = store.pendingCreateWorktreeRequest {
                 sheet = .createWorktree(workspace)
@@ -330,6 +318,27 @@ struct SidebarView: View {
                 sheet = .confirmCloseSource(request)
             }
         }
+    }
+
+    /// Cancel whichever sheet is up, clearing its parked store request —
+    /// the single dismissal path shared by every sheet's cancel button and
+    /// the ⌘W `sheetDismissRequest` signal, so the two can't drift.
+    private func dismissCurrentSheet() {
+        switch sheet {
+        case .createSSHWorkspace:
+            store.pendingCreateSSHWorkspaceRequest = false
+        case .createWorktree:
+            store.pendingCreateWorktreeRequest = nil
+        case .confirmRemoveWorktree:
+            store.pendingRemovalRequest = nil
+        case .confirmCloseOthers:
+            store.pendingCloseOthersRequest = nil
+        case .confirmCloseSource:
+            store.pendingCloseSourceRequest = nil
+        case nil:
+            return
+        }
+        sheet = nil
     }
 
     /// Shared subtitle string between the two bulk-close flows — folds

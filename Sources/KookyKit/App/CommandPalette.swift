@@ -319,13 +319,22 @@ private struct CommandPaletteRow: View {
 
 // MARK: - Floating panel host
 
+/// Floating-panel controllers ⌘W can dismiss (`AppDelegate.handleCloseTab`
+/// dispatches off the key window's `windowController`). Keeps the
+/// "how does this panel close" knowledge on the panel — a new floating
+/// panel opts in by conforming, no AppDelegate branch needed.
+@MainActor
+protocol DismissablePanel: AnyObject {
+    func dismiss()
+}
+
 /// Singleton NSPanel host. Reusing one panel across opens preserves the
 /// last frame and avoids the alloc churn of rebuilding `NSWindow` infra
 /// every ⌘P. Anchors to the active window's top-third so the palette
 /// reads as window-scoped, not system-scoped (Spotlight-style positioning
 /// is the convention for app-internal "go to anything" panels).
 @MainActor
-final class CommandPaletteWindowController: NSWindowController {
+final class CommandPaletteWindowController: NSWindowController, DismissablePanel {
     static let shared = CommandPaletteWindowController()
 
     private static let panelSize = NSSize(width: 720, height: 440)

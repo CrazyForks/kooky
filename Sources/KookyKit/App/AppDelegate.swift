@@ -408,12 +408,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         location.session.lastCommandDuration = nil
     }
 
+    /// The terminal-window controller owning `window`, if it's one of ours.
+    private func controller(for window: NSWindow) -> KookyWindowController? {
+        windowControllers.first(where: { $0.window === window })
+    }
+
     /// The kooky window that should host a menu action — the key window
     /// when it's one of ours, otherwise the most-recently-key kooky window.
     /// Nil only when no kooky window exists.
     private var activeController: KookyWindowController? {
-        if let key = NSApp.keyWindow,
-           let controller = windowControllers.first(where: { $0.window === key }) {
+        if let key = NSApp.keyWindow, let controller = controller(for: key) {
             return controller
         }
         return lastKeyController ?? windowControllers.first
@@ -423,6 +427,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     /// When a non-kooky window (Settings / Update) is key, routes to the
     /// most-recently-key kooky window; nil only when no kooky window exists.
     private var activeStore: WorkspaceStore? { activeController?.store }
+
+    /// The key window when it is NOT a terminal window — Settings, About,
+    /// the update prompt, a floating panel, or a sheet. The Close shortcuts
+    /// must target it (or no-op) instead of riding `activeStore`'s fallback
+    /// into a terminal window the user isn't looking at (issue #38).
+    private var keyAuxiliaryWindow: NSWindow? {
+        guard let key = NSApp.keyWindow, controller(for: key) == nil else { return nil }
+        return key
+    }
 
     /// Re-applies `Theme.windowAppearance` to every kooky-owned window so a
     /// theme switch flips title bar / traffic lights / sheets in lockstep
@@ -857,6 +870,24 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     }
 
     @objc private func handleCloseTab() {
+        if let aux = keyAuxiliaryWindow {
+            // ⌘W closes the auxiliary window itself, never a terminal tab
+            // hidden behind it. Floating panels dismiss via their
+            // controllers (orderOut, not close); sheets cancel through
+            // their owning UI (open panel directly, sidebar sheets via the
+            // store signal — their `@State` lives in `SidebarView`).
+            if let panel = aux.windowController as? DismissablePanel {
+                panel.dismiss()
+            } else if let panel = aux as? NSSavePanel {
+                panel.cancel(nil)
+            } else if let parent = aux.sheetParent,
+                      let controller = controller(for: parent) {
+                controller.store.requestDismissActiveSheet()
+            } else if aux.styleMask.contains(.closable) {
+                aux.performClose(nil)
+            }
+            return
+        }
         guard let store = activeStore, let workspace = store.active,
               let session = workspace.activeSession else { return }
         store.closeTab(session, in: workspace)
@@ -917,6 +948,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     }
 
     @objc private func handleCloseWorkspace() {
+        guard keyAuxiliaryWindow == nil else { return }
         guard let store = activeStore, let workspace = store.active else { return }
         store.requestCloseWorkspace(workspace)
     }
