@@ -291,7 +291,7 @@ final class Session: Identifiable {
     var title: String {
         if let custom = customTitle, !custom.isEmpty { return custom }
         if let reported = terminalTitle, !reported.isEmpty { return reported }
-        if currentDirectory.standardizedFileURL.path == NSHomeDirectory() { return "~" }
+        if currentDirectory.standardizedFileURL.path == homeDirectoryPath { return "~" }
         let last = currentDirectory.lastPathComponent
         return last.isEmpty ? displayAgent.title : last
     }

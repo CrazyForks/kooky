@@ -101,7 +101,7 @@ struct SidebarWorkspaceRow: View {
                 isRenameOpen = false
             }
         }
-        .help(workspace.workingDirectory.path)
+        .help(workspace.sidebarTooltip(agents: readout.agents))
         .onChange(of: workspace.renameRequested) { _, requested in
             if requested { consumeRenameRequest() }
         }

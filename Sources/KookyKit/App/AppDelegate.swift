@@ -74,6 +74,21 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
         KookyFonts.registerOnce()
+        // MUST STAY ABOVE ANY UI CONSTRUCTION — `restoreWindows()` below is the
+        // near neighbour that would break it. NSToolTipManager reads this delay
+        // once, when it is first created, and never re-reads it; the manager is
+        // created by the first SwiftUI view carrying `.help`. Registering after
+        // that point is a silent no-op — no error, no log, and no test would
+        // catch the revert to the system default.
+        //
+        // AppKit's tooltip delay has no public API. `NSInitialToolTipDelay`
+        // (milliseconds) is the preference it reads — an old key, still honoured
+        // as of macOS 26 — and the system default is long enough that an
+        // icon-only sidebar hover feels dead (issue #43); 500ms was picked by
+        // feel. `register` rather than `set` keeps it a default: nothing is
+        // written to the user's plist, and the registration domain is lowest
+        // priority, so anyone who set their own value system-wide still wins.
+        UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 500])
         // First-launch onboarding (blocking NSAlert if a ghostty config exists)
         // — must run before any window is created and before any libghostty
         // surface is spawned, since `LibghosttyApp` reads `~/.kooky/settings.json`

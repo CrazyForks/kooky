@@ -83,9 +83,45 @@ final class Workspace: Identifiable {
         // connection happened to spawn from. (`normalizedSSHHost` gates every
         // write, so non-nil implies non-blank.)
         if let host = sshRemoteHost { return host }
-        if workingDirectory.path == NSHomeDirectory() { return "Home" }
+        if workingDirectory.path == homeDirectoryPath { return "Home" }
         let last = workingDirectory.lastPathComponent
         return last.isEmpty ? workingDirectory.path : last
+    }
+
+    /// Sidebar row hover text (issue #43): what this workspace is, who is
+    /// running in it, and where it lives. The compact row is icon-only, so
+    /// without it a hover can name a location but never an identity — the
+    /// whole gap when several workspaces share one agent's icon.
+    ///
+    /// Mirrors `SidebarWorkspaceRow.subtitleRow`'s branch → host → cwd
+    /// precedence; keep the two in step. The branch and host lines carry a
+    /// word prefix because the row's glyph badge — what makes a bare `main`
+    /// read as a branch — has no equivalent inside a tooltip. A worktree keeps
+    /// its path too: `subtitleRow` omits the path from the visible row
+    /// *because* this tooltip carries it.
+    ///
+    /// `agents` is the caller's `sidebarReadout` array — deliberately the same
+    /// snapshot that drew the icons and the `+N` badge in this render pass, so
+    /// the tooltip always explains the badge actually on screen.
+    func sidebarTooltip(agents: [AgentTemplate]) -> String {
+        var titleLine = singleLine(title)
+        var locationLines: [String] = []
+        if let branch = worktreeBranch, !branch.isEmpty {
+            locationLines = ["branch \(singleLine(branch))", diskPath.path]
+        } else if let host = sshRemoteHost {
+            // An un-renamed SSH workspace whose remote reported no title is
+            // already named after its host, so a location line would echo
+            // line 1 — fold them together instead.
+            if titleLine == host { titleLine = "ssh \(host)" } else { locationLines = ["ssh \(host)"] }
+        } else {
+            locationLines = [workingDirectory.path]
+        }
+        // Naming the agents only earns a line when the row shows a `+N` badge:
+        // the badge says how many but never who.
+        let agentLine = agents.count > 1
+            ? [agents.map { singleLine($0.title) }.joined(separator: ", ")]
+            : []
+        return ([titleLine] + agentLine + locationLines).joined(separator: "\n")
     }
 
     var activePane: Pane? {

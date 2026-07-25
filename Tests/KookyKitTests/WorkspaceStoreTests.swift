@@ -2116,6 +2116,154 @@ final class WorkspaceStoreTests: XCTestCase {
         XCTAssertTrue(shell.agent.isShell)
     }
 
+    // MARK: - Sidebar row tooltip (issue #43)
+
+    /// The compact sidebar row is icon-only, so its hover text is the only
+    /// thing that can tell two workspaces running the same agent apart. The
+    /// terminal-reported title is what carries that — the exact case the
+    /// issue was filed about, where every row showed the same logo and the
+    /// hover only offered a path.
+    func testSidebarTooltipLeadsWithTheReportedTitle() {
+        let store = makeStore()
+        guard let ws = store.active else { return XCTFail("expected a seed workspace") }
+        ws.workingDirectory = projectA
+        firstPane(ws).activeTab?.terminalTitle = "System Testing"
+
+        XCTAssertEqual(ws.sidebarTooltip(agents: []), "System Testing\n/tmp/projectA")
+    }
+
+    /// A single agent is already named by the icon the row draws, so listing it
+    /// would only repeat what's on screen. Two or more put a `+N` badge there
+    /// instead — which says how many but never who — so that's where the names
+    /// earn their line.
+    func testSidebarTooltipNamesTheAgentsOnlyWhenTheBadgeIsAmbiguous() {
+        let store = makeStore()
+        guard let ws = store.active else { return XCTFail("expected a seed workspace") }
+        ws.workingDirectory = projectA
+
+        XCTAssertEqual(ws.sidebarTooltip(agents: [.claudeCode]), "projectA\n/tmp/projectA",
+                       "one agent is what the icon already shows")
+        XCTAssertEqual(ws.sidebarTooltip(agents: [.claudeCode, .codex]),
+                       "projectA\nClaude Code, Codex\n/tmp/projectA")
+    }
+
+    /// A custom title wins the first line, and the path still rides below it
+    /// — renaming a workspace must not hide where it lives.
+    func testSidebarTooltipHonoursACustomTitleWithoutDroppingThePath() {
+        let store = makeStore()
+        guard let ws = store.active else { return XCTFail("expected a seed workspace") }
+        ws.workingDirectory = projectA
+        ws.customTitle = "Scroll fix"
+
+        XCTAssertEqual(ws.sidebarTooltip(agents: []), "Scroll fix\n/tmp/projectA")
+    }
+
+    /// The location line mirrors what the expanded row shows underneath the
+    /// title — branch for a worktree, host for an SSH workspace — so hovering
+    /// a collapsed sidebar and expanding it never disagree. A worktree keeps
+    /// its path as well: the expanded row drops the path *because* this
+    /// tooltip is documented as carrying it.
+    func testSidebarTooltipLocationTracksWorktreeAndSSH() {
+        let store = makeStore()
+        guard let ws = store.active else { return XCTFail("expected a seed workspace") }
+        ws.workingDirectory = projectA
+
+        ws.worktreeBranch = "fix-scroll"
+        XCTAssertEqual(ws.sidebarTooltip(agents: []), "projectA\nbranch fix-scroll\n/tmp/projectA")
+
+        // An un-renamed SSH workspace whose remote hasn't reported a title is
+        // named after its host, so a separate location line would say the same
+        // thing twice — the two collapse into one.
+        ws.worktreeBranch = nil
+        ws.sshRemoteHost = "corey@prod"
+        XCTAssertEqual(ws.sidebarTooltip(agents: []), "ssh corey@prod")
+
+        // Once the title diverges there are two things to say, so both lines
+        // come back — and the collapse must not have eaten the title.
+        firstPane(ws).activeTab?.terminalTitle = "deploy"
+        XCTAssertEqual(ws.sidebarTooltip(agents: []), "deploy\nssh corey@prod")
+    }
+
+    /// The collapsed SSH form used to be built by overwriting `lines[0]`, which
+    /// silently assumed no other line had been inserted ahead of the title.
+    /// Multi-agent × SSH is the combination where that assumption discriminates
+    /// — the agent names must survive the collapse, in both orderings.
+    func testSidebarTooltipKeepsAgentNamesWhenTheSSHTitleCollapses() {
+        let store = makeStore()
+        guard let ws = store.active else { return XCTFail("expected a seed workspace") }
+        ws.workingDirectory = projectA
+        ws.sshRemoteHost = "corey@prod"
+
+        XCTAssertEqual(ws.sidebarTooltip(agents: [.claudeCode, .codex]),
+                       "ssh corey@prod\nClaude Code, Codex")
+
+        firstPane(ws).activeTab?.terminalTitle = "deploy"
+        XCTAssertEqual(ws.sidebarTooltip(agents: [.claudeCode, .codex]),
+                       "deploy\nClaude Code, Codex\nssh corey@prod")
+    }
+
+    /// Titles reach the tooltip from OSC sequences and from hand-written
+    /// settings.json, neither of which strips an interior newline. Every other
+    /// render site is a one-line `Text` that collapses them; here a stray
+    /// newline would add a line to a string whose line count is the structure.
+    func testSidebarTooltipFlattensNewlinesInsideATitle() {
+        let store = makeStore()
+        guard let ws = store.active else { return XCTFail("expected a seed workspace") }
+        ws.workingDirectory = projectA
+        ws.customTitle = "Scroll\nfix"
+        ws.worktreeBranch = "topic\nbranch"
+
+        XCTAssertEqual(ws.sidebarTooltip(agents: []),
+                       "Scroll fix\nbranch topic branch\n/tmp/projectA",
+                       "a newline inside a value must not become a tooltip line")
+    }
+
+    // MARK: - Agent panel row (issue #43)
+
+    private func agentEntry(
+        tabTitle: String,
+        directory: URL,
+        remoteHost: String? = nil,
+        agent: AgentTemplate = .claudeCode
+    ) -> AgentMonitor.Entry {
+        AgentMonitor.Entry(id: UUID(), agent: agent, state: .running,
+                           tabTitle: tabTitle, directory: directory, remoteHost: remoteHost)
+    }
+
+    /// An agent reached over SSH runs somewhere this machine can't name:
+    /// libghostty drops OSC 7 from a non-local host, so the session's cwd is
+    /// still the LOCAL directory the connection was opened from. Naming that
+    /// directory would point at the wrong machine.
+    func testAgentEntryNamesTheRemoteHostInsteadOfTheLocalPath() {
+        let entry = agentEntry(tabTitle: "deploy", directory: projectA, remoteHost: "corey@prod")
+
+        XCTAssertEqual(entry.locationLabel, "ssh corey@prod")
+        XCTAssertFalse(entry.hoverText.contains("/tmp/projectA"),
+                       "a local path must not appear anywhere on a remote row")
+    }
+
+    /// A session with no reported title is named after its own directory, so
+    /// the location line would repeat line 1 — in `$HOME` both sides even
+    /// render as the same single `~`. Naming the agent is the one fact the row
+    /// is otherwise missing, since it carries the agent only as an icon.
+    func testAgentEntryFallsBackToTheAgentNameWhenTheLocationWouldRepeat() {
+        let home = URL(fileURLWithPath: NSHomeDirectory())
+        XCTAssertEqual(agentEntry(tabTitle: "~", directory: home).locationLabel, "Claude Code")
+
+        // The ordinary case is untouched: a real title over a real path.
+        XCTAssertEqual(agentEntry(tabTitle: "Fixing scroll", directory: projectA).locationLabel,
+                       "/tmp/projectA")
+    }
+
+    /// Both row shapes share this string, and the compact rail has nothing
+    /// else — so it has to carry the agent, the tab, the state, and where it
+    /// is running, on a stable two-line shape.
+    func testAgentEntryHoverTextCarriesEveryFieldTheRowCannot() {
+        let entry = agentEntry(tabTitle: "Fixing scroll", directory: projectA)
+
+        XCTAssertEqual(entry.hoverText, "Claude Code · Fixing scroll · running\n/tmp/projectA")
+    }
+
 }
 
 private extension PersistedPaneNode {

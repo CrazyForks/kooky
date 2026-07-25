@@ -60,6 +60,38 @@ final class AgentMonitor {
         let agent: AgentTemplate
         let state: State
         let tabTitle: String
+        /// The WORKSPACE's directory, not the session's live cwd. This line
+        /// answers "which project", and a `cd` into a subdirectory would
+        /// otherwise rename the row — head truncation keeps the deepest
+        /// components, so the project name is the first thing it drops.
+        let directory: URL
+        /// Non-nil when the agent runs on a remote host. `directory` is then
+        /// the LOCAL directory the connection was opened from: libghostty
+        /// discards OSC 7 from a non-local host ("OSC 7 host must be local"),
+        /// so a remote shell's cwd never reaches us and naming it would point
+        /// at the wrong machine entirely.
+        let remoteHost: String?
+
+        /// Second line of the full row. Nothing else on the row says where a
+        /// session lives, and this list is flat across every window — a row's
+        /// position tells you nothing about its project. Falls back to naming
+        /// the agent when the location would only repeat line 1: a session
+        /// with no reported title is named after its own directory, and in
+        /// `$HOME` both sides render as `~`.
+        var locationLabel: String {
+            if let remoteHost { return "ssh \(remoteHost)" }
+            let label = (directory.path as NSString).abbreviatingWithTildeInPath
+            return label == tabTitle ? agent.title : label
+        }
+
+        /// Hover text, shared by both row shapes. The compact rail is
+        /// icon-only, so there it *is* the row's content; the full row's 230pt
+        /// column is fixed and can't be dragged wider, so a truncated title or
+        /// location has nowhere else to be read, and the agent's name is on
+        /// the row only as an icon.
+        var hoverText: String {
+            "\(singleLine(agent.title)) · \(singleLine(tabTitle)) · \(state.help)\n\(locationLabel)"
+        }
     }
 
     /// Every non-shell agent session across all windows, neediest first. A
@@ -77,7 +109,9 @@ final class AgentMonitor {
                             id: session.id,
                             agent: agent,
                             state: Self.state(of: session),
-                            tabTitle: session.title
+                            tabTitle: session.title,
+                            directory: workspace.diskPath,
+                            remoteHost: session.sshWorkspaceHost ?? session.remoteHost
                         )
                     }
                 }
@@ -216,14 +250,19 @@ private struct AgentOverviewRow: View {
         HStack(spacing: 10) {
             AgentIconView(asset: entry.agent.iconAsset, fallbackSymbol: entry.agent.symbol, size: 16)
             VStack(alignment: .leading, spacing: 1) {
-                Text(entry.agent.title)
+                // What this agent is working on leads: with several sessions of
+                // the same agent running, it's the only line that differs.
+                Text(entry.tabTitle)
                     .font(Theme.mono(12, weight: .medium))
                     .foregroundStyle(Theme.chromeForeground)
                     .lineLimit(1)
-                Text(entry.tabTitle)
+                // Head truncation, matching the sidebar's own path subtitle:
+                // the tail holds the project name.
+                Text(entry.locationLabel)
                     .font(Theme.mono(10))
                     .foregroundStyle(Theme.chromeMuted.opacity(0.75))
                     .lineLimit(1)
+                    .truncationMode(.head)
             }
             Spacer(minLength: 6)
             // The colored state word does the work the left accent bar used to.
@@ -236,6 +275,7 @@ private struct AgentOverviewRow: View {
         .background(isHovered ? Theme.chromeHover : Color.clear)
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }
+        .help(entry.hoverText)
     }
 }
 
@@ -256,6 +296,6 @@ private struct AgentOverviewCompactRow: View {
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .contentShape(Rectangle())
             .onHover { isHovered = $0 }
-            .help("\(entry.agent.title) · \(entry.tabTitle) · \(entry.state.help)")
+            .help(entry.hoverText)
     }
 }

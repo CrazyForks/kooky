@@ -36,6 +36,24 @@ func normalizedTitle(_ raw: String) -> String? {
     return trimmed.isEmpty ? nil : trimmed
 }
 
+/// `NSHomeDirectory()` re-resolves through Foundation on every call and cannot
+/// change while the process lives. `Session.title` and `Workspace.title` both
+/// compare against it, and those run on every sidebar / agent-panel row render,
+/// so resolve it once — it was the single largest cost in either title.
+let homeDirectoryPath = NSHomeDirectory()
+
+/// Flattens a value that is about to become ONE line of a newline-joined
+/// string. Titles arrive from OSC sequences and from hand-written
+/// settings.json, and `normalizedTitle` only trims the ends — an interior
+/// newline survives it. Every other render site is a `Text(...).lineLimit(1)`
+/// that collapses newlines on its own; a tooltip whose line count carries
+/// meaning is the one place that has to do it explicitly.
+func singleLine(_ raw: String) -> String {
+    raw.split(whereSeparator: \.isNewline)
+        .joined(separator: " ")
+        .trimmingCharacters(in: .whitespaces)
+}
+
 /// Three-state sidebar visibility. `next` cycles full → compact → hidden →
 /// full so each toggle hides more and eventually wraps around.
 enum SidebarMode: String, Codable, Equatable, Sendable {
