@@ -726,6 +726,15 @@ final class WorkspaceStore {
         scheduleSave()
     }
 
+    /// Set or clear a workspace's tag. `nil` clears it; picking the colour a
+    /// workspace already carries is treated as a clear by the caller, so the
+    /// same swatch toggles.
+    func setTag(_ tag: WorkspaceTag?, for workspace: Workspace) {
+        guard workspace.tag != tag else { return }
+        workspace.tag = tag
+        scheduleSave()
+    }
+
     /// Reorder workspaces in the sidebar — dragged workspace takes the
     /// destination index, others shift.
     func moveWorkspace(from sourceIndex: Int, to destIndex: Int) {
@@ -1453,6 +1462,20 @@ final class WorkspaceStore {
             workspace.worktreeBranch = ws.worktreeBranch
             workspace.worktreePath = ws.worktreePath.map { URL(fileURLWithPath: $0) }
             workspace.sshRemoteHost = sshHost
+            // Exactly one of the two colour fields is ever written, so each
+            // maps to its own case. An unknown preset (a colour a newer kooky
+            // added, seen by an older build) restores untagged rather than
+            // becoming a custom tag whose hex is the literal string `teal`,
+            // which would render gray and read as a colour the user picked.
+            // Both paths lose the value on the next save, since the encoder
+            // re-derives every field from the model — preserving it would mean
+            // echoing back unmapped fields, which isn't worth the machinery for
+            // a downgrade-only case.
+            if let preset = ws.tagPreset.flatMap(WorkspaceColorTag.init(rawValue:)) {
+                workspace.tag = WorkspaceTag(color: .preset(preset), name: ws.tagName)
+            } else if let hex = ws.tagCustomHex {
+                workspace.tag = WorkspaceTag(color: .custom(hex: hex), name: ws.tagName)
+            }
             // Wire engines now that workspace is constructed (engines need
             // the workspace ref for cwd-sync callbacks).
             for pane in workspace.root.allPanes {

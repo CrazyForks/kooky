@@ -84,11 +84,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         // AppKit's tooltip delay has no public API. `NSInitialToolTipDelay`
         // (milliseconds) is the preference it reads — an old key, still honoured
         // as of macOS 26 — and the system default is long enough that an
-        // icon-only sidebar hover feels dead (issue #43); 500ms was picked by
+        // icon-only sidebar hover feels dead (issue #43); 600ms was picked by
         // feel. `register` rather than `set` keeps it a default: nothing is
         // written to the user's plist, and the registration domain is lowest
         // priority, so anyone who set their own value system-wide still wins.
-        UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 500])
+        UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 600])
         // First-launch onboarding (blocking NSAlert if a ghostty config exists)
         // — must run before any window is created and before any libghostty
         // surface is spawned, since `LibghosttyApp` reads `~/.kooky/settings.json`

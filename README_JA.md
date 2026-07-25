@@ -24,6 +24,8 @@ AI コーディングのために作られた、ミニマルでモダンな macO
 
 ![左側に垂直 tab、1 つの pane を 4 分割](img/screenshot-2.png)
 
+**workspace を一目で見分ける。** workspace を右クリックして色を付けられます —— 7 つのプリセット、または **Custom Tag…** で好きな色と名前を。行の左端に縦線として表示され、サイドバーの広い / 狭いどちらでも出ます。同じ色をもう一度クリックすれば解除されます。タグは agent パネルにも引き継がれるので、「誰があなたを必要としているか」順に並ぶあの一覧の中で、同じプロジェクトの agent が自然に一つのまとまりとして読めます (Settings → Appearance でオフにできます)。workspace にホバーすると、タイトル・`#タグ`・動いている agent・場所が表示されます。
+
 **ワンクリックで AI agent セッション。** Claude Code · Codex · Gemini CLI · OpenCode · Amp · Cursor CLI · Copilot CLI · Grok Build · Antigravity CLI · Kimi Code · Pi · Kiro CLI · Droid。`+` メニューから選ぶだけで、最初の prompt を打つ前に agent が起動します。agent の会話は各 CLI 固有の session ID を使って kooky の再起動を跨いで自動で resume されるので、tab を閉じて再度開いても直前の続きから再開できます。
 
 ![対応する全 agent、それぞれ Settings で切り替え可能](img/screenshot-4.png)
@@ -118,7 +120,7 @@ Xcode 26+ と macOS 14+ (Sonoma —— `@Observable` の最低システム要件
 ./scripts/setup-libghostty.sh        # 初回のみ：プリビルドの libghostty xcframework を Vendor/ にダウンロード
 swift build
 swift run                            # 開発モードで直接起動
-swift test                           # 547 個のユニットテスト
+swift test                           # 670 個のユニットテスト
 
 ./scripts/build-app.sh               # dist/Kooky.app を出力
 ./scripts/build-dmg.sh --build       # dist/Kooky-vX.Y.Z.dmg を出力

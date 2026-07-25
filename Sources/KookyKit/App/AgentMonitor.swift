@@ -71,6 +71,11 @@ final class AgentMonitor {
         /// so a remote shell's cwd never reaches us and naming it would point
         /// at the wrong machine entirely.
         let remoteHost: String?
+        /// The tag of the WORKSPACE this session lives in — sessions aren't
+        /// tagged individually, so every agent in a tagged project carries that
+        /// project's colour. That's what turns the stripe into project grouping
+        /// for a list whose order is purely by state.
+        let tag: WorkspaceTag?
 
         /// Second line of the full row. Nothing else on the row says where a
         /// session lives, and this list is flat across every window — a row's
@@ -89,8 +94,13 @@ final class AgentMonitor {
         /// column is fixed and can't be dragged wider, so a truncated title or
         /// location has nowhere else to be read, and the agent's name is on
         /// the row only as an icon.
-        var hoverText: String {
-            "\(singleLine(agent.title)) · \(singleLine(tabTitle)) · \(state.help)\n\(locationLabel)"
+        /// Takes the tag the row is actually showing rather than reading
+        /// `self.tag`, so the setting that hides the stripe hides the `#name`
+        /// with it — the caller resolves that once and both follow.
+        func hoverText(tag: WorkspaceTag?) -> String {
+            let head = "\(singleLine(agent.title)) · \(singleLine(tabTitle)) · \(state.help)"
+            guard let label = tag?.hashLabel else { return "\(head)\n\(locationLabel)" }
+            return "\(head)\n\(label)\n\(locationLabel)"
         }
     }
 
@@ -111,7 +121,8 @@ final class AgentMonitor {
                             state: Self.state(of: session),
                             tabTitle: session.title,
                             directory: workspace.diskPath,
-                            remoteHost: session.sshWorkspaceHost ?? session.remoteHost
+                            remoteHost: session.sshWorkspaceHost ?? session.remoteHost,
+                            tag: workspace.tag
                         )
                     }
                 }
@@ -165,6 +176,9 @@ private func agentAccent(_ state: AgentMonitor.State) -> Color {
 
 struct AgentOverviewSidebar: View {
     var monitor = AgentMonitor.shared
+    /// Reading the model here registers the observation, so flipping the
+    /// setting re-renders the panel live.
+    private var showTags: Bool { KookySettingsModel.shared.showAgentPanelTag }
     /// `.full` or `.compact` — `.hidden` never renders (`ContentView` gates it),
     /// mirroring the left sidebar's three collapse modes.
     let mode: SidebarMode
@@ -200,7 +214,7 @@ struct AgentOverviewSidebar: View {
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(entries) { entry in
-                            AgentOverviewRow(entry: entry)
+                            AgentOverviewRow(entry: entry, showTags: showTags)
                                 .onTapGesture { monitor.onActivate(entry.id) }
                         }
                     }
@@ -232,7 +246,7 @@ struct AgentOverviewSidebar: View {
         ScrollView {
             VStack(spacing: 4) {
                 ForEach(monitor.entries) { entry in
-                    AgentOverviewCompactRow(entry: entry)
+                    AgentOverviewCompactRow(entry: entry, showTags: showTags)
                         .onTapGesture { monitor.onActivate(entry.id) }
                 }
             }
@@ -244,6 +258,7 @@ struct AgentOverviewSidebar: View {
 
 private struct AgentOverviewRow: View {
     let entry: AgentMonitor.Entry
+    let showTags: Bool
     @State private var isHovered = false
 
     var body: some View {
@@ -272,15 +287,20 @@ private struct AgentOverviewRow: View {
         }
         .padding(.horizontal, 14)
         .frame(height: 46)
-        .background(isHovered ? Theme.chromeHover : Color.clear)
+        .background((isHovered ? Theme.chromeHover : Color.clear).workspaceTagStripe(shownTag))
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }
-        .help(entry.hoverText)
+        .help(entry.hoverText(tag: shownTag))
     }
+
+    /// The tag this row actually displays — nil once the panel's tag display is
+    /// switched off, so the stripe and the tooltip can't disagree about it.
+    private var shownTag: WorkspaceTag? { showTags ? entry.tag : nil }
 }
 
 private struct AgentOverviewCompactRow: View {
     let entry: AgentMonitor.Entry
+    let showTags: Bool
     @State private var isHovered = false
 
     var body: some View {
@@ -292,10 +312,12 @@ private struct AgentOverviewCompactRow: View {
                     .frame(width: 7, height: 7)
                     .overlay(Circle().stroke(Theme.chromeBackground, lineWidth: 1.5))
             }
-            .background(isHovered ? Theme.chromeHover : Color.clear)
+            .background((isHovered ? Theme.chromeHover : Color.clear).workspaceTagStripe(shownTag))
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .contentShape(Rectangle())
             .onHover { isHovered = $0 }
-            .help(entry.hoverText)
+            .help(entry.hoverText(tag: shownTag))
     }
+
+    private var shownTag: WorkspaceTag? { showTags ? entry.tag : nil }
 }

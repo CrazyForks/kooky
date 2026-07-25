@@ -66,6 +66,15 @@ final class Workspace: Identifiable {
     /// instead of each new tab dropping back to the local machine.
     var sshRemoteHost: String? = nil
 
+    /// User-assigned marker drawn as a stripe down the row's leading edge, in
+    /// both sidebar modes. Nil for every workspace until the user sets one from
+    /// the row's right-click menu — the value of a marker here comes from most
+    /// rows *not* having one, so nothing assigns these automatically. A named
+    /// tag also adds a `#name` line to the row's tooltip. Persisted as a hex
+    /// string plus an optional name; a malformed colour falls back to gray
+    /// rather than failing the restore.
+    var tag: WorkspaceTag? = nil
+
     /// Single source of truth for "where the worktree actually lives on
     /// disk." For worktree workspaces `worktreePath` wins (pinned at
     /// create time); upgraded state.json files written before the field
@@ -121,7 +130,9 @@ final class Workspace: Identifiable {
         let agentLine = agents.count > 1
             ? [agents.map { singleLine($0.title) }.joined(separator: ", ")]
             : []
-        return ([titleLine] + agentLine + locationLines).joined(separator: "\n")
+        // The stripe shows a tag's colour but can't show its name.
+        let tagLine = tag?.hashLabel.map { [$0] } ?? []
+        return ([titleLine] + tagLine + agentLine + locationLines).joined(separator: "\n")
     }
 
     var activePane: Pane? {

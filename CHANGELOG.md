@@ -2,6 +2,12 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.41.0 — 2026-07-26
+
+- New: colour-tag a workspace to tell it apart at a glance. Right-click any workspace in the sidebar and pick one of seven colours, or **Custom Tag…** for your own colour and a name; the tag shows as a stripe down the left edge of the row in both sidebar widths. Click the colour it already has to clear it. (#43)
+- New: tagged workspaces carry their colour into the agent panel too, so every agent belonging to one project reads as a group in a list that's otherwise sorted by who needs you first. Turn it off under Settings → Appearance → `show-agent-panel-tag`.
+- Changed: a named tag appears as `#name` when you hover the workspace, alongside the title and location.
+
 ## v0.40.1 — 2026-07-25
 
 - New: hovering a workspace in the sidebar now shows its title above its location, so several workspaces running the same agent — which look identical when the sidebar is narrowed to icons — can be told apart without opening them. Workspaces running more than one agent list which ones, and worktrees show their branch alongside the folder they live in. (#43)

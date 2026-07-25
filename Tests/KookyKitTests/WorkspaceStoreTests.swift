@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 @testable import KookyKit
 
@@ -17,10 +18,11 @@ final class WorkspaceStoreTests: XCTestCase {
 
     private func makeStore(
         initial: PersistedState? = nil,
+        persistence: InMemoryPersistence? = nil,
         noteRecentFolder: @escaping @MainActor (URL) -> Void = { _ in }
     ) -> WorkspaceStore {
         WorkspaceStore(
-            persistence: InMemoryPersistence(initial: initial),
+            persistence: persistence ?? InMemoryPersistence(initial: initial),
             engineFactory: { TestEngine() },
             optionsProvider: { _ in nil },
             resumeProvider: { true },
@@ -2218,16 +2220,240 @@ final class WorkspaceStoreTests: XCTestCase {
                        "a newline inside a value must not become a tooltip line")
     }
 
+    // MARK: - Workspace tag (issue #43)
+
+    /// The tag is the only mark on the row the user placed themselves, so it
+    /// has to outlive a relaunch — a marker you have to reapply every launch
+    /// is worse than none.
+    /// Serializes for real on the way through. `InMemoryPersistence` hands the
+    /// struct straight back, and `PersistedWorkspace` hand-rolls its Codable
+    /// conformance across three places (CodingKeys, encode, init(from:)) — so a
+    /// field can live on the struct, pass an in-memory round trip, and still
+    /// never reach disk.
+    private func tagAfterRelaunch(setting tag: WorkspaceTag) throws -> WorkspaceTag? {
+        let persistence = InMemoryPersistence()
+        let store = makeStore(persistence: persistence)
+        store.setTag(tag, for: try XCTUnwrap(store.active))
+        store.flushPersistence()
+
+        let data = try JSONEncoder().encode(try XCTUnwrap(persistence.saved))
+        let decoded = try JSONDecoder().decode(PersistedState.self, from: data)
+        return makeStore(initial: decoded).active?.tag
+    }
+
+    func testColorTagSurvivesAPersistenceRoundTrip() throws {
+        XCTAssertEqual(try tagAfterRelaunch(setting: WorkspaceTag(preset: .purple)),
+                       WorkspaceTag(preset: .purple))
+    }
+
+    /// Setting and clearing a tag both take effect. (The swatch strip's
+    /// "clicking the lit swatch clears it" gesture is a private View and isn't
+    /// covered here — this pins the store side only, which is what the name
+    /// used to overclaim.)
+    func testSetTagSetsAndClears() {
+        let store = makeStore()
+        guard let ws = store.active else { return XCTFail("expected a seed workspace") }
+
+        store.setTag(WorkspaceTag(preset: .red), for: ws)
+        XCTAssertEqual(ws.tag?.colorHex, WorkspaceColorTag.red.hex)
+        store.setTag(nil, for: ws)
+        XCTAssertNil(ws.tag)
+    }
+
+    /// Opening the editor on a preset tag and saving without touching the
+    /// colour well must keep it a preset. Seeding the picker from the existing
+    /// tag round-trips the preset's own hex back out, so a name-only edit would
+    /// otherwise convert it — and the strip would then show that preset's
+    /// swatch unselected next to an identical-looking custom one.
+    func testNamingAPresetTagKeepsItAPreset() {
+        // Editor opened on the red preset, colour well untouched, name added.
+        let named = WorkspaceTag.edited(seededPreset: .red,
+                                        pickedHex: WorkspaceColorTag.red.hex,
+                                        name: "urgent")
+        XCTAssertEqual(named.color, .preset(.red),
+                       "the strip must still light the preset swatch, not add a custom one")
+        XCTAssertEqual(named.name, "urgent")
+
+        // Actually moving the well away makes it the user's own colour…
+        let picked = WorkspaceTag.edited(seededPreset: .red, pickedHex: "123456", name: nil)
+        XCTAssertEqual(picked.color, .custom(hex: "123456"))
+
+        // …and so does picking a preset's exact colour with no preset seeded,
+        // which is the identity rule the whole model exists to protect.
+        let deliberate = WorkspaceTag.edited(seededPreset: nil,
+                                             pickedHex: WorkspaceColorTag.red.hex,
+                                             name: nil)
+        XCTAssertNil(deliberate.color.preset)
+    }
+
+    /// A named tag adds a `#name` line to the row's hover text — the stripe can
+    /// show the colour but never what the user meant by it.
+    func testNamedTagAddsAHashLineToTheTooltip() {
+        let store = makeStore()
+        guard let ws = store.active else { return XCTFail("expected a seed workspace") }
+        ws.workingDirectory = projectA
+        store.setTag(WorkspaceTag(color: .custom(hex: "FF8800"), name: "urgent"), for: ws)
+
+        XCTAssertEqual(ws.sidebarTooltip(agents: []), "projectA\n#urgent\n/tmp/projectA")
+
+        // An unnamed tag is colour only — nothing to say, so no line.
+        store.setTag(WorkspaceTag(preset: .red), for: ws)
+        XCTAssertEqual(ws.sidebarTooltip(agents: []), "projectA\n/tmp/projectA")
+    }
+
+    /// The tooltip renders the `#` itself, so a name the user typed with one
+    /// must not come back as `##urgent`. Blank-after-trimming clears the name
+    /// rather than storing an empty string.
+    func testTagNameIsNormalizedOnTheWayIn() {
+        XCTAssertEqual(WorkspaceTag(color: .custom(hex: "FF8800"), name: "#urgent").name, "urgent")
+        XCTAssertEqual(WorkspaceTag(color: .custom(hex: "FF8800"), name: "  ## release  ").name, "release")
+        XCTAssertNil(WorkspaceTag(color: .custom(hex: "FF8800"), name: "   ").name)
+        XCTAssertNil(WorkspaceTag(color: .custom(hex: "FF8800"), name: "#").name)
+        // Interior newlines would otherwise add a tooltip line of their own.
+        XCTAssertEqual(WorkspaceTag(color: .custom(hex: "FF8800"), name: "two\nlines").name, "two lines")
+    }
+
+    /// A custom colour has to survive as its own hex, and still be clearable —
+    /// the strip lights an extra swatch for it precisely because it matches no
+    /// preset.
+    /// A colour the user picked stays theirs even when it exactly equals a
+    /// preset — otherwise their named tag silently turns into a swatch
+    /// selection they never made, and the strip stops offering it as custom.
+    func testAPickedColorStaysCustomEvenWhenItEqualsAPreset() throws {
+        let picked = WorkspaceTag(color: .custom(hex: WorkspaceColorTag.red.hex), name: "urgent")
+        XCTAssertNil(picked.color.preset, "a picked colour is never a preset selection")
+        XCTAssertEqual(picked.colorHex, WorkspaceColorTag.red.hex, "but it still renders that colour")
+        XCTAssertEqual(WorkspaceTag(preset: .green).color.preset, .green)
+
+        // And it has to survive the wire as custom. Storing only the colour and
+        // re-deriving the origin on load is the bug this whole shape exists to
+        // prevent, and that regression can only be seen through persistence.
+        let restored = try tagAfterRelaunch(setting: picked)
+        XCTAssertEqual(restored, picked)
+        XCTAssertNil(restored?.color.preset,
+                     "restoring must not turn the user's own colour into a preset")
+    }
+
+    /// A tag written by a future kooky must degrade to "untagged" rather than
+    /// failing the decode — one unknown string should never cost the user every
+    /// window, workspace, and tab in `state.json`.
+    func testMalformedTagColorStillRestoresTheWorkspace() throws {
+        let tab = PersistedTab(id: UUID(), agentId: "terminal", currentDirectoryPath: projectA.path)
+        let pane = PersistedPane(id: UUID(), tabs: [tab], activeTabId: tab.id)
+        let workspace = PersistedWorkspace(
+            id: UUID(),
+            workingDirectoryPath: projectA.path,
+            root: PersistedPaneNode(id: pane.id, kind: .pane(pane)),
+            tagCustomHex: "not-a-color"
+        )
+        let persisted = PersistedState(workspaces: [workspace], activeWorkspaceId: workspace.id)
+        // Round-trip through JSON so the decoder actually sees the raw value.
+        let data = try JSONEncoder().encode(persisted)
+        let decoded = try JSONDecoder().decode(PersistedState.self, from: data)
+        let store = WorkspaceStore(persistence: InMemoryPersistence(initial: decoded),
+                                   engineFactory: { TestEngine() },
+                                   optionsProvider: { _ in nil }, resumeProvider: { true })
+
+        XCTAssertEqual(store.workspaces.count, 1, "the workspace must still restore")
+        // The tag survives as data; only its unusable colour degrades — the
+        // stripe falls back to gray rather than the restore failing.
+        XCTAssertEqual(store.workspaces.first?.tag?.colorHex, "not-a-color")
+        XCTAssertEqual(store.workspaces.first?.tag?.swatchColor, Color(hex: WorkspaceColorTag.gray.hex))
+    }
+
+    /// LOCKED WIRE FORMAT. These three key names and the preset raw values live
+    /// in every user's `state.json`. Rename one and their tags vanish silently:
+    /// the field stops decoding, the workspace restores untagged, and the next
+    /// save overwrites the old value — no error, nothing to recover from. This
+    /// happened twice during development, which is why it is pinned here.
+    /// Adding keys or preset cases is safe; renaming needs a migration.
+    func testPersistedTagKeysAreALockedWireFormat() throws {
+        let persistence = InMemoryPersistence()
+        let store = makeStore(persistence: persistence)
+        let ws = try XCTUnwrap(store.active)
+        store.setTag(WorkspaceTag(color: .custom(hex: "123456"), name: "urgent"), for: ws)
+        store.flushPersistence()
+
+        let json = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: try JSONEncoder().encode(try XCTUnwrap(persistence.saved))
+            ) as? [String: Any]
+        )
+        let workspaces = try XCTUnwrap(json["workspaces"] as? [[String: Any]])
+        let encoded = try XCTUnwrap(workspaces.first)
+
+        XCTAssertEqual(encoded["tagCustomHex"] as? String, "123456")
+        XCTAssertEqual(encoded["tagName"] as? String, "urgent")
+        XCTAssertNil(encoded["tagPreset"], "a picked colour must not also write a preset")
+
+        store.setTag(WorkspaceTag(preset: .purple), for: ws)
+        store.flushPersistence()
+        let presetJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: try JSONEncoder().encode(try XCTUnwrap(persistence.saved))
+            ) as? [String: Any]
+        )
+        let presetWs = try XCTUnwrap((presetJSON["workspaces"] as? [[String: Any]])?.first)
+        XCTAssertEqual(presetWs["tagPreset"] as? String, "purple")
+        XCTAssertNil(presetWs["tagCustomHex"], "a preset must not also write a hex")
+
+        // The preset raw values themselves are wire format.
+        XCTAssertEqual(WorkspaceColorTag.allCases.map(\.rawValue),
+                       ["red", "orange", "yellow", "green", "blue", "purple", "gray"])
+    }
+
+    /// A hand-edited `#ff8800` and a picked `FF8800` are the same tag, so the
+    /// swatch toggle (which compares whole tags) has to agree.
+    func testCustomHexIsNormalizedSoEqualTagsCompareEqual() {
+        XCTAssertEqual(WorkspaceTag(color: .custom(hex: "#ff8800")),
+                       WorkspaceTag(color: .custom(hex: "FF8800")))
+        XCTAssertEqual(WorkspaceTag(color: .custom(hex: " #ff8800 ")).colorHex, "FF8800")
+        // Not a colour: kept as-is so the tag stays visible and clearable.
+        XCTAssertEqual(WorkspaceTag(color: .custom(hex: "nope")).colorHex, "nope")
+    }
+
     // MARK: - Agent panel row (issue #43)
 
     private func agentEntry(
         tabTitle: String,
         directory: URL,
         remoteHost: String? = nil,
-        agent: AgentTemplate = .claudeCode
+        agent: AgentTemplate = .claudeCode,
+        tag: WorkspaceTag? = nil
     ) -> AgentMonitor.Entry {
         AgentMonitor.Entry(id: UUID(), agent: agent, state: .running,
-                           tabTitle: tabTitle, directory: directory, remoteHost: remoteHost)
+                           tabTitle: tabTitle, directory: directory, remoteHost: remoteHost, tag: tag)
+    }
+
+    /// The panel repeats the workspace's tag so one marker means one thing in
+    /// both sidebars — and the toggle has to silence the name as well as the
+    /// stripe, or turning tags off leaves half of one in the hover.
+    func testAgentPanelHoverCarriesTheWorkspaceTagOnlyWhenTagsAreShown() {
+        let entry = agentEntry(tabTitle: "Fixing scroll", directory: projectA,
+                               tag: WorkspaceTag(color: .custom(hex: "123456"), name: "urgent"))
+
+        XCTAssertEqual(entry.hoverText(tag: entry.tag),
+                       "Claude Code · Fixing scroll · running\n#urgent\n/tmp/projectA")
+        XCTAssertEqual(entry.hoverText(tag: nil),
+                       "Claude Code · Fixing scroll · running\n/tmp/projectA")
+    }
+
+    /// Every agent in one workspace inherits that workspace's tag — the stripe
+    /// groups the panel by project, which is the only project signal a list
+    /// sorted purely by state has.
+    func testEveryAgentInAWorkspaceCarriesItsTag() {
+        let store = makeStore()
+        guard let ws = store.active else { return XCTFail("expected a seed workspace") }
+        store.setTag(WorkspaceTag(preset: .purple), for: ws)
+        _ = store.addTab(in: ws, template: .claudeCode)
+        _ = store.addTab(in: ws, template: .codex)
+
+        let monitor = AgentMonitor()
+        monitor.storesProvider = { [store] }
+        let tags = monitor.entries.map(\.tag)
+
+        XCTAssertEqual(tags.count, 2)
+        XCTAssertTrue(tags.allSatisfy { $0 == WorkspaceTag(preset: .purple) })
     }
 
     /// An agent reached over SSH runs somewhere this machine can't name:
@@ -2238,7 +2464,7 @@ final class WorkspaceStoreTests: XCTestCase {
         let entry = agentEntry(tabTitle: "deploy", directory: projectA, remoteHost: "corey@prod")
 
         XCTAssertEqual(entry.locationLabel, "ssh corey@prod")
-        XCTAssertFalse(entry.hoverText.contains("/tmp/projectA"),
+        XCTAssertFalse(entry.hoverText(tag: entry.tag).contains("/tmp/projectA"),
                        "a local path must not appear anywhere on a remote row")
     }
 
@@ -2261,7 +2487,7 @@ final class WorkspaceStoreTests: XCTestCase {
     func testAgentEntryHoverTextCarriesEveryFieldTheRowCannot() {
         let entry = agentEntry(tabTitle: "Fixing scroll", directory: projectA)
 
-        XCTAssertEqual(entry.hoverText, "Claude Code · Fixing scroll · running\n/tmp/projectA")
+        XCTAssertEqual(entry.hoverText(tag: entry.tag), "Claude Code · Fixing scroll · running\n/tmp/projectA")
     }
 
 }

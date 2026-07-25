@@ -24,6 +24,8 @@
 
 ![左侧竖直 tab，一个 pane 分成四块](img/screenshot-2.png)
 
+**让 workspace 一眼可分。** 右键任意 workspace 给它一个颜色 —— 七个预设，或者 **Custom Tag…** 自己选颜色、起个名字。它会在行的左边缘画一条竖条，展开和紧凑两种宽度下都在；再点一次当前颜色就取消。标签也会带到 agent 面板里，于是同一个项目的所有 agent 在那个按「谁最需要你」排序的列表里自然聚成一组（可以在 Settings → Appearance 里关掉）。hover 一个 workspace 会显示它的标题、`#标签`、正在跑哪些 agent，以及它在哪。
+
 **一键启动各种 agent。** Claude Code · Codex · Gemini CLI · OpenCode · Amp · Cursor CLI · Copilot CLI · Grok Build · Antigravity CLI · Kimi Code · Pi · Kiro CLI · Droid。`+` 菜单里选一个,agent 会在第一个 prompt 出现前启动。agent 对话还会跨 kooky 重启自动 resume,用的是每个 CLI 自己的 session ID,关掉 tab 再打开能从离开的地方接上。
 
 ![支持的所有 agent，每个都能在 Settings 里单独开关](img/screenshot-4.png)
@@ -118,7 +120,7 @@ macOS **只拦第一次启动**。之后从 Spotlight、Dock、Finder 启动都�
 ./scripts/setup-libghostty.sh        # 一次性：把预编译的 libghostty xcframework 下到 Vendor/
 swift build
 swift run                            # 开发模式直接跑
-swift test                           # 547 个单测
+swift test                           # 670 个单测
 
 ./scripts/build-app.sh               # 产出 dist/Kooky.app
 ./scripts/build-dmg.sh --build       # 产出 dist/Kooky-vX.Y.Z.dmg

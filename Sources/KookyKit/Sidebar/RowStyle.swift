@@ -237,3 +237,25 @@ struct KookyRenameField: View {
             .onSubmit(onSubmit)
     }
 }
+
+extension View {
+    /// Draws a workspace's colour tag as a stripe down the leading edge. Used
+    /// by the sidebar row and both agent-panel row shapes, so the width,
+    /// alignment, and "sits over the row fill, under its content" contract has
+    /// one owner rather than three copies that can drift.
+    ///
+    /// Pass `nil` for an untagged row (or when the agent panel's tag display is
+    /// switched off) and the view is returned untouched.
+    @ViewBuilder
+    func workspaceTagStripe(_ tag: WorkspaceTag?) -> some View {
+        if let tag {
+            overlay(alignment: .leading) {
+                Rectangle()
+                    .fill(tag.swatchColor)
+                    .frame(width: Theme.colorTagStripeWidth)
+            }
+        } else {
+            self
+        }
+    }
+}

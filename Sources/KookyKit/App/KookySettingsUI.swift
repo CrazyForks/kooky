@@ -106,6 +106,14 @@ final class KookySettingsModel {
     /// Persisted under `appearance.showSearchPill` (only when non-default).
     /// The legacy `general.showSearchPill` key is still read during migration.
     var showSearchPill: Bool = true
+
+    /// Whether the agent panel repeats each session's workspace tag as a stripe
+    /// (and a `#name` hover line). Persisted under
+    /// `appearance.showAgentPanelTag`, only when non-default. Worth a toggle
+    /// because the panel is the one place tags aren't sparse — every agent in a
+    /// tagged project carries that project's colour, so several rows can share
+    /// one stripe.
+    var showAgentPanelTag: Bool = true
     /// The sleep-protection dial (see `AwakeMode`): off / auto /
     /// always. `SleepGuard` observes this. The `always` notch needs the
     /// one-time privileged helper (`ClosedLidSleep`); first selection
@@ -213,6 +221,7 @@ final class KookySettingsModel {
 
         let general = parsed["general"] as? [String: Any] ?? [:]
         let appearance = parsed["appearance"] as? [String: Any] ?? [:]
+        showAgentPanelTag = (appearance["showAgentPanelTag"] as? Bool) ?? true
         showSearchPill = Self.resolvedShowSearchPill(
             appearance: appearance,
             legacyGeneral: general
@@ -421,6 +430,7 @@ final class KookySettingsModel {
 
         var appearance = parsed["appearance"] as? [String: Any] ?? [:]
         appearance["showSearchPill"] = showSearchPill ? nil : false
+        appearance["showAgentPanelTag"] = showAgentPanelTag ? nil : false
         if appearance.isEmpty {
             parsed.removeValue(forKey: "appearance")
         } else {
@@ -712,6 +722,7 @@ struct KookySettingsView: View {
             .onChange(of: model.resumeConversations) { _, _ in model.scheduleSave() }
             .onChange(of: model.sshRemoteAgentDetection) { _, _ in model.scheduleSave() }
             .onChange(of: model.showSearchPill) { _, _ in model.scheduleSave() }
+            .onChange(of: model.showAgentPanelTag) { _, _ in model.scheduleSave() }
             .onChange(of: model.terminalPresets) { _, _ in model.scheduleSave() }
             .onChange(of: model.hiddenPresets) { _, _ in model.scheduleSave() }
             .onChange(of: model.statusBarItems) { _, _ in model.scheduleSave() }
@@ -873,6 +884,12 @@ struct KookySettingsView: View {
             SettingsSection(title: "Window Chrome") {
                 SettingsRow(label: "show-search-pill") {
                     Toggle("", isOn: $model.showSearchPill)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                }
+                SettingsHairline()
+                SettingsRow(label: "show-agent-panel-tag") {
+                    Toggle("", isOn: $model.showAgentPanelTag)
                         .labelsHidden()
                         .toggleStyle(.switch)
                 }

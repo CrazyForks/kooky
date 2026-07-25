@@ -24,6 +24,8 @@ A minimal modern terminal built for AI coding. Sidebar workspaces; horizontal / 
 
 ![Vertical tabs on the left, one pane split into four](img/screenshot-2.png)
 
+**Tell your workspaces apart.** Right-click a workspace and give it a colour — seven presets, or **Custom Tag…** for your own colour plus a name. It shows as a stripe down the left edge of the row, in both sidebar widths, and clicking the colour it already has clears it. Tags carry into the agent panel too, so every agent in one project reads as a group in a list otherwise sorted by who needs you first (switch that off under Settings → Appearance). Hovering a workspace shows its title, any `#tag`, which agents are running, and where it lives.
+
 **One-click AI agent sessions.** Claude Code · Codex · Gemini CLI · OpenCode · Amp · Cursor CLI · Copilot CLI · Grok Build · Antigravity CLI · Kimi Code · Pi · Kiro CLI · Droid. Pick one from the `+` menu; the agent boots before your first prompt prints. Agent conversations auto-resume across kooky restarts using each CLI's exact session ID, so closing and reopening a tab picks up where you left off.
 
 ![Every supported agent, each toggleable in Settings](img/screenshot-4.png)
@@ -118,7 +120,7 @@ Requires Xcode 26+ and macOS 14+ (Sonoma — `@Observable` is the floor).
 ./scripts/setup-libghostty.sh        # one-time: fetch the libghostty xcframework
 swift build
 swift run                            # dev mode
-swift test                           # 547 unit tests
+swift test                           # 670 unit tests
 
 ./scripts/build-app.sh               # writes dist/Kooky.app
 ./scripts/build-dmg.sh --build       # writes dist/Kooky-vX.Y.Z.dmg

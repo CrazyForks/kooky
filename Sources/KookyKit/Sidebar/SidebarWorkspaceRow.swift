@@ -1,5 +1,193 @@
 import SwiftUI
 
+/// Finder-style tag strip for the workspace context menu — a clear slot then
+/// one swatch per colour. The active swatch also clears when clicked, so the
+/// strip toggles whichever way the user reaches for.
+private struct ColorTagStrip: View {
+    let current: WorkspaceTag?
+    let onPick: (WorkspaceTag?) -> Void
+
+    /// One slot per thing the strip can light, so "which is selected" and
+    /// "which is hovered" are the same vocabulary. The clear slot used to be a
+    /// nil inside an optional, which made every read spell the nesting.
+    private enum Slot: Equatable {
+        case clear
+        case preset(WorkspaceColorTag)
+        case custom
+    }
+
+    @State private var hovered: Slot?
+
+    /// Keyed on how the tag was made, not on its colour — a picked colour that
+    /// happens to equal a preset is still the user's tag and must not collapse
+    /// into that preset's swatch, and asking "which preset is active" would
+    /// answer nil for a custom tag and light the clear slot alongside it.
+    private var lit: Slot {
+        guard let current else { return .clear }
+        return current.color.preset.map(Slot.preset) ?? .custom
+    }
+
+    var body: some View {
+        HStack(spacing: 7) {
+            clearSwatch
+            ForEach(WorkspaceColorTag.allCases, id: \.self) { swatch($0) }
+            if let current, lit == .custom {
+                circle(current.swatchColor, slot: .custom, help: current.hashLabel ?? "Custom color") {
+                    onPick(nil)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, Theme.space2 + 2)
+        .padding(.vertical, 7)
+    }
+
+    private var clearSwatch: some View {
+        circle(nil, slot: .clear, help: "No color") { onPick(nil) }
+    }
+
+    private func swatch(_ preset: WorkspaceColorTag) -> some View {
+        // Picking the colour a row already carries clears it — the same gesture
+        // both sets and unsets, so there's no dead click. A preset drops any
+        // name the tag had: the swatches are the unnamed tags.
+        circle(preset.color, slot: .preset(preset), help: preset.title) {
+            onPick(lit == .preset(preset) ? nil : WorkspaceTag(preset: preset))
+        }
+    }
+
+    /// One swatch. A nil fill draws the clear slot: an outlined circle with a
+    /// slash through it. `line.diagonal` is the slash alone — `nosign` carries
+    /// its own circle and would nest a second ring inside this one.
+    @ViewBuilder
+    private func circle(
+        _ fill: Color?,
+        slot: Slot,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Group {
+            if let fill {
+                Circle().fill(fill)
+            } else {
+                Circle()
+                    .strokeBorder(Theme.chromeMuted, lineWidth: 1.5)
+                    .overlay(
+                        Image(systemName: "line.diagonal")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(Theme.chromeMuted)
+                            // Mirrored: the stock glyph leans the other way.
+                            .scaleEffect(x: -1)
+                    )
+            }
+        }
+        .modifier(SwatchChrome(isSelected: lit == slot, isHovered: hovered == slot))
+        .onHover { hovered = $0 ? slot : nil }
+        .onTapGesture(perform: action)
+        .help(help)
+    }
+}
+
+/// Editor behind "Custom Tag…" — the system colour picker plus a name. Seeded
+/// through `.popover(item:)` with `PopoverPresentation`, per the popover rule
+/// in CLAUDE.md: click-time data has to ride the presentation itself.
+private struct TagEditor: View {
+    let onSave: (WorkspaceTag) -> Void
+    /// The preset this editor opened on, if any — lets save tell "left the
+    /// colour alone" apart from "picked this exact colour".
+    private let seededPreset: WorkspaceColorTag?
+
+    @State private var color: Color
+    @State private var name: String
+
+    init(seed: WorkspaceTag?, onSave: @escaping (WorkspaceTag) -> Void) {
+        self.onSave = onSave
+        self.seededPreset = seed?.color.preset
+        _color = State(initialValue: seed?.swatchColor ?? WorkspaceColorTag.blue.color)
+        _name = State(initialValue: seed?.name ?? "")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.space3) {
+            HStack(spacing: Theme.space2) {
+                // The stock well is a rounded rect; clipped to a circle it
+                // matches the swatch strip this editor is reached from, so the
+                // panel doesn't introduce a second shape for "a tag colour".
+                ColorPicker("", selection: $color, supportsOpacity: false)
+                    .labelsHidden()
+                    .frame(width: 19, height: 19)
+                    .clipShape(Circle())
+                    .overlay(Circle().stroke(Theme.chromeHairline, lineWidth: 1))
+                Text("color")
+                    .font(Theme.mono(11.5))
+                    .foregroundStyle(Theme.chromeMuted)
+                Spacer(minLength: 0)
+            }
+            KookyRenameField(placeholder: "name (optional)", text: $name, onSubmit: save)
+            HStack {
+                Spacer(minLength: 0)
+                BracketButton("save", action: save)
+            }
+        }
+        .padding(Theme.space3)
+        .frame(width: 240)
+        .background(Theme.chromeBackground)
+        .onAppear(perform: parkColorPanelNearKooky)
+    }
+
+    /// `NSColorPanel` is a system-wide singleton kooky has never positioned, so
+    /// it opens wherever macOS last left it — in practice pinned to a corner of
+    /// the screen, nowhere near the row that summoned it. Park it over the
+    /// window's right half instead: the editor popover hangs off a sidebar row
+    /// so it always sits on the LEFT, and a centred panel covered it. Only while
+    /// the panel is off screen — once it's up the user may have parked it
+    /// somewhere deliberately and we shouldn't yank it back.
+    private func parkColorPanelNearKooky() {
+        let panel = NSColorPanel.shared
+        guard !panel.isVisible, let window = NSApp.keyWindow else { return }
+        let size = panel.frame.size
+        // Left edge at the window's midpoint: the popover hangs off a sidebar
+        // row so it occupies the left of the window, and this clears it without
+        // shoving the panel out to the far edge.
+        var origin = NSPoint(
+            x: window.frame.midX,
+            y: window.frame.midY - size.height / 2
+        )
+        // Keep it fully on screen for a window pushed against the right edge.
+        if let visible = window.screen?.visibleFrame {
+            origin.x = min(origin.x, visible.maxX - size.width)
+            origin.x = max(origin.x, visible.minX)
+            origin.y = min(max(origin.y, visible.minY), visible.maxY - size.height)
+        }
+        panel.setFrameOrigin(origin)
+    }
+
+    private func save() {
+        let hex = NSColor(color).hexString ?? WorkspaceColorTag.gray.hex
+        onSave(.edited(seededPreset: seededPreset, pickedHex: hex, name: name))
+    }
+}
+
+/// Shared swatch sizing + selection ring, so the clear slot and the colour
+/// swatches can't drift apart in size or alignment.
+private struct SwatchChrome: ViewModifier {
+    let isSelected: Bool
+    let isHovered: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .frame(width: 15, height: 15)
+            .overlay {
+                if isSelected {
+                    Circle()
+                        .stroke(Theme.chromeForeground, lineWidth: 1.5)
+                        .padding(-3)
+                }
+            }
+            .opacity(isHovered ? 0.7 : 1)
+            .contentShape(Circle().inset(by: -3))
+    }
+}
+
 struct SidebarWorkspaceRow: View {
     /// Disclosure state for a source workspace that owns worktree children.
     /// `toggle` is wired by the sidebar's parent — the row only renders the
@@ -18,6 +206,7 @@ struct SidebarWorkspaceRow: View {
     let onCloseOthers: () -> Void
     let onDuplicate: () -> Void
     let onRename: (String) -> Void
+    let onSetTag: (WorkspaceTag?) -> Void
     var disclosure: WorktreeDisclosure? = nil
     /// Non-nil for source (top-level, non-worktree) workspaces — the
     /// right-click menu surfaces a "Create Worktree…" entry that the
@@ -34,6 +223,7 @@ struct SidebarWorkspaceRow: View {
     @State private var isContextMenuOpen = false
     @State private var isRenameOpen = false
     @State private var pendingRename = ""
+    @State private var tagEditorSeed: PopoverPresentation<WorkspaceTag?>?
 
     var body: some View {
         let readout = workspace.sidebarReadout
@@ -89,11 +279,31 @@ struct SidebarWorkspaceRow: View {
                     }
                 }
                 KookyMenuDivider()
+                ColorTagStrip(current: workspace.tag) { tag in
+                    isContextMenuOpen = false
+                    onSetTag(tag)
+                }
+                KookyMenuRow(title: workspace.tag == nil ? "Custom Tag…" : "Edit Tag…") {
+                    isContextMenuOpen = false
+                    let current = workspace.tag
+                    // One tick so the context popover finishes dismissing before
+                    // the editor anchors on the same row.
+                    DispatchQueue.main.async {
+                        tagEditorSeed = PopoverPresentation(value: current)
+                    }
+                }
+                KookyMenuDivider()
                 RevealInFinderMenuRow(url: workspace.workingDirectory) { isContextMenuOpen = false }
             }
             .padding(Theme.space1)
             .frame(minWidth: 240)
             .background(Theme.chromeBackground)
+        }
+        .popover(item: $tagEditorSeed, arrowEdge: .trailing) { seed in
+            TagEditor(seed: seed.value) { tag in
+                tagEditorSeed = nil
+                onSetTag(tag)
+            }
         }
         .popover(isPresented: $isRenameOpen, arrowEdge: .trailing) {
             KookyRenameField(placeholder: "Workspace title", text: $pendingRename) {
@@ -312,21 +522,10 @@ struct SidebarWorkspaceRow: View {
         return nil
     }
 
-    /// Row body's background. Compact-mode worktree rows carry a 1.5pt
-    /// accent stripe along the left edge — Linear / GitHub PR sidebar
-    /// style — because the narrow column has no subtitle to convey
-    /// branch identity. Full mode skips the stripe; the branch glyph in
-    /// `subtitleRow` already carries the same signal.
-    @ViewBuilder
+    /// Row fill plus the user's colour tag, drawn in both sidebar modes so
+    /// collapsing the sidebar never drops a marker the user placed.
     private var rowBackground: some View {
-        ZStack(alignment: .leading) {
-            rowFill
-            if isCompact, workspace.worktreeParentId != nil {
-                Rectangle()
-                    .fill(Theme.chromeForeground.opacity(0.4))
-                    .frame(width: 1.5)
-            }
-        }
+        rowFill.workspaceTagStripe(workspace.tag)
     }
 
     private var rowFill: Color {

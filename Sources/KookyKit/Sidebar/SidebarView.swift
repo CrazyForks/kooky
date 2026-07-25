@@ -513,6 +513,7 @@ struct SidebarView: View {
                     onCloseOthers: { store.closeOtherWorkspaces(keeping: worktree) },
                     onDuplicate: { store.duplicateWorkspace(worktree) },
                     onRename: { store.renameWorkspace(worktree, to: $0) },
+                    onSetTag: { store.setTag($0, for: worktree) },
                     onGoToSource: { store.activateWorkspace(parent) }
                 )
             }
@@ -629,6 +630,7 @@ private struct DraggableWorkspaceRow: View {
             onCloseOthers: { store.closeOtherWorkspaces(keeping: workspace) },
             onDuplicate: { store.duplicateWorkspace(workspace) },
             onRename: { store.renameWorkspace(workspace, to: $0) },
+            onSetTag: { store.setTag($0, for: workspace) },
             disclosure: disclosure,
             onCreateWorktree: onCreateWorktree,
             onGoToSource: onGoToSource

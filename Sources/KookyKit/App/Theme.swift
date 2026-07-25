@@ -240,6 +240,13 @@ enum Theme {
     /// keyboard's Caps Lock LED — a bright, luminous emerald.
     static let keepAwakeGreen = Color(.sRGB, red: 0.30, green: 0.91, blue: 0.45, opacity: 1)
 
+    /// Width of a workspace row's colour-tag stripe. Wider than the 1.5pt
+    /// compact worktree marker that used to own this slot — that one was
+    /// ambient, this one is the only thing on the row the user chose. Note it
+    /// does not *replace* that marker: tags are opt-in and nil by default, so
+    /// an untagged compact row now carries no stripe at all.
+    static let colorTagStripeWidth: CGFloat = 3
+
     // MARK: Fonts
     private static let displayName = "Onest"
     private static let monoName = "JetBrainsMono-Regular"
@@ -370,7 +377,7 @@ func bundleResourceURL(name: String, ext: String, subdirectory: String) -> URL? 
 /// Parses `#RRGGBB` / `RRGGBB` into sRGB components, or nil for malformed
 /// input. Single source for both `Color(hex:)` and `NSColor(hex:)` so any
 /// future tolerance changes (e.g. `#RGB` short-form) land in one place.
-private func parseHexRGB(_ hex: String) -> (r: Double, g: Double, b: Double)? {
+func parseHexRGB(_ hex: String) -> (r: Double, g: Double, b: Double)? {
     var s = hex
     if s.hasPrefix("#") { s.removeFirst() }
     guard s.count == 6, let v = UInt32(s, radix: 16) else { return nil }
@@ -405,4 +412,47 @@ extension NSColor {
             + 0.7152 * channel(c.greenComponent)
             + 0.0722 * channel(c.blueComponent)
     }
+}
+
+/// User-assigned workspace marker, drawn as a stripe down the row's leading
+/// edge. Deliberately opt-in and sparse: a colour only tells you something
+/// when most rows don't have one, so kooky never assigns these automatically —
+/// a sidebar where every row is tagged is a sidebar where none of them stand
+/// out (issue #43).
+///
+/// Hues overlap the activity palette on purpose. A tag is a vertical bar on
+/// the leading edge and an activity signal is a 6pt dot on the trailing edge,
+/// so position and shape already separate them — which frees the tags to use
+/// red, the colour users most want for "deal with this one first".
+extension NSColor {
+    /// `RRGGBB` in sRGB. Nil when the colour has no RGB representation
+    /// (pattern or catalog colours), so a caller falls back deterministically
+    /// instead of persisting garbage.
+    var hexString: String? {
+        guard let c = usingColorSpace(.sRGB) else { return nil }
+        let channel = { (v: CGFloat) in Int((max(0, min(1, v)) * 255).rounded()) }
+        return String(format: "%02X%02X%02X",
+                      channel(c.redComponent), channel(c.greenComponent), channel(c.blueComponent))
+    }
+}
+
+extension WorkspaceTag {
+    /// Falls back to gray rather than failing when the stored hex is malformed
+    /// — a hand-edited `state.json` costs the user a colour, not the restore.
+    /// Lives here, not on the model: `WorkspaceTag` is Foundation-only so the
+    /// session layer doesn't take a SwiftUI dependency.
+    var swatchColor: Color { Color(hex: colorHex) ?? Color(hex: WorkspaceColorTag.gray.hex)! }
+}
+
+extension WorkspaceColorTag {
+    /// Resolved once per case — the swatch strip rebuilds its body on every
+    /// mouse move across the palette, and re-parsing seven hex strings each
+    /// time is pure waste for a compile-time-constant set.
+    @MainActor var color: Color { Self.resolved[self] ?? Theme.chromeMuted }
+
+    private static let resolved: [WorkspaceColorTag: Color] = Dictionary(
+        uniqueKeysWithValues: allCases.compactMap { preset in
+            Color(hex: preset.hex).map { (preset, $0) }
+        }
+    )
 }
