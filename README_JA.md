@@ -24,11 +24,11 @@ AI コーディングのために作られた、ミニマルでモダンな macO
 
 ![左側に垂直 tab、1 つの pane を 4 分割](img/screenshot-2.png)
 
-**ワンクリックで AI agent セッション。** Claude Code · Codex · Gemini CLI · OpenCode · Amp · Cursor CLI · Copilot CLI · Grok Build · Antigravity CLI · Kimi Code · Pi · Kiro CLI · Droid。`+` メニューから選ぶだけで、最初の prompt を打つ前に agent が起動します。Claude の会話は kooky の再起動を跨いで自動で resume されるので、tab を閉じて再度開いても直前の続きから再開できます。
+**ワンクリックで AI agent セッション。** Claude Code · Codex · Gemini CLI · OpenCode · Amp · Cursor CLI · Copilot CLI · Grok Build · Antigravity CLI · Kimi Code · Pi · Kiro CLI · Droid。`+` メニューから選ぶだけで、最初の prompt を打つ前に agent が起動します。agent の会話は各 CLI 固有の session ID を使って kooky の再起動を跨いで自動で resume されるので、tab を閉じて再度開いても直前の続きから再開できます。
 
 ![対応する全 agent、それぞれ Settings で切り替え可能](img/screenshot-4.png)
 
-**自分の agent を追加。** 一覧にないものは Settings → Agents から追加できます —— 名前と起動コマンドを入れるだけで、内蔵 agent と同じように `+` メニューに並び、アクティビティドットも自動起動もそのまま使えます。内蔵 agent をベースに選べばそのアイコンを継承でき、独自のロゴ (PNG / JPEG / SVG、64×64 以上推奨) をアップロードすれば tab・サイドバー・agent パネル・Quick Open のすべてに反映されます。Claude ベースのものは独自の環境変数も持てるので、ミラーや proxy のエンドポイントを shell alias ではなく本物の agent として登録できます。
+**自分の agent を追加。** 一覧にないものは Settings → Agents から追加できます —— 名前とコマンドを入れれば `+` メニューに並び、他の tab と同じように起動します。さらに内蔵 agent をベースに選ぶと、その agent の起動バイナリ・アイコン・アクティビティ追跡まで引き継ぎます —— サイドバーのドットは内蔵 agent の wrapper が報告しているので、コマンドだけの場合は起動はしてもドットは点きません。どちらの場合も独自のロゴ (PNG / JPEG / SVG、64×64 推奨) をアップロードでき、tab・サイドバー・agent パネル・Quick Open のすべてに反映されます。Claude ベースのものは独自の環境変数も持てるので、ミラーや proxy のエンドポイントを shell alias ではなく本物の agent として登録できます。
 
 **Git worktree。** 任意の git workspace を右クリック → "Create Worktree…" で新しい branch (または既存 branch の checkout) に対する worktree を作成します。worktree はサイドバーで元のリポジトリの下にネストして表示され、独自の tab + agent を持ちます —— main で何かが走っている最中でも、Claude を feature branch で並行して動かせます。コマンドラインで `git worktree add` した worktree も、次回 kooky 起動時に自動でサイドバーに現れます。
 

@@ -28,7 +28,7 @@ A minimal modern terminal built for AI coding. Sidebar workspaces; horizontal / 
 
 ![Every supported agent, each toggleable in Settings](img/screenshot-4.png)
 
-**Bring your own agent.** Not on that list? Add it in Settings → Agents — a name and the command to run is enough, and it shows up in the `+` menu like any built-in one, activity dot and auto-launch included. Base it on a built-in agent to inherit that agent's mark, or upload your own logo (PNG, JPEG, or SVG; 64×64 or larger) to appear on tabs, the sidebar, the agent panel, and Quick Open. Claude-based entries can carry their own environment variables, so a mirror or proxy endpoint becomes a real agent instead of a shell alias.
+**Bring your own agent.** Not on that list? Add it in Settings → Agents: a name and a command is enough to put it in the `+` menu and launch it like any other tab. Base it on a built-in agent and it also inherits that agent's launch binary, brand mark, and activity tracking — the sidebar dot is reported by the built-in's wrapper, so a standalone command runs fine but stays dark. Either way you can upload your own logo (PNG, JPEG, or SVG; 64×64 recommended), and it shows up on tabs, the sidebar, the agent panel, and Quick Open. Claude-based entries can carry their own environment variables, so a mirror or proxy endpoint becomes a real agent instead of a shell alias.
 
 **Git worktrees.** Right-click any git workspace → "Create Worktree…" to spin one up on a new branch (or check out an existing one). Each worktree shows up nested under its source repo in the sidebar with its own tabs + agent — let Claude work on a feature branch without touching what's running on main. Worktrees you create from the command line show up automatically the next time you launch kooky.
 

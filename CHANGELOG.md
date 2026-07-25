@@ -4,7 +4,7 @@ Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
 ## v0.40.1 — 2026-07-25
 
-- New: hovering a workspace in the collapsed sidebar now shows its title above its location, so several workspaces running the same agent — which look identical when the sidebar is narrowed to icons — can be told apart without opening them. Workspaces running more than one agent list which ones, and worktrees show their branch alongside the folder they live in. (#43)
+- New: hovering a workspace in the sidebar now shows its title above its location, so several workspaces running the same agent — which look identical when the sidebar is narrowed to icons — can be told apart without opening them. Workspaces running more than one agent list which ones, and worktrees show their branch alongside the folder they live in. (#43)
 - New: the agent panel shows hover text when expanded, not just when collapsed, and each row now leads with what the agent is working on instead of repeating the agent's name. Rows for an agent working over SSH name the remote host rather than the local folder the connection started from.
 - Changed: tooltips throughout kooky appear after half a second instead of the system's much longer delay.
 

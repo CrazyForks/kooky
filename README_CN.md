@@ -24,11 +24,11 @@
 
 ![左侧竖直 tab，一个 pane 分成四块](img/screenshot-2.png)
 
-**一键启动各种 agent。** Claude Code · Codex · Gemini CLI · OpenCode · Amp · Cursor CLI · Copilot CLI · Grok Build · Antigravity CLI · Kimi Code · Pi · Kiro CLI · Droid。`+` 菜单里选一个,agent 会在第一个 prompt 出现前启动。Claude 对话还会跨 kooky 重启自动 resume,关掉 tab 再打开能从离开的地方接上。
+**一键启动各种 agent。** Claude Code · Codex · Gemini CLI · OpenCode · Amp · Cursor CLI · Copilot CLI · Grok Build · Antigravity CLI · Kimi Code · Pi · Kiro CLI · Droid。`+` 菜单里选一个,agent 会在第一个 prompt 出现前启动。agent 对话还会跨 kooky 重启自动 resume,用的是每个 CLI 自己的 session ID,关掉 tab 再打开能从离开的地方接上。
 
 ![支持的所有 agent，每个都能在 Settings 里单独开关](img/screenshot-4.png)
 
-**也可以自己加 agent。** 列表里没有的自己加：Settings → Agents 里填个名字和启动命令就行，加完就跟内置 agent 一样出现在 `+` 菜单里，活动状态点、自动启动一样不少。可以挑一个内置 agent 作为基础来继承它的图标风格，也可以直接传自己的 logo（PNG / JPEG / SVG，建议 64×64 以上），tab、侧边栏、agent 面板、Quick Open 里都会用上。基于 Claude 的还能带自己的环境变量，镜像或代理端点因此可以做成一个真正的 agent，而不是一条 shell alias。
+**也可以自己加 agent。** 列表里没有的自己加：Settings → Agents 里填个名字和一条命令，它就会出现在 `+` 菜单里，像任何 tab 一样启动。再挑一个内置 agent 作为基础，它还会连那个 agent 的启动程序、图标和活动状态一起继承——侧边栏那个状态点是内置 agent 的 wrapper 报上来的，所以只填一条裸命令能跑，但点不会亮。两种配置都能传自己的 logo（PNG / JPEG / SVG，建议 64×64），tab、侧边栏、agent 面板、Quick Open 里都会用上。基于 Claude 的还能带自己的环境变量，镜像或代理端点因此可以做成一个真正的 agent，而不是一条 shell alias。
 
 **Git worktree。** 右键任意 git workspace → "Create Worktree…",在新 branch 上(或 checkout 已有 branch)起一个 worktree。Worktree 在 sidebar 里缩进显示在源 repo 下面,有自己的 tab + agent —— 让 Claude 在 feature branch 上跑活,不打扰 main 上正在跑的进程。命令行 `git worktree add` 建的 worktree,下次启动 kooky 也会自动出现在 sidebar。
 

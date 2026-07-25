@@ -457,11 +457,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         return key
     }
 
-    /// Re-applies `Theme.windowAppearance` to every kooky-owned window so a
-    /// theme switch flips title bar / traffic lights / sheets in lockstep
-    /// with the SwiftUI chrome. Enumerated rather than walking `NSApp.windows`
-    /// because the latter touches system-spawned panels (alerts, color
-    /// pickers) that aren't ours.
     /// Pushes edited agent templates into already-open tabs. Called from
     /// `KookySettingsModel.save()`; see `WorkspaceStore.refreshAgentTemplates`.
     func refreshAgentTemplates() {
@@ -469,6 +464,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             controller.store.refreshAgentTemplates()
         }
     }
+
+    /// Re-applies `Theme.windowAppearance` to every kooky-owned window so a
+    /// theme switch flips title bar / traffic lights / sheets in lockstep
+    /// with the SwiftUI chrome. Enumerated rather than walking `NSApp.windows`
+    /// because the latter touches system-spawned panels (alerts, color
+    /// pickers) that aren't ours.
 
     func refreshThemeAppearances() {
         let appearance = Theme.windowAppearance
