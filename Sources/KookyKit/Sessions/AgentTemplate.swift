@@ -780,9 +780,12 @@ struct CustomAgentData: Hashable, Identifiable {
     /// can build "Claude Opus" variants that visually belong to the Claude
     /// family without touching iconAsset / tintHex directly.
     var baseAgentId: String
-    /// Bundled PNG asset name (matches files in `Resources/Icons/`). Power-
-    /// user override; UI doesn't expose this in v1. Empty falls back to
-    /// the `baseAgentId` builtin's iconAsset, or nil if no base.
+    /// Icon name, resolved by `AgentIcon.nsImage` against two namespaces:
+    /// a bundled asset in `Resources/Icons/` (extension-less, e.g. `pi`), or
+    /// a user-imported file in App Support written by `AgentIconStore` (always
+    /// `<agentId>-<uuid8>.png`). Settings' "icon" row writes the latter;
+    /// hand-editing settings.json is the only way to reach the former. Empty
+    /// falls back to the `baseAgentId` builtin's iconAsset, or nil if no base.
     var iconAsset: String
     /// SF Symbol override. Power-user; UI hides this. Empty falls back to
     /// the base's symbol, then to `wand.and.stars`.

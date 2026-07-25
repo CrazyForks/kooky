@@ -2072,6 +2072,50 @@ final class WorkspaceStoreTests: XCTestCase {
         XCTAssertNil(session.remoteHost)
         XCTAssertEqual(engine(session).isRemoteSessionProvider?(), false)
     }
+
+    // MARK: - Agent template refresh
+
+    /// `Session.agent` is a value snapshot taken at spawn, so a Settings edit
+    /// to a custom agent (importing a logo, renaming it) reaches new tabs but
+    /// not already-open ones without this push.
+    func testRefreshAgentTemplatesPushesEditsIntoOpenTabs() {
+        let model = KookySettingsModel.shared
+        let snapshot = model.customAgents
+        defer { model.customAgents = snapshot }
+        model.customAgents = [
+            CustomAgentData(id: "custom-1", title: "Mine", command: "mine", iconAsset: "old-abc.png")
+        ]
+        let store = makeStore()
+        let workspace = store.active!
+        let session = store.addTab(in: workspace, template: .fromCustom(model.customAgents[0]))
+        XCTAssertEqual(session.agent.iconAsset, "old-abc.png")
+
+        model.customAgents[0].iconAsset = "new-def.png"
+        store.refreshAgentTemplates()
+        XCTAssertEqual(session.agent.iconAsset, "new-def.png")
+        XCTAssertEqual(session.agent.id, "custom-1", "identity must survive the refresh")
+    }
+
+    /// A session whose agent no longer exists (the user deleted that custom
+    /// agent mid-run) keeps what it has rather than being reset underneath.
+    func testRefreshAgentTemplatesLeavesUnknownAndShellAgentsAlone() {
+        let model = KookySettingsModel.shared
+        let snapshot = model.customAgents
+        defer { model.customAgents = snapshot }
+        model.customAgents = [
+            CustomAgentData(id: "custom-1", title: "Mine", command: "mine", iconAsset: "old-abc.png")
+        ]
+        let store = makeStore()
+        let workspace = store.active!
+        let custom = store.addTab(in: workspace, template: .fromCustom(model.customAgents[0]))
+        let shell = store.addTab(in: workspace, template: .terminal)
+
+        model.customAgents = []
+        store.refreshAgentTemplates()
+        XCTAssertEqual(custom.agent.iconAsset, "old-abc.png", "a deleted agent must not reset a live tab")
+        XCTAssertTrue(shell.agent.isShell)
+    }
+
 }
 
 private extension PersistedPaneNode {

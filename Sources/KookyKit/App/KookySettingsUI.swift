@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// `@Observable` mirror of the typed slice of `~/.kooky/settings.json` we
 /// expose in the Settings UI. Loads on init, debounces writes back to disk
@@ -230,27 +231,7 @@ final class KookySettingsModel {
         fileLinkAppId = openin["fileLinks"] as? String
         webLinkAppId = openin["webLinks"] as? String
 
-        let rawCustom = (agents["custom"] as? [[String: Any]]) ?? []
-        let builtinIds = Set(AgentTemplate.builtin.map(\.id))
-        var seen: Set<String> = []
-        customAgents = rawCustom.compactMap { dict -> CustomAgentData? in
-            guard let id = dict["id"] as? String, !id.isEmpty else { return nil }
-            // Drop hand-edited collisions with builtin agents, and the
-            // second occurrence of a duplicated id, so the live `all` list
-            // is guaranteed-unique downstream.
-            if builtinIds.contains(id) { return nil }
-            if !seen.insert(id).inserted { return nil }
-            return CustomAgentData(
-                id: id,
-                title: (dict["title"] as? String) ?? "",
-                command: (dict["command"] as? String) ?? "",
-                baseAgentId: (dict["baseAgentId"] as? String) ?? "",
-                iconAsset: (dict["iconAsset"] as? String) ?? "",
-                symbol: (dict["symbol"] as? String) ?? "",
-                tintHex: (dict["tintHex"] as? String) ?? "",
-                env: (dict["env"] as? String) ?? ""
-            )
-        }
+        customAgents = Self.parseCustomAgents((agents["custom"] as? [[String: Any]]) ?? [])
 
         let statusbar = parsed["statusbar"] as? [String: Any] ?? [:]
         if let rawOrder = statusbar["order"] as? [String] {
@@ -299,6 +280,7 @@ final class KookySettingsModel {
         // (visibleOrdered would still surface both, but ForEach renders
         // glitchy and id-based lookups become non-deterministic).
         var presetSeen: Set<String> = []
+        let builtinIds = Set(AgentTemplate.builtin.map(\.id))
         let customIds = Set(customAgents.map(\.id))
         terminalPresets = rawPresets.compactMap { dict -> TerminalPreset? in
             guard let id = dict["id"] as? String, !id.isEmpty else { return nil }
@@ -309,6 +291,53 @@ final class KookySettingsModel {
                 title: (dict["title"] as? String) ?? "",
                 path: (dict["path"] as? String) ?? ""
             )
+        }
+    }
+
+    /// settings.json ⇄ `CustomAgentData`. Extracted from `load()` / `save()`
+    /// as a pair, and kept adjacent, because they have to agree key-for-key:
+    /// a field serialised but not parsed (or vice versa) silently drops the
+    /// user's setting on the next launch, with nothing at the call site to
+    /// hint at the asymmetry. `testCustomAgentFieldsAreAllRoundTripped`
+    /// enumerates the fields off a reflected instance, so a field added to
+    /// `CustomAgentData` and wired into neither side fails there.
+    static func parseCustomAgents(_ raw: [[String: Any]]) -> [CustomAgentData] {
+        let builtinIds = Set(AgentTemplate.builtin.map(\.id))
+        var seen: Set<String> = []
+        return raw.compactMap { dict -> CustomAgentData? in
+            guard let id = dict["id"] as? String, !id.isEmpty else { return nil }
+            // Drop hand-edited collisions with builtin agents, and the
+            // second occurrence of a duplicated id, so the live `all` list
+            // is guaranteed-unique downstream.
+            if builtinIds.contains(id) { return nil }
+            if !seen.insert(id).inserted { return nil }
+            return CustomAgentData(
+                id: id,
+                title: (dict["title"] as? String) ?? "",
+                command: (dict["command"] as? String) ?? "",
+                baseAgentId: (dict["baseAgentId"] as? String) ?? "",
+                iconAsset: (dict["iconAsset"] as? String) ?? "",
+                symbol: (dict["symbol"] as? String) ?? "",
+                tintHex: (dict["tintHex"] as? String) ?? "",
+                env: (dict["env"] as? String) ?? ""
+            )
+        }
+    }
+
+    /// Empty fields drop their key so settings.json only carries what the
+    /// user actually set.
+    static func serializeCustomAgents(_ agents: [CustomAgentData]) -> [[String: Any]] {
+        agents.compactMap { c in
+            guard !c.id.isEmpty else { return nil }
+            var dict: [String: Any] = ["id": c.id]
+            if !c.title.isEmpty { dict["title"] = c.title }
+            if !c.command.isEmpty { dict["command"] = c.command }
+            if !c.baseAgentId.isEmpty { dict["baseAgentId"] = c.baseAgentId }
+            if !c.iconAsset.isEmpty { dict["iconAsset"] = c.iconAsset }
+            if !c.symbol.isEmpty { dict["symbol"] = c.symbol }
+            if !c.tintHex.isEmpty { dict["tintHex"] = c.tintHex }
+            if !c.env.isEmpty { dict["env"] = c.env }
+            return dict
         }
     }
 
@@ -350,18 +379,7 @@ final class KookySettingsModel {
         parsed["terminal"] = terminal
 
         let nonEmptyOptions = agentOptions.filter { !$0.value.isEmpty }
-        let serialisedCustom: [[String: Any]] = customAgents.compactMap { c in
-            guard !c.id.isEmpty else { return nil }
-            var dict: [String: Any] = ["id": c.id]
-            if !c.title.isEmpty { dict["title"] = c.title }
-            if !c.command.isEmpty { dict["command"] = c.command }
-            if !c.baseAgentId.isEmpty { dict["baseAgentId"] = c.baseAgentId }
-            if !c.iconAsset.isEmpty { dict["iconAsset"] = c.iconAsset }
-            if !c.symbol.isEmpty { dict["symbol"] = c.symbol }
-            if !c.tintHex.isEmpty { dict["tintHex"] = c.tintHex }
-            if !c.env.isEmpty { dict["env"] = c.env }
-            return dict
-        }
+        let serialisedCustom = Self.serializeCustomAgents(customAgents)
         let allDefaults = agentOrder.isEmpty
             && hiddenAgents.isEmpty
             && nonEmptyOptions.isEmpty
@@ -461,6 +479,16 @@ final class KookySettingsModel {
 
         KookySettings.write(parsed)
         KookyShellIntegration.refreshClaudeCustomSettings(customAgents: customAgents)
+        // Same live-set sweep as the line above, for imported agent icons —
+        // covers deletion, reset-to-defaults, a cleared icon, the file a
+        // re-import superseded, and anything a hand-edited settings.json
+        // dropped.
+        AgentIconStore.prune(keeping: customAgents)
+        // `Session.agent` is a snapshot taken at spawn, so an edit to a custom
+        // agent (a newly imported logo, a rename) would otherwise only reach
+        // tabs opened afterwards. Unconditional: the store gates on an actual
+        // template change, and this already runs behind the save debounce.
+        (NSApp.delegate as? AppDelegate)?.refreshAgentTemplates()
         KookyShellIntegration.refreshSshRemoteAgentDetection(enabled: sshRemoteAgentDetection)
         // Theme or glass (blur / opacity) diff triggers the chrome /
         // window-appearance refresh — font and cursor changes also flow
@@ -1173,10 +1201,12 @@ private struct AgentReorderList: View {
                     command: customBinding(id: template.id, \.command),
                     baseAgentId: customBinding(id: template.id, \.baseAgentId),
                     env: customBinding(id: template.id, \.env),
+                    iconAsset: customBinding(id: template.id, \.iconAsset),
                     onToggleVisible: { toggle(template.id) },
                     onToggleExpanded: {
                         expandedId = expandedId == template.id ? nil : template.id
                     },
+                    onChooseIcon: { chooseIcon(forAgentId: template.id) },
                     onBeginDrag: { draggingId = template.id },
                     onDrop: { droppedId in
                         defer { draggingId = nil }
@@ -1230,6 +1260,43 @@ private struct AgentReorderList: View {
 
     private func isCustomId(_ id: String) -> Bool {
         model.customAgents.contains(where: { $0.id == id })
+    }
+
+    /// Imports a logo for `id`. Sheet-modal on the Settings window, so
+    /// resolving the agent by id in the completion handler is race-free
+    /// (same reasoning as `chooseFolder(forPresetId:)`).
+    private func chooseIcon(forAgentId id: String) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.png, .jpeg, .svg]
+        panel.message = "Choose an icon for this agent."
+        let assign: (URL) -> Void = { url in
+            guard let idx = model.customAgents.firstIndex(where: { $0.id == id }) else { return }
+            do {
+                model.customAgents[idx].iconAsset = try AgentIconStore.importIcon(from: url, agentId: id)
+            } catch {
+                // Deferred a runloop turn: the panel sheet is still attached
+                // when its completion handler runs, and an app-modal alert
+                // raised under it can land behind the sheet.
+                let message = error.localizedDescription
+                DispatchQueue.main.async {
+                    let alert = NSAlert()
+                    alert.messageText = "Couldn't use that icon"
+                    alert.informativeText = message
+                    alert.alertStyle = .warning
+                    alert.runModal()
+                }
+            }
+        }
+        if let window = NSApp.keyWindow {
+            panel.beginSheetModal(for: window) { response in
+                if response == .OK, let url = panel.url { assign(url) }
+            }
+        } else if panel.runModal() == .OK, let url = panel.url {
+            assign(url)
+        }
     }
 
     /// Binding into a specific custom agent's field. Returns a no-op binding
@@ -1313,8 +1380,13 @@ private struct AgentRow: View {
     /// Env-block binding (`.env` syntax) — same scoping rule as `title`;
     /// additionally only shown for Claude-Code-based customs.
     @Binding var env: String
+    /// Stored icon name — same scoping rule as `title`. Written by
+    /// `onChooseIcon` (via `AgentIconStore`), cleared to fall back to the
+    /// "based on" agent's mark.
+    @Binding var iconAsset: String
     let onToggleVisible: () -> Void
     let onToggleExpanded: () -> Void
+    let onChooseIcon: () -> Void
     let onBeginDrag: () -> Void
     let onDrop: (String) -> Bool
     let onDelete: (() -> Void)?
@@ -1365,6 +1437,7 @@ private struct AgentRow: View {
         VStack(alignment: .leading, spacing: 6) {
             if isCustom {
                 basedOnRow
+                iconRow
                 editRow(label: "title", placeholder: "My Agent", text: $title)
                 if baseAgentId.isEmpty {
                     editRow(label: "command", placeholder: "aichat --model gpt-4", text: $command)
@@ -1424,6 +1497,52 @@ private struct AgentRow: View {
             .onChange(of: baseAgentId) { _, new in
                 if !new.isEmpty { command = "" }
             }
+        }
+        .padding(.leading, Self.optionsRowIndent)
+        .padding(.trailing, 22)
+    }
+
+    /// "icon" row — import a logo for this agent, or clear back to the
+    /// "based on" agent's mark. The preview reads `template.iconAsset` rather
+    /// than the `$iconAsset` binding so it shows what actually renders in the
+    /// tab bar: an empty binding means "inherit", which only `fromCustom`
+    /// resolves.
+    private var iconRow: some View {
+        HStack(spacing: 10) {
+            Text("icon")
+                .font(Theme.mono(11))
+                .foregroundStyle(Theme.chromeMuted)
+                .frame(width: 50, alignment: .leading)
+            AgentIconView(asset: template.iconAsset, fallbackSymbol: template.symbol, size: 18)
+                .frame(width: 26, height: 26)
+                .bracketBorder()
+            // Padding and border go INSIDE the label: applied to the Button
+            // they enlarge its layout frame without extending the hit region,
+            // so the drawn border would ring a dead zone (~56% of the visible
+            // box). Matches `+ add custom agent` above.
+            Button(action: onChooseIcon) {
+                Text("choose…")
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.chromeForeground)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .contentShape(Rectangle())
+                    .bracketBorder()
+            }
+            .buttonStyle(.plain)
+            if !iconAsset.isEmpty {
+                // Clearing only drops the reference; `save()`'s prune deletes
+                // the file once no agent names it.
+                Button("clear") { iconAsset = "" }
+                    .buttonStyle(.plain)
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.chromeMuted)
+                    .underline()
+            }
+            Spacer(minLength: 8)
+            Text("png · jpg · svg — \(AgentIconStore.recommendedDimension)×\(AgentIconStore.recommendedDimension) or larger")
+                .font(Theme.mono(10))
+                .foregroundStyle(Theme.chromeMuted.opacity(0.7))
         }
         .padding(.leading, Self.optionsRowIndent)
         .padding(.trailing, 22)
@@ -1782,13 +1901,19 @@ private struct TerminalPresetRow: View {
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
                     .bracketBorder()
-                Button("choose") { onChooseFolder() }
-                    .buttonStyle(.plain)
-                    .font(Theme.mono(11))
-                    .foregroundStyle(Theme.chromeForeground)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .bracketBorder()
+                // Padding inside the label — see the note on the icon row's
+                // `choose…` button; outside the Button it draws a border
+                // around a dead click zone.
+                Button(action: onChooseFolder) {
+                    Text("choose")
+                        .font(Theme.mono(11))
+                        .foregroundStyle(Theme.chromeForeground)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .contentShape(Rectangle())
+                        .bracketBorder()
+                }
+                .buttonStyle(.plain)
             }
             .padding(.leading, Self.editRowIndent)
             .padding(.trailing, 22)

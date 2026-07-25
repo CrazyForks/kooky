@@ -82,6 +82,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         let settings = KookySettingsModel.shared
         KookyShellIntegration.installAgentHooks(sshRemoteAgentDetection: settings.sshRemoteAgentDetection)
         KookyShellIntegration.refreshClaudeCustomSettings(customAgents: settings.customAgents)
+        // Opts this process into icon pruning (deletes files), then sweeps
+        // whatever a previous run left behind. An xctest process never reaches
+        // here, so it can't prune the developer's real icons.
+        AgentIconStore.wireForApp()
+        AgentIconStore.prune(keeping: settings.customAgents)
 
         restoreWindows()
 
@@ -442,6 +447,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     /// with the SwiftUI chrome. Enumerated rather than walking `NSApp.windows`
     /// because the latter touches system-spawned panels (alerts, color
     /// pickers) that aren't ours.
+    /// Pushes edited agent templates into already-open tabs. Called from
+    /// `KookySettingsModel.save()`; see `WorkspaceStore.refreshAgentTemplates`.
+    func refreshAgentTemplates() {
+        for controller in windowControllers {
+            controller.store.refreshAgentTemplates()
+        }
+    }
+
     func refreshThemeAppearances() {
         let appearance = Theme.windowAppearance
         // Glass needs non-opaque windows so the glass layer can sample the

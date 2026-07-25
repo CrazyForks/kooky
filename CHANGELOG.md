@@ -2,6 +2,11 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.40.0 — 2026-07-25
+
+- New: custom agents can use your own logo. Settings → Agents → expand a custom agent → **icon** → choose a PNG, JPEG, or SVG (64×64 or larger recommended). The icon shows up on tabs, the sidebar, the agent panel, Quick Open, and notifications. Clear it to fall back to the "based on" agent's mark. (#40)
+- Fixed: clicking near the edge of the `choose` button in Settings → Terminals did nothing; the whole button is now clickable.
+
 ## v0.39.1 — 2026-07-24
 
 - Fixed: ⌘W pressed while Settings, About, or another auxiliary window is in front now closes that window itself — panels and dialogs dismiss — instead of closing a terminal tab hidden behind it. ⌘⇧W no longer closes a hidden workspace either. (#38)

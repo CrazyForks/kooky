@@ -1362,6 +1362,30 @@ final class WorkspaceStore {
         location(ofSessionId: id)?.pane.tabs.first { $0.id == id }
     }
 
+    /// Re-resolves every live session's `agent` against the current templates.
+    ///
+    /// `Session.agent` is a value snapshot taken at spawn, so a Settings edit
+    /// to a custom agent — importing a logo, renaming it — reaches new tabs
+    /// but never the ones already open. Matched by id, so a session keeps its
+    /// identity; `.terminal` and sessions whose agent no longer exists are
+    /// left alone. Assignment is gated on an actual change because
+    /// `@Observable` notifies every tab/sidebar observer even on a same-value
+    /// write, and this runs on every settings save.
+    func refreshAgentTemplates() {
+        let byId = Dictionary(
+            AgentTemplate.all.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        for workspace in workspaces {
+            for pane in workspace.root.allPanes {
+                for session in pane.tabs {
+                    guard let fresh = byId[session.agent.id], fresh != session.agent else { continue }
+                    session.agent = fresh
+                }
+            }
+        }
+    }
+
     func flushPersistence() {
         pendingSave?.cancel()
         pendingSave = nil
