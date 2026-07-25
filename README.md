@@ -28,6 +28,8 @@ A minimal modern terminal built for AI coding. Sidebar workspaces; horizontal / 
 
 ![Every supported agent, each toggleable in Settings](img/screenshot-4.png)
 
+**Bring your own agent.** Not on that list? Add it in Settings → Agents — a name and the command to run is enough, and it shows up in the `+` menu like any built-in one, activity dot and auto-launch included. Base it on a built-in agent to inherit that agent's mark, or upload your own logo (PNG, JPEG, or SVG; 64×64 or larger) to appear on tabs, the sidebar, the agent panel, and Quick Open. Claude-based entries can carry their own environment variables, so a mirror or proxy endpoint becomes a real agent instead of a shell alias.
+
 **Git worktrees.** Right-click any git workspace → "Create Worktree…" to spin one up on a new branch (or check out an existing one). Each worktree shows up nested under its source repo in the sidebar with its own tabs + agent — let Claude work on a feature branch without touching what's running on main. Worktrees you create from the command line show up automatically the next time you launch kooky.
 
 **SSH workspaces.** File → New SSH Workspace… (or ⌘P) creates a workspace that lives on a remote machine: every new tab, split, and restored tab reconnects to the same host on its own. Agent tabs start their agent on the remote — with the remote's own shell setup loaded, so tools installed through nvm and friends are found. Paste a local file or screenshot and kooky uploads it first, then pastes a path the remote agent can actually open. Connections to the same host are shared: extra tabs attach instantly, and password-authenticated hosts work throughout, pasting included.

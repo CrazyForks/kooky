@@ -28,6 +28,8 @@
 
 ![支持的所有 agent，每个都能在 Settings 里单独开关](img/screenshot-4.png)
 
+**也可以自己加 agent。** 列表里没有的自己加：Settings → Agents 里填个名字和启动命令就行，加完就跟内置 agent 一样出现在 `+` 菜单里，活动状态点、自动启动一样不少。可以挑一个内置 agent 作为基础来继承它的图标风格，也可以直接传自己的 logo（PNG / JPEG / SVG，建议 64×64 以上），tab、侧边栏、agent 面板、Quick Open 里都会用上。基于 Claude 的还能带自己的环境变量，镜像或代理端点因此可以做成一个真正的 agent，而不是一条 shell alias。
+
 **Git worktree。** 右键任意 git workspace → "Create Worktree…",在新 branch 上(或 checkout 已有 branch)起一个 worktree。Worktree 在 sidebar 里缩进显示在源 repo 下面,有自己的 tab + agent —— 让 Claude 在 feature branch 上跑活,不打扰 main 上正在跑的进程。命令行 `git worktree add` 建的 worktree,下次启动 kooky 也会自动出现在 sidebar。
 
 **SSH workspace。** File → New SSH Workspace…(或 ⌘P)创建一个"住"在远程机器上的 workspace:之后每个新 tab、分屏、重启恢复的 tab 都自动重连同一台主机。开 agent tab 时 agent 直接在远端启动 —— 远端自己的 shell 配置加载完才启动,nvm 装的工具都找得到。往里粘贴本地文件或截图时,kooky 先上传再粘贴远端路径,对面的 agent 才真的打得开。同一主机的连接是共享的:后续 tab 秒连,密码登录的主机也全程可用,包括粘贴上传。

@@ -28,6 +28,8 @@ AI コーディングのために作られた、ミニマルでモダンな macO
 
 ![対応する全 agent、それぞれ Settings で切り替え可能](img/screenshot-4.png)
 
+**自分の agent を追加。** 一覧にないものは Settings → Agents から追加できます —— 名前と起動コマンドを入れるだけで、内蔵 agent と同じように `+` メニューに並び、アクティビティドットも自動起動もそのまま使えます。内蔵 agent をベースに選べばそのアイコンを継承でき、独自のロゴ (PNG / JPEG / SVG、64×64 以上推奨) をアップロードすれば tab・サイドバー・agent パネル・Quick Open のすべてに反映されます。Claude ベースのものは独自の環境変数も持てるので、ミラーや proxy のエンドポイントを shell alias ではなく本物の agent として登録できます。
+
 **Git worktree。** 任意の git workspace を右クリック → "Create Worktree…" で新しい branch (または既存 branch の checkout) に対する worktree を作成します。worktree はサイドバーで元のリポジトリの下にネストして表示され、独自の tab + agent を持ちます —— main で何かが走っている最中でも、Claude を feature branch で並行して動かせます。コマンドラインで `git worktree add` した worktree も、次回 kooky 起動時に自動でサイドバーに現れます。
 
 **SSH workspace。** File → New SSH Workspace… (または ⌘P) で、リモートマシン上に「住む」workspace を作成します。以降の新しい tab・分割ペイン・再起動時に復元される tab は、すべて同じホストへ自動で再接続します。agent tab を開くと agent はリモート側で起動 —— リモート自身のシェル設定を読み込んでから始まるので、nvm などで入れたツールもきちんと見つかります。ローカルのファイルやスクリーンショットを貼り付けると、kooky が先にアップロードしてからリモートパスを貼り付けるため、向こうの agent が実際に開けます。同一ホストへの接続は共有され、追加の tab は即座に接続。パスワード認証のホストでも貼り付けを含めて全部使えます。
