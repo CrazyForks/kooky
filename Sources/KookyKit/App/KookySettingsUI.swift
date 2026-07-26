@@ -30,14 +30,29 @@ final class KookySettingsModel {
     /// `terminal.background-opacity` (0...1). Drives both libghostty's surface
     /// alpha and kooky's glass tint. `nil` = unset (libghostty default).
     var backgroundOpacity: Double? = nil
-    /// Picker selection for the terminal theme row. Values are one of:
-    /// `defaultThemeSelection`, `customThemeSelection`, or a theme choice id.
-    var terminalThemeSelection: String = KookySettingsModel.defaultThemeSelection
+    /// Window-control appearance and terminal palettes are separate choices.
+    /// System follows macOS, while Light/Dark pin that appearance; the active
+    /// side then selects its own terminal theme.
+    var appearanceMode: KookyAppearanceMode = .system
+    /// Live system side, mirrored into observable state. Reading AppKit's
+    /// `effectiveAppearance` on demand resolves the right value, but SwiftUI
+    /// cannot observe that external value — System mode would therefore swap
+    /// libghostty's foreground while leaving existing glass/chrome layers on
+    /// the old background. AppDelegate updates this from the appearance KVO
+    /// callback so every Theme consumer invalidates in the same render pass.
+    var systemAppearanceIsDark: Bool = KookyAppearanceMode.systemIsDark
+    var lightTerminalThemeSelection: String = KookySettingsModel.defaultLightThemeSelection
+    var darkTerminalThemeSelection: String = KookySettingsModel.defaultDarkThemeSelection
     var terminalThemeChoices: [KookyTerminalTheme] = KookyTerminalTheme.availableThemes()
-    /// Unknown raw `terminal.theme` values from hand-edited settings.json.
-    /// Kept so saving an unrelated Settings field doesn't delete a custom
-    /// Ghostty theme path/name that the picker cannot represent as a preset.
-    private var customTerminalThemeRawValue: String? = nil
+    /// Unknown raw theme values from hand-edited settings.json. Each side is
+    /// retained independently so unrelated Settings edits never erase a
+    /// custom Ghostty theme path/name the picker cannot represent.
+    private var customLightTerminalThemeRawValue: String? = nil
+    private var customDarkTerminalThemeRawValue: String? = nil
+    /// False only for the old no-theme "Default" state, whose contract was to
+    /// inherit Ghostty's config. Unrelated Settings saves keep that state;
+    /// changing any Appearance theme control opts into the paired schema.
+    private(set) var pairedThemeSchemaEnabled: Bool = false
 
     /// User-customised order for the `+` menu agent list (Terminal stays
     /// pinned first regardless). Empty = use `AgentTemplate.all` order.
@@ -194,6 +209,7 @@ final class KookySettingsModel {
         let parsed = KookySettings.loadParsed() ?? [:]
         terminalThemeChoices = KookyTerminalTheme.availableThemes()
         let terminal = parsed["terminal"] as? [String: Any] ?? [:]
+        let appearance = parsed["appearance"] as? [String: Any] ?? [:]
         fontFamily = (terminal["font-family"] as? String) ?? ""
         fontSize = nil
         if let n = terminal["font-size"] as? Int {
@@ -212,12 +228,20 @@ final class KookySettingsModel {
         } else {
             backgroundOpacity = nil
         }
-        let themeState = Self.themeSelection(
-            for: terminal["theme"] as? String,
+        let themePreferences = Self.themePreferences(
+            appearance: appearance,
+            legacyRawTheme: terminal["theme"] as? String,
             in: terminalThemeChoices
         )
-        terminalThemeSelection = themeState.selection
-        customTerminalThemeRawValue = themeState.customRawValue
+        pairedThemeSchemaEnabled = Self.shouldEnablePairedThemeSchema(
+            appearance: appearance,
+            legacyRawTheme: terminal["theme"] as? String
+        )
+        appearanceMode = themePreferences.mode
+        lightTerminalThemeSelection = themePreferences.lightSelection
+        darkTerminalThemeSelection = themePreferences.darkSelection
+        customLightTerminalThemeRawValue = themePreferences.customLightRawValue
+        customDarkTerminalThemeRawValue = themePreferences.customDarkRawValue
 
         let agents = parsed["agents"] as? [String: Any] ?? [:]
         agentOrder = (agents["order"] as? [String]) ?? []
@@ -230,7 +254,6 @@ final class KookySettingsModel {
         sshRemoteAgentDetection = (ssh["remoteAgentDetection"] as? Bool) ?? false
 
         let general = parsed["general"] as? [String: Any] ?? [:]
-        let appearance = parsed["appearance"] as? [String: Any] ?? [:]
         showAgentPanelTag = (appearance["showAgentPanelTag"] as? Bool) ?? true
         showSearchPill = Self.resolvedShowSearchPill(
             appearance: appearance,
@@ -379,10 +402,22 @@ final class KookySettingsModel {
         save()
     }
 
+    /// Appearance controls are the explicit opt-in boundary for legacy
+    /// Default users. Font, cursor, agent, and other saves must not cross it.
+    func activatePairedThemeSchemaAndSave() {
+        pairedThemeSchemaEnabled = true
+        flushSave()
+    }
+
     private func save() {
         var parsed = KookySettings.loadParsed() ?? [:]
         var terminal = parsed["terminal"] as? [String: Any] ?? [:]
         let previousTerminal = terminal
+        let previousAppearance = parsed["appearance"] as? [String: Any] ?? [:]
+        var appearance = previousAppearance
+        if KookySettings.hasPairedThemeSchema(appearance) {
+            pairedThemeSchemaEnabled = true
+        }
         // Sentinel values (empty string / nil / "block") drop the key so
         // libghostty falls back to ghostty's own config or its own default.
         terminal["font-family"] = fontFamily.isEmpty ? nil : fontFamily
@@ -390,11 +425,13 @@ final class KookySettingsModel {
         terminal["cursor-style"] = cursorStyle == "block" ? nil : cursorStyle
         terminal["background-blur"] = backgroundBlur
         terminal["background-opacity"] = backgroundOpacity
-        terminal["theme"] = Self.persistedThemeValue(
-            selection: terminalThemeSelection,
-            customRawValue: customTerminalThemeRawValue,
-            in: terminalThemeChoices
-        )
+        // Explicit legacy themes can migrate losslessly to their matching
+        // side. A missing legacy theme is different: it was the old Default
+        // sentinel and must keep inheriting Ghostty until the user edits an
+        // Appearance theme control.
+        if pairedThemeSchemaEnabled {
+            terminal.removeValue(forKey: "theme")
+        }
         parsed["terminal"] = terminal
 
         let nonEmptyOptions = agentOptions.filter { !$0.value.isEmpty }
@@ -438,7 +475,22 @@ final class KookySettingsModel {
             parsed["general"] = general
         }
 
-        var appearance = parsed["appearance"] as? [String: Any] ?? [:]
+        let lightTheme = Self.persistedThemeValue(
+            selection: lightTerminalThemeSelection,
+            customRawValue: customLightTerminalThemeRawValue,
+            in: terminalThemeChoices
+        )
+        let darkTheme = Self.persistedThemeValue(
+            selection: darkTerminalThemeSelection,
+            customRawValue: customDarkTerminalThemeRawValue,
+            in: terminalThemeChoices
+        )
+        if pairedThemeSchemaEnabled {
+            appearance["themeSchemaVersion"] = KookySettings.pairedThemeSchemaVersion
+            appearance["mode"] = appearanceMode == .system ? nil : appearanceMode.rawValue
+            appearance["lightTheme"] = lightTheme == Self.defaultLightThemeSelection ? nil : lightTheme
+            appearance["darkTheme"] = darkTheme == Self.defaultDarkThemeSelection ? nil : darkTheme
+        }
         appearance["showSearchPill"] = showSearchPill ? nil : false
         appearance["showAgentPanelTag"] = showAgentPanelTag ? nil : false
         if appearance.isEmpty {
@@ -510,15 +562,20 @@ final class KookySettingsModel {
         // template change, and this already runs behind the save debounce.
         (NSApp.delegate as? AppDelegate)?.refreshAgentTemplates()
         KookyShellIntegration.refreshSshRemoteAgentDetection(enabled: sshRemoteAgentDetection)
-        // Theme or glass (blur / opacity) diff triggers the chrome /
+        // Theme, appearance mode, or glass (blur / opacity) diff triggers the chrome /
         // window-appearance refresh — font and cursor changes also flow
         // through `reloadConfig` so libghostty picks up the new values, but
         // they don't change chrome tokens, so skip the window pass for them.
+        let appearanceThemeChanged = (previousAppearance["mode"] as? String) != (appearance["mode"] as? String)
+            || (previousAppearance["lightTheme"] as? String) != (appearance["lightTheme"] as? String)
+            || (previousAppearance["darkTheme"] as? String) != (appearance["darkTheme"] as? String)
+            || (previousAppearance["themeSchemaVersion"] as? NSNumber) != (appearance["themeSchemaVersion"] as? NSNumber)
         let themeChanged = (previousTerminal["theme"] as? String) != (terminal["theme"] as? String)
+            || appearanceThemeChanged
         let glassChanged = (previousTerminal["background-blur"] as? String) != (terminal["background-blur"] as? String)
             || (previousTerminal["background-opacity"] as? NSNumber) != (terminal["background-opacity"] as? NSNumber)
         let terminalChanged = !NSDictionary(dictionary: previousTerminal).isEqual(to: terminal)
-        if terminalChanged {
+        if terminalChanged || appearanceThemeChanged {
             LibghosttyApp.shared.reloadConfig()
             if themeChanged || glassChanged {
                 (NSApp.delegate as? AppDelegate)?.refreshThemeAppearances()
@@ -535,8 +592,20 @@ final class KookySettingsModel {
         scheduleSave()
     }
 
+    static let defaultLightThemeSelection = KookyTerminalTheme.defaultLightID
+    static let defaultDarkThemeSelection = KookyTerminalTheme.defaultDarkID
+    /// Retained for the raw-theme codec and migration tests. The new UI always
+    /// has a concrete default on each side rather than an unstyled sentinel.
     static let defaultThemeSelection = "__kooky-default-theme"
     static let customThemeSelection = "__kooky-custom-theme"
+
+    struct ThemePreferences: Equatable {
+        let mode: KookyAppearanceMode
+        let lightSelection: String
+        let darkSelection: String
+        let customLightRawValue: String?
+        let customDarkRawValue: String?
+    }
 
     static func resolvedShowSearchPill(
         appearance: [String: Any],
@@ -548,12 +617,30 @@ final class KookySettingsModel {
     }
 
     var selectedTerminalTheme: KookyTerminalTheme? {
-        terminalThemeChoices.first { $0.id == terminalThemeSelection }
+        guard pairedThemeSchemaEnabled else { return nil }
+        let selection = appearanceMode.resolvesDark(systemIsDark: systemAppearanceIsDark)
+            ? darkTerminalThemeSelection
+            : lightTerminalThemeSelection
+        return terminalThemeChoices.first { $0.id == selection }
     }
 
-    var customTerminalThemeLabel: String? {
-        guard terminalThemeSelection == Self.customThemeSelection else { return nil }
-        guard let raw = customTerminalThemeRawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+    var customLightTerminalThemeLabel: String? {
+        Self.customThemeLabel(
+            selection: lightTerminalThemeSelection,
+            rawValue: customLightTerminalThemeRawValue
+        )
+    }
+
+    var customDarkTerminalThemeLabel: String? {
+        Self.customThemeLabel(
+            selection: darkTerminalThemeSelection,
+            rawValue: customDarkTerminalThemeRawValue
+        )
+    }
+
+    private static func customThemeLabel(selection: String, rawValue: String?) -> String? {
+        guard selection == customThemeSelection else { return nil }
+        guard let raw = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
               !raw.isEmpty else { return nil }
         return "Custom (\(raw))"
     }
@@ -572,6 +659,94 @@ final class KookySettingsModel {
 
     var ghosttyUserThemes: [KookyTerminalTheme] {
         terminalThemeChoices.filter { !$0.isBundled }
+    }
+
+    var darkGhosttyUserThemes: [KookyTerminalTheme] {
+        ghosttyUserThemes.filter(\.isDark)
+    }
+
+    var lightGhosttyUserThemes: [KookyTerminalTheme] {
+        ghosttyUserThemes.filter { !$0.isDark }
+    }
+
+    /// Loads the new paired-theme schema and performs an in-memory migration
+    /// from the old `terminal.theme` value. A legacy known light/dark theme is
+    /// placed on the matching side and pins that appearance, preserving what
+    /// the user saw before upgrading; the first subsequent save writes only
+    /// the new schema. A fresh install defaults to System + One Light/Dark.
+    static func themePreferences(
+        appearance: [String: Any],
+        legacyRawTheme: String?,
+        in themes: [KookyTerminalTheme] = KookyTerminalTheme.presets
+    ) -> ThemePreferences {
+        let explicitMode = (appearance["mode"] as? String).flatMap(KookyAppearanceMode.init(rawValue:))
+
+        func state(for raw: String?, defaultSelection: String) -> (selection: String, customRawValue: String?) {
+            let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return themeSelection(
+                for: trimmed.isEmpty ? defaultSelection : trimmed,
+                in: themes
+            )
+        }
+
+        let hasPairedTheme = KookySettings.hasPairedThemeSchema(appearance)
+        if hasPairedTheme {
+            let light = state(
+                for: appearance["lightTheme"] as? String,
+                defaultSelection: defaultLightThemeSelection
+            )
+            let dark = state(
+                for: appearance["darkTheme"] as? String,
+                defaultSelection: defaultDarkThemeSelection
+            )
+            return ThemePreferences(
+                mode: explicitMode ?? .system,
+                lightSelection: light.selection,
+                darkSelection: dark.selection,
+                customLightRawValue: light.customRawValue,
+                customDarkRawValue: dark.customRawValue
+            )
+        }
+
+        let legacyTrimmed = legacyRawTheme?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !legacyTrimmed.isEmpty {
+            let legacy = themeSelection(for: legacyTrimmed, in: themes)
+            let knownLegacy = themes.first { $0.id == legacy.selection }
+            // Unknown raw paths were rendered with dark fallback chrome in the
+            // old implementation, so dark is the compatibility-safe side.
+            let legacyIsDark = knownLegacy?.isDark ?? true
+            let light = legacyIsDark
+                ? state(for: nil, defaultSelection: defaultLightThemeSelection)
+                : legacy
+            let dark = legacyIsDark
+                ? legacy
+                : state(for: nil, defaultSelection: defaultDarkThemeSelection)
+            return ThemePreferences(
+                mode: explicitMode ?? (legacyIsDark ? .dark : .light),
+                lightSelection: light.selection,
+                darkSelection: dark.selection,
+                customLightRawValue: light.customRawValue,
+                customDarkRawValue: dark.customRawValue
+            )
+        }
+
+        let light = state(for: nil, defaultSelection: defaultLightThemeSelection)
+        let dark = state(for: nil, defaultSelection: defaultDarkThemeSelection)
+        return ThemePreferences(
+            mode: explicitMode ?? .system,
+            lightSelection: light.selection,
+            darkSelection: dark.selection,
+            customLightRawValue: light.customRawValue,
+            customDarkRawValue: dark.customRawValue
+        )
+    }
+
+    static func shouldEnablePairedThemeSchema(
+        appearance: [String: Any],
+        legacyRawTheme: String?
+    ) -> Bool {
+        let legacy = legacyRawTheme?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return KookySettings.hasPairedThemeSchema(appearance) || !legacy.isEmpty
     }
 
     static func themeSelection(
@@ -716,7 +891,9 @@ struct KookySettingsView: View {
         .onChange(of: model.fontFamily) { _, _ in model.scheduleSave() }
         .onChange(of: model.fontSize) { _, _ in model.scheduleSave() }
         .onChange(of: model.cursorStyle) { _, _ in model.scheduleSave() }
-        .onChange(of: model.terminalThemeSelection) { _, _ in model.flushSave() }
+        .onChange(of: model.appearanceMode) { _, _ in model.activatePairedThemeSchemaAndSave() }
+        .onChange(of: model.lightTerminalThemeSelection) { _, _ in model.activatePairedThemeSchemaAndSave() }
+        .onChange(of: model.darkTerminalThemeSelection) { _, _ in model.activatePairedThemeSchemaAndSave() }
         .onChange(of: model.backgroundBlur) { _, _ in model.flushSave() }
         .onChange(of: model.agentOrder) { _, _ in model.scheduleSave() }
         .onChange(of: model.hiddenAgents) { _, _ in model.scheduleSave() }
@@ -828,11 +1005,38 @@ struct KookySettingsView: View {
 
     private var appearanceDetail: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SettingsSection(title: "Terminal") {
-                SettingsRow(label: "theme") {
-                    themeControl
+            SettingsSection(title: "Appearance") {
+                SettingsRow(label: "mode") {
+                    Picker("", selection: $model.appearanceMode) {
+                        Text("System").tag(KookyAppearanceMode.system)
+                        Text("Light").tag(KookyAppearanceMode.light)
+                        Text("Dark").tag(KookyAppearanceMode.dark)
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .fixedSize()
                 }
                 SettingsHairline()
+                SettingsRow(label: "light-theme") {
+                    themeControl(
+                        selection: $model.lightTerminalThemeSelection,
+                        customLabel: model.customLightTerminalThemeLabel,
+                        bundledThemes: model.lightBundledThemes,
+                        userThemes: model.lightGhosttyUserThemes
+                    )
+                }
+                SettingsHairline()
+                SettingsRow(label: "dark-theme") {
+                    themeControl(
+                        selection: $model.darkTerminalThemeSelection,
+                        customLabel: model.customDarkTerminalThemeLabel,
+                        bundledThemes: model.darkBundledThemes,
+                        userThemes: model.darkGhosttyUserThemes
+                    )
+                }
+            }
+
+            SettingsSection(title: "Terminal") {
                 SettingsRow(label: "font-family") {
                     Picker("", selection: $model.fontFamily) {
                         Text("Default").tag("")
@@ -890,6 +1094,7 @@ struct KookySettingsView: View {
                     .padding(.bottom, 10)
                 terminalRestartCallout
             }
+            .padding(.top, 22)
 
             SettingsSection(title: "Window Chrome") {
                 SettingsRow(label: "show-search-pill") {
@@ -1064,25 +1269,24 @@ struct KookySettingsView: View {
         NSApp.terminate(nil)
     }
 
-    private var themeControl: some View {
-        Picker("", selection: $model.terminalThemeSelection) {
-            Text("Default").tag(KookySettingsModel.defaultThemeSelection)
-            if let customLabel = model.customTerminalThemeLabel {
+    private func themeControl(
+        selection: Binding<String>,
+        customLabel: String?,
+        bundledThemes: [KookyTerminalTheme],
+        userThemes: [KookyTerminalTheme]
+    ) -> some View {
+        Picker("", selection: selection) {
+            if let customLabel {
                 Text(customLabel).tag(KookySettingsModel.customThemeSelection)
             }
-            Section("Dark") {
-                ForEach(model.darkBundledThemes) { preset in
+            Section("Bundled") {
+                ForEach(bundledThemes) { preset in
                     Text(preset.title).tag(preset.id)
                 }
             }
-            Section("Light") {
-                ForEach(model.lightBundledThemes) { preset in
-                    Text(preset.title).tag(preset.id)
-                }
-            }
-            if !model.ghosttyUserThemes.isEmpty {
+            if !userThemes.isEmpty {
                 Section("Custom") {
-                    ForEach(model.ghosttyUserThemes) { theme in
+                    ForEach(userThemes) { theme in
                         Text(theme.title).tag(theme.id)
                     }
                 }

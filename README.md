@@ -86,7 +86,9 @@ A minimal modern terminal built for AI coding. Sidebar workspaces; horizontal / 
 
 **SwiftUI-native, minimal chrome.** Onest + JetBrains Mono. Custom About panel, native menus with shortcut hints, full IME support.
 
-**Configurable.** Settings (`⌘,`) covers themes, font, cursor, default new-tab behavior, Terminal presets, agents, Open in, and the pane status bar. Theme changes update the whole window immediately, including custom Ghostty themes in your themes folder.
+**Paired Light + Dark themes.** Pick a terminal palette for Light and another for Dark, then choose System / Light / Dark independently. System follows macOS live and switches both the terminal and the whole window. Bundled palettes include **Ghostty Dark**, and theme files in `~/.config/ghostty/themes` appear automatically in the matching Light or Dark picker. Upgrades preserve the old Default behavior: if you never chose a theme, kooky keeps inheriting your Ghostty config until you change Appearance.
+
+**Configurable.** Settings (`⌘,`) also covers font, cursor, default new-tab behavior, Terminal presets, agents, Open in, and the pane status bar. Appearance changes update every open window immediately.
 
 **Local by default.** No accounts, no telemetry, no cloud sync. Kooky keeps its own state on your device.
 
@@ -140,7 +142,7 @@ Requires Xcode 26+ and macOS 14+ (Sonoma — `@Observable` is the floor).
 ./scripts/setup-libghostty.sh        # one-time: fetch the libghostty xcframework
 swift build
 swift run                            # dev mode
-swift test                           # 670 unit tests
+swift test                           # 697 unit tests
 
 ./scripts/build-app.sh               # writes dist/Kooky.app
 ./scripts/build-dmg.sh --build       # writes dist/Kooky-vX.Y.Z.dmg

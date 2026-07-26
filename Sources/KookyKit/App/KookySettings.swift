@@ -12,15 +12,18 @@ import GhosttyKit
 ///     `ghostty_config_load_string`, so the user's keys ride on top of ghostty's
 ///     own `~/.config/ghostty/config` defaults (last write wins).
 enum KookySettings {
+    static let pairedThemeSchemaVersion = 2
+
     static let directory: URL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".kooky", isDirectory: true)
 
     static let url: URL = directory.appendingPathComponent("settings.json")
 
     /// Initial `settings.json` written on first launch when the user has no
-    /// existing ghostty config to import. Everything is commented out so the
-    /// file reads as a discoverable template instead of a thicket of
-    /// overrides; uncomment to opt in.
+    /// existing ghostty config to import. The appearance block is the one
+    /// active default: its schema marker distinguishes a new install from an
+    /// upgraded legacy "Default" user who must keep inheriting Ghostty.
+    /// Everything else stays commented out until the user opts in.
     static let defaultTemplate: String = """
     // kooky settings
     // Docs: https://github.com/iAmCorey/kooky#configuration
@@ -36,13 +39,18 @@ enum KookySettings {
       // "sidebar": {
       //   "mode": "full"
       // },
+      "appearance": {
+        "themeSchemaVersion": 2,
+        "mode": "system",
+        "lightTheme": "one-light",
+        "darkTheme": "one-dark"
+      },
 
       // === Terminal rendering (forwarded to libghostty) ===
       // ghostty key reference: https://ghostty.org/docs/config/reference
       "terminal": {
         // "font-family": "JetBrains Mono",
         // "font-size": 13,
-        // "theme": "dracula",
         // "background-opacity": 0.85,
         // macOS 26+: "macos-glass-regular" | "macos-glass-clear" for Liquid Glass
         // "background-blur": "macos-glass-regular"
@@ -69,13 +77,16 @@ enum KookySettings {
     /// anything in `~/.config/ghostty/config`. Theme lines emit first; any
     /// user-set `terminal.cursor-color` / `background` / `palette` override
     /// per ghostty last-write-wins.
+    @MainActor
     static func apply(parsed: [String: Any]?, to config: ghostty_config_t?) {
         guard let config,
-              let parsed,
-              let terminal = parsed["terminal"] as? [String: Any],
-              !terminal.isEmpty else { return }
+              let parsed else { return }
+        let terminal = parsed["terminal"] as? [String: Any] ?? [:]
         var lines: [String] = []
-        if let rawTheme = terminal["theme"] as? String {
+        if let rawTheme = effectiveThemeValue(
+            parsed: parsed,
+            systemIsDark: KookySettingsModel.shared.systemAppearanceIsDark
+        ) {
             if let preset = KookyTerminalTheme.preset(for: rawTheme) {
                 lines.append(contentsOf: preset.lines)
             } else if !rawTheme.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -115,12 +126,55 @@ enum KookySettings {
         }
     }
 
+    /// Resolves the palette kooky should inject into libghostty. Kept pure so
+    /// schema precedence and system/light/dark behavior can be pinned in unit
+    /// tests without consulting the process's real macOS appearance.
+    static func effectiveThemeValue(
+        parsed: [String: Any]?,
+        systemIsDark: Bool
+    ) -> String? {
+        let terminal = parsed?["terminal"] as? [String: Any] ?? [:]
+        let appearance = parsed?["appearance"] as? [String: Any] ?? [:]
+
+        if hasPairedThemeSchema(appearance) {
+            let mode = (appearance["mode"] as? String)
+                .flatMap(KookyAppearanceMode.init(rawValue:))
+                ?? .system
+            let isDark = mode.resolvesDark(systemIsDark: systemIsDark)
+            let key = isDark ? "darkTheme" : "lightTheme"
+            let fallback = isDark
+                ? KookyTerminalTheme.defaultDarkID
+                : KookyTerminalTheme.defaultLightID
+            let raw = (appearance[key] as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return raw?.isEmpty == false ? raw : fallback
+        }
+
+        // Legacy configurations stay byte-for-byte effective until Settings
+        // performs the one-way migration into the paired appearance schema.
+        let legacy = (terminal["theme"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return legacy?.isEmpty == false ? legacy : nil
+    }
+
+    /// A version marker makes the all-default new schema distinguishable from
+    /// the legacy state where no `terminal.theme` meant "inherit Ghostty".
+    /// The three original paired keys remain implicit markers so settings
+    /// written by prerelease builds of this feature keep working.
+    static func hasPairedThemeSchema(_ appearance: [String: Any]) -> Bool {
+        appearance.keys.contains("themeSchemaVersion")
+            || appearance.keys.contains("mode")
+            || appearance.keys.contains("lightTheme")
+            || appearance.keys.contains("darkTheme")
+    }
+
     /// Builds the full libghostty configuration used at app start and for
     /// runtime reloads. Keep this as the single source for precedence:
     /// ghostty defaults -> kooky baselines -> ~/.kooky/settings.json.
     /// Pass `parsed` when the caller already loaded settings.json (e.g.
     /// `LibghosttyApp.reloadConfig` building one config per surface) to
     /// avoid re-reading the file N times.
+    @MainActor
     static func makeGhosttyConfig(parsed: [String: Any]? = nil) -> ghostty_config_t? {
         let config = ghostty_config_new()
         guard config != nil else { return nil }

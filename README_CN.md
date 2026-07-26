@@ -86,7 +86,9 @@
 
 **SwiftUI 原生开发，简约风格。** Onest + JetBrains Mono 字体。自定义 About 面板、带快捷键提示的原生菜单,中日韩 IME 输入完整支持。
 
-**可配置。** Settings 面板（`⌘,`）可以调主题、字体、光标、默认新 tab 行为、Terminal 预设、agents、Open in 和 pane 底部状态栏。切换主题时整个窗口会一起立即换色，也支持 themes 目录里的自定义 Ghostty 主题。
+**Light + Dark 双主题。** Light 和 Dark 可以各选一套 terminal 配色，再单独选择 System / Light / Dark 外观模式。System 会实时跟随 macOS，同时切换 terminal 和整个窗口。内置配色包括 **Ghostty Dark**；放在 `~/.config/ghostty/themes` 的自定义主题会按背景颜色自动出现在对应的 Light 或 Dark 下拉框。老用户升级时仍保留原本的 Default 行为：如果以前没有选过主题，kooky 会继续继承 Ghostty 配置，直到你主动修改 Appearance。
+
+**可配置。** Settings 面板（`⌘,`）还可以调字体、光标、默认新 tab 行为、Terminal 预设、agents、Open in 和 pane 底部状态栏。外观修改会立即同步到所有已打开的窗口。
 
 **默认本地。** 不需要账号，不做遥测，没有云同步。kooky 的状态都留在本机。
 
@@ -140,7 +142,7 @@ macOS **只拦第一次启动**。之后从 Spotlight、Dock、Finder 启动都�
 ./scripts/setup-libghostty.sh        # 一次性：把预编译的 libghostty xcframework 下到 Vendor/
 swift build
 swift run                            # 开发模式直接跑
-swift test                           # 670 个单测
+swift test                           # 697 个单测
 
 ./scripts/build-app.sh               # 产出 dist/Kooky.app
 ./scripts/build-dmg.sh --build       # 产出 dist/Kooky-vX.Y.Z.dmg

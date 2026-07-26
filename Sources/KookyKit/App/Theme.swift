@@ -1,6 +1,37 @@
 import AppKit
 import SwiftUI
 
+/// App chrome appearance is independent from the terminal palette. `system`
+/// follows macOS and picks the matching light/dark terminal theme; explicit
+/// modes pin both AppKit controls and SwiftUI chrome to one side.
+enum KookyAppearanceMode: String, CaseIterable, Identifiable {
+    case system, light, dark
+
+    var id: String { rawValue }
+
+    func resolvesDark(systemIsDark: Bool) -> Bool {
+        switch self {
+        case .system: return systemIsDark
+        case .light: return false
+        case .dark: return true
+        }
+    }
+
+    @MainActor
+    static var systemIsDark: Bool {
+        // Kooky pins individual windows to Aqua/Dark Aqua for stable Liquid
+        // Glass, but never pins NSApp itself. Its effective appearance is
+        // therefore the supported, live source for the macOS system setting.
+        // Unlike AppleInterfaceStyle in UserDefaults, it is not a stale
+        // process-cached snapshot after the user flips System Settings.
+        resolvesSystemDark(appearance: NSApplication.shared.effectiveAppearance)
+    }
+
+    static func resolvesSystemDark(appearance: NSAppearance) -> Bool {
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+    }
+}
+
 /// Design tokens for kooky's chrome — refined minimal, low-contrast palette,
 /// generous rhythm. The terminal theme is the source for the whole window:
 /// libghostty gets concrete color config, while SwiftUI chrome derives its
@@ -21,10 +52,28 @@ enum Theme {
     /// so AppKit code (engines, etc.) can reach it without bridging.
     static var terminalSurface: NSColor { resolved.backgroundColor }
 
-    static var chromeColorScheme: ColorScheme { resolved.isLight ? .light : .dark }
+    /// System resolves to the system's *current* concrete side. Keeping this
+    /// concrete matters for Liquid Glass: changing a window from forced Aqua
+    /// to `appearance = nil` can leave an existing NSGlassEffectView cached in
+    /// its light rendering even after the window inherits Dark Aqua.
+    static var chromeColorScheme: ColorScheme {
+        resolvedAppearanceIsDark ? .dark : .light
+    }
 
     static var windowAppearance: NSAppearance? {
-        NSAppearance(named: resolved.isLight ? .aqua : .darkAqua)
+        NSAppearance(named: resolvedAppearanceIsDark ? .darkAqua : .aqua)
+    }
+
+    private static var resolvedAppearanceIsDark: Bool {
+        let model = KookySettingsModel.shared
+        // Before the paired-theme schema, an absent terminal.theme was the
+        // "Default" sentinel: libghostty inherited Ghostty while kooky's
+        // fallback chrome was dark. Preserve both halves for upgraded users
+        // until they explicitly touch an Appearance theme control.
+        guard model.pairedThemeSchemaEnabled else { return true }
+        return model.appearanceMode.resolvesDark(
+            systemIsDark: model.systemAppearanceIsDark
+        )
     }
 
     // MARK: Glass — macOS 26 Liquid Glass (opt-in via `background-blur`)
@@ -160,14 +209,17 @@ enum Theme {
     /// parsed background / foreground colors so a user theme file refreshes
     /// chrome when Settings reloads after the file changes.
     static var resolved: Resolved {
-        let theme = KookySettingsModel.shared.selectedTerminalTheme
+        let model = KookySettingsModel.shared
+        let isDarkAppearance = resolvedAppearanceIsDark
+        let theme = model.selectedTerminalTheme
         let key = Resolved.CacheKey(
             themeId: theme?.id,
             backgroundHex: theme?.backgroundHex,
-            foregroundHex: theme?.foregroundHex
+            foregroundHex: theme?.foregroundHex,
+            isDarkAppearance: isDarkAppearance
         )
         if let cached = cachedResolved, cached.cacheKey == key { return cached }
-        let next = Resolved(cacheKey: key, theme: theme)
+        let next = Resolved(cacheKey: key, theme: theme, isDarkAppearance: isDarkAppearance)
         cachedResolved = next
         return next
     }
@@ -180,6 +232,7 @@ enum Theme {
             let themeId: String?
             let backgroundHex: String?
             let foregroundHex: String?
+            let isDarkAppearance: Bool
         }
 
         let cacheKey: CacheKey
@@ -194,10 +247,16 @@ enum Theme {
         let chromeActive: Color
 
         @MainActor
-        fileprivate init(cacheKey: CacheKey, theme: KookyTerminalTheme?) {
+        fileprivate init(
+            cacheKey: CacheKey,
+            theme: KookyTerminalTheme?,
+            isDarkAppearance: Bool
+        ) {
             self.cacheKey = cacheKey
-            self.backgroundColor = theme.flatMap { NSColor(hex: $0.backgroundHex) } ?? defaultTerminalSurface
-            self.foregroundColor = theme.flatMap { NSColor(hex: $0.foregroundHex) } ?? defaultForeground
+            self.backgroundColor = theme.flatMap { NSColor(hex: $0.backgroundHex) }
+                ?? (isDarkAppearance ? defaultTerminalSurface : defaultLightTerminalSurface)
+            self.foregroundColor = theme.flatMap { NSColor(hex: $0.foregroundHex) }
+                ?? (isDarkAppearance ? defaultForeground : defaultLightForeground)
             self.isLight = backgroundColor.relativeLuminance > 0.55
             // Chrome sits one step off the surface so the terminal reads as
             // the framed canvas. Dark themes nudge toward black, light
@@ -218,6 +277,8 @@ enum Theme {
 
     private static let defaultTerminalSurface = NSColor(srgbRed: 40 / 255, green: 44 / 255, blue: 52 / 255, alpha: 1)
     private static let defaultForeground = NSColor(srgbRed: 0xEF / 255, green: 0xEF / 255, blue: 0xF1 / 255, alpha: 1)
+    private static let defaultLightTerminalSurface = NSColor(srgbRed: 0xFA / 255, green: 0xFA / 255, blue: 0xFA / 255, alpha: 1)
+    private static let defaultLightForeground = NSColor(srgbRed: 0x38 / 255, green: 0x3A / 255, blue: 0x42 / 255, alpha: 1)
     /// `NSColor.black` lives in `NSDeviceRGBColorSpace`; bridging to sRGB
     /// on every `mix(_, .black, _)` call is wasted work. Pre-convert once.
     private static let sRGBBlack = NSColor(srgbRed: 0, green: 0, blue: 0, alpha: 1)

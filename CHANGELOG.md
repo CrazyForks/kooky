@@ -2,6 +2,13 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.43.0 — 2026-07-26
+
+- New: Appearance now keeps two independent terminal palettes — one for Light and one for Dark — while System / Light / Dark is a separate mode. System follows macOS live, switching both the terminal and the whole window without reopening Settings.
+- New: **Ghostty Dark** preserves the former zero-config Ghostty colours as an explicit bundled dark theme. Theme files in `~/.config/ghostty/themes` remain available and are placed in the Light or Dark picker from their background colour.
+- Compatibility: upgrading users who left the old **Default** selected keep inheriting their existing Ghostty configuration until they choose a theme in Appearance. An explicitly selected legacy theme migrates to the matching Light or Dark slot instead of being overwritten.
+- Fixed: switching Light → System, or changing macOS appearance while System is selected, no longer leaves chrome and terminal colours out of sync or produces a mixed pale-grey theme.
+
 ## v0.42.0 — 2026-07-26
 
 - New: Oh My Pi (`omp`) joins the built-in agents — a fork of Pi that adds LSP, a real debugger, and subagents. Fully wired: the sidebar dot tracks whether it's working or waiting on you, the status bar shows the tool it's running right now, and conversations resume after a kooky restart.

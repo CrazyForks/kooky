@@ -86,7 +86,9 @@ AI コーディングのために作られた、ミニマルでモダンな macO
 
 **SwiftUI ネイティブ、ミニマルな chrome。** Onest + JetBrains Mono。カスタム About パネル、ショートカットヒント付きのネイティブメニュー、日本語 IME を完全サポート。
 
-**設定可能。** Settings (`⌘,`) からテーマ、フォント、カーソル、デフォルトの新規 tab 挙動、Terminal preset、agents、Open in、pane ステータスバーを調整できます。テーマ変更はウィンドウ全体に即時反映されます。
+**Light + Dark のペアテーマ。** Light 用と Dark 用の terminal 配色をそれぞれ選び、System / Light / Dark の外観モードは別に設定できます。System は macOS の変更にリアルタイムで追従し、terminal とウィンドウ全体を同時に切り替えます。組み込みテーマには **Ghostty Dark** が含まれ、`~/.config/ghostty/themes` のカスタムテーマは背景色に応じて Light または Dark の picker に自動表示されます。アップグレード時も以前の Default の挙動は維持され、テーマを選んだことがない場合は Appearance を変更するまで Ghostty の設定を引き継ぎます。
+
+**設定可能。** Settings (`⌘,`) ではフォント、カーソル、デフォルトの新規 tab 挙動、Terminal preset、agents、Open in、pane ステータスバーも調整できます。外観の変更は開いているすべてのウィンドウに即時反映されます。
 
 **ローカルファースト。** アカウント不要、テレメトリなし、クラウド同期なし。kooky の状態はすべて端末内に保存されます。
 
@@ -140,7 +142,7 @@ Xcode 26+ と macOS 14+ (Sonoma —— `@Observable` の最低システム要件
 ./scripts/setup-libghostty.sh        # 初回のみ：プリビルドの libghostty xcframework を Vendor/ にダウンロード
 swift build
 swift run                            # 開発モードで直接起動
-swift test                           # 670 個のユニットテスト
+swift test                           # 697 個のユニットテスト
 
 ./scripts/build-app.sh               # dist/Kooky.app を出力
 ./scripts/build-dmg.sh --build       # dist/Kooky-vX.Y.Z.dmg を出力

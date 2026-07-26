@@ -16,6 +16,10 @@ private enum MenuTag {
 
 @MainActor
 public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+    /// AppKit's supported system-appearance signal. Windows carry an explicit
+    /// Aqua/Dark Aqua appearance for stable Liquid Glass rendering, so observe
+    /// the application (which remains system-owned) rather than any window.
+    private var systemAppearanceObservation: NSKeyValueObservation?
     /// File → Open Recent. Items are rebuilt from `RecentFolders` on every
     /// open via the dedicated delegate — the menu itself is a stable shell.
     private let openRecentMenu = NSMenu(title: "Open Recent")
@@ -95,6 +99,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         // at process init when the first surface is created.
         KookyOnboarding.runIfNeeded()
         let settings = KookySettingsModel.shared
+        systemAppearanceObservation = NSApp.observe(
+            \.effectiveAppearance,
+            options: [.new]
+        ) { [weak self] _, change in
+            guard let appearance = change.newValue else { return }
+            let isDark = KookyAppearanceMode.resolvesSystemDark(appearance: appearance)
+            Task { @MainActor [weak self] in
+                self?.handleSystemAppearanceChanged(isDark: isDark)
+            }
+        }
         KookyShellIntegration.installAgentHooks(sshRemoteAgentDetection: settings.sshRemoteAgentDetection)
         KookyShellIntegration.refreshClaudeCustomSettings(customAgents: settings.customAgents)
         // Opts this process into icon pruning (deletes files), then sweeps
@@ -130,6 +144,23 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         Task.detached(priority: .utility) {
             KookyShellIntegration.prunePastesCache()
         }
+    }
+
+    /// System mode has two jobs on a macOS appearance flip: explicitly apply
+    /// the newly resolved Aqua/Dark Aqua appearance to every window (important
+    /// for NSGlassEffectView), and reload libghostty with the other palette.
+    /// KVO fires after `NSApp.effectiveAppearance` has changed. Mirror that
+    /// external AppKit value into the observable settings model first: unlike
+    /// a manual Light/Dark picker change, an OS preference flip otherwise
+    /// gives SwiftUI no state mutation to invalidate existing glass/chrome
+    /// layers, producing a mixed old-background/new-foreground window.
+    private func handleSystemAppearanceChanged(isDark: Bool) {
+        let settings = KookySettingsModel.shared
+        guard settings.systemAppearanceIsDark != isDark else { return }
+        settings.systemAppearanceIsDark = isDark
+        guard settings.appearanceMode == .system else { return }
+        LibghosttyApp.shared.reloadConfig()
+        refreshThemeAppearances()
     }
 
     /// Rebuilds every window persisted in `state.json`, or opens one default
@@ -502,6 +533,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     }
 
     public func applicationWillTerminate(_ notification: Notification) {
+        systemAppearanceObservation = nil
         // `windowWillClose` is not reliably delivered to every window during
         // app termination, so flush each live window's store here — the 1s
         // `scheduleSave` debounce would otherwise drop changes made in the

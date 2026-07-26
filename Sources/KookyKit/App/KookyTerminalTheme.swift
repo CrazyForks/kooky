@@ -2,6 +2,9 @@ import Foundation
 import AppKit
 
 struct KookyTerminalTheme: Identifiable, Hashable {
+    static let defaultLightID = "one-light"
+    static let defaultDarkID = "one-dark"
+
     enum Source: Hashable {
         case bundled
         case ghosttyUser
@@ -189,6 +192,24 @@ struct KookyTerminalTheme: Identifiable, Hashable {
                 "#458588", "#B16286", "#689D6A", "#7C6F64",
                 "#928374", "#9D0006", "#79740E", "#B57614",
                 "#076678", "#8F3F71", "#427B58", "#3C3836",
+            ]
+        ),
+        // Concrete snapshot of libghostty's zero-config colors at the SHA
+        // pinned by scripts/setup-libghostty.sh. Unlike the old "Default"
+        // picker value, this never inherits a user's Ghostty configuration.
+        .init(
+            id: "ghostty-dark",
+            title: "Ghostty Dark",
+            background: "#282C34",
+            foreground: "#FFFFFF",
+            cursor: "#FFFFFF",
+            selectionBackground: "#FFFFFF",
+            selectionForeground: "#282C34",
+            palette: [
+                "#1D1F21", "#CC6666", "#B5BD68", "#F0C674",
+                "#81A2BE", "#B294BB", "#8ABEB7", "#C5C8C6",
+                "#666666", "#D54E53", "#B9CA4A", "#E7C547",
+                "#7AA6DA", "#C397D8", "#70C0B1", "#EAEAEA",
             ]
         ),
         .init(
