@@ -346,4 +346,33 @@ final class SleepGuardTests: XCTestCase {
         XCTAssertEqual(lid.calls(), [true])
         XCTAssertEqual(releases, 0)
     }
+
+    // MARK: - Status-light pulse token
+
+    /// The light plays one bounded pulse per dial change and is otherwise
+    /// still — a continuous animation keeps the whole display compositing at
+    /// full refresh rate (#39). Only a *real* change may bump the token: the
+    /// Settings picker re-sets the current mode on any re-render, and a
+    /// no-op that pulsed would leave the light flashing for no reason.
+    ///
+    /// `off`/`auto` are the safe notches to drive here — `always` would run
+    /// the privileged-helper install and pop an admin prompt. The model is a
+    /// local instance and `scheduleSave` only holds it weakly, so the pending
+    /// 300ms write finds a deallocated self and never touches the real
+    /// `~/.kooky/settings.json`.
+    func testDialPulseBumpsOnlyOnRealChange() {
+        let model = KookySettingsModel()
+        model.awakeMode = .off
+        model.awakeDialPulse = 0
+
+        model.applyAwakeMode(.auto)
+        XCTAssertEqual(model.awakeDialPulse, 1, "a real dial change must pulse the light")
+
+        model.applyAwakeMode(.auto)
+        model.applyAwakeMode(.auto)
+        XCTAssertEqual(model.awakeDialPulse, 1, "re-setting the same mode must not pulse")
+
+        model.applyAwakeMode(.off)
+        XCTAssertEqual(model.awakeDialPulse, 2, "changing back must pulse again")
+    }
 }

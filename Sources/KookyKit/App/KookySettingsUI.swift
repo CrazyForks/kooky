@@ -120,6 +120,14 @@ final class KookySettingsModel {
     /// triggers the admin auth. Persisted under `general.awakeMode`
     /// (non-default only; default `auto`).
     var awakeMode: AwakeMode = .auto
+    /// Bumped on every real dial change so the status light can play one
+    /// short confirmation pulse. A *continuous* animation is what made #39
+    /// expensive — anything that changes on screen forever keeps the whole
+    /// display compositing at full refresh rate, however few pixels it
+    /// touches. This counter is the trigger, deliberately not the view's own
+    /// mount: a launch restore, a new window, or any SwiftUI rebuild leaves
+    /// it untouched, so the light only pulses for a change the user just made.
+    var awakeDialPulse: Int = 0
     /// Master switch for macOS notifications about a non-visible tab. When
     /// off, nothing is posted. The first post triggers the OS permission
     /// prompt. Persisted under `notifications.enabled` (only when non-default).
@@ -159,6 +167,7 @@ final class KookySettingsModel {
     /// reconcile variant — external-state absorption must never pop the
     /// auth dialog.
     func applyAwakeMode(_ mode: AwakeMode, runInstall: Bool = true) {
+        if mode != awakeMode { awakeDialPulse &+= 1 }
         awakeMode = mode
         scheduleSave()
         guard runInstall, mode == .always, !ClosedLidSleep.isInstalled else { return }
@@ -172,8 +181,9 @@ final class KookySettingsModel {
                 // authorization never actually disables lid sleep.
                 SleepGuard.shared.refresh()
             } else if self.awakeMode == .always {
-                self.awakeMode = .auto
-                self.scheduleSave()
+                // Back through the single entry so the fallback also pulses
+                // the light — the dial moved without the user touching it.
+                self.applyAwakeMode(.auto, runInstall: false)
             }
         }
     }

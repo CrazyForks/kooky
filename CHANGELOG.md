@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.41.1 — 2026-07-26
+
+- Fixed: the Keep Awake status light no longer animates non-stop. It now pulses twice when you change the setting and then stays lit. Anything that keeps changing on screen — however few pixels it covers — holds the whole display at its full refresh rate, which showed up as high WindowServer CPU and battery drain on an otherwise idle terminal. (#39)
+
 ## v0.41.0 — 2026-07-26
 
 - New: colour-tag a workspace to tell it apart at a glance. Right-click any workspace in the sidebar and pick one of seven colours, or **Custom Tag…** for your own colour and a name; the tag shows as a stripe down the left edge of the row in both sidebar widths. Click the colour it already has to clear it. (#43)

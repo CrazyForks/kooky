@@ -359,21 +359,19 @@ struct KeepAwakeButton: View {
         model.applyAwakeMode(next)
     }
 
-    /// The light mirrors the dial one-to-one: gray = off, breathing dot =
-    /// auto, breathing dot + ring = always. Whether protection is engaged
-    /// right now is the tooltip's job, not the light's. The breathing branch
-    /// uses a Core Animation layer so its continuous opacity animation never
-    /// drives SwiftUI's view graph or window layout.
-    @ViewBuilder
+    /// The light mirrors the dial one-to-one: gray = off, green dot = auto,
+    /// green dot + ring = always. Whether protection is engaged right now is
+    /// the tooltip's job, not the light's. All three states render in one
+    /// always-present AppKit view rather than switching SwiftUI branches, so
+    /// changing the dial doesn't rebuild it — which is what lets the pulse
+    /// trigger off `awakeDialPulse` instead of off the view's own mount.
     private var indicatorDot: some View {
-        if model.awakeMode != .off {
-            KeepAwakeBreathingLight(showsRing: model.awakeMode == .always)
-                .frame(width: 13, height: 13)
-        } else {
-            Circle()
-                .fill(Theme.chromeMuted.opacity(0.45))
-                .frame(width: 7, height: 7)
-        }
+        KeepAwakeStatusLight(
+            mode: model.awakeMode,
+            offColor: Theme.chromeMuted.opacity(0.45),
+            pulseToken: model.awakeDialPulse
+        )
+        .frame(width: 13, height: 13)
     }
 
     private var helpText: String {
@@ -390,56 +388,53 @@ struct KeepAwakeButton: View {
     }
 }
 
-/// A tiny AppKit boundary for the one piece of chrome that animates forever.
-/// Core Animation interpolates the host layer's opacity in the render server;
-/// SwiftUI only updates this representable when the dial changes between
-/// `auto` and `always`.
-private struct KeepAwakeBreathingLight: NSViewRepresentable {
-    let showsRing: Bool
+/// A tiny AppKit boundary for the status light. Core Animation runs the
+/// confirmation pulse in the render server, so it never drives SwiftUI's view
+/// graph or window layout; SwiftUI only touches this representable when the
+/// dial, the chrome palette, or the pulse token changes.
+private struct KeepAwakeStatusLight: NSViewRepresentable {
+    let mode: AwakeMode
+    /// Passed in rather than read inside the AppKit view so the SwiftUI body
+    /// registers the observation dependency and a theme change repaints.
+    let offColor: Color
+    let pulseToken: Int
 
-    func makeNSView(context: Context) -> KeepAwakeBreathingLightView {
-        let view = KeepAwakeBreathingLightView()
-        view.setShowsRing(showsRing, animated: false)
+    func makeNSView(context: Context) -> KeepAwakeStatusLightView {
+        let view = KeepAwakeStatusLightView()
+        view.apply(mode: mode, offColor: NSColor(offColor), animated: false)
+        view.syncPulseToken(pulseToken)
         return view
     }
 
-    func updateNSView(_ view: KeepAwakeBreathingLightView, context: Context) {
-        view.setShowsRing(showsRing, animated: true)
-    }
-
-    static func dismantleNSView(_ view: KeepAwakeBreathingLightView, coordinator: Void) {
-        view.stopBreathing()
+    func updateNSView(_ view: KeepAwakeStatusLightView, context: Context) {
+        view.apply(mode: mode, offColor: NSColor(offColor), animated: true)
+        view.syncPulseToken(pulseToken)
     }
 }
 
 @MainActor
-private final class KeepAwakeBreathingLightView: NSView {
+private final class KeepAwakeStatusLightView: NSView {
     private static let dotSize: CGFloat = 7
-    private static let breathingAnimationKey = "kooky.keep-awake.breathing"
+    private static let pulseAnimationKey = "kooky.keep-awake.pulse"
+    /// One breath takes two legs of this; the pulse plays two breaths. Same
+    /// per-leg pace the old continuous animation used, so the motion reads
+    /// identically — it just stops.
+    private static let pulseLegDuration: CFTimeInterval = 1.5
 
     private let ringLayer = CALayer()
     private let dotLayer = CALayer()
-    private var showsRing = false
+    private var mode: AwakeMode?
+    private var lastPulseToken: Int?
 
     init() {
         super.init(frame: .zero)
         wantsLayer = true
         layer?.masksToBounds = false
-
-        // Green throughout (deliberately NOT `activityRunning`, which is
-        // blue). Both sublayers share the host layer's breathing opacity.
-        let green = NSColor(Theme.keepAwakeGreen)
-        ringLayer.borderColor = green.withAlphaComponent(0.55).cgColor
         ringLayer.borderWidth = 1
         ringLayer.opacity = 0
-
-        dotLayer.backgroundColor = green.cgColor
         dotLayer.cornerRadius = Self.dotSize / 2
-        dotLayer.shadowColor = green.cgColor
-        dotLayer.shadowOpacity = 0.85
         dotLayer.shadowRadius = 3.5
         dotLayer.shadowOffset = .zero
-
         layer?.addSublayer(ringLayer)
         layer?.addSublayer(dotLayer)
     }
@@ -463,38 +458,52 @@ private final class KeepAwakeBreathingLightView: NSView {
         CATransaction.commit()
     }
 
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        if window == nil {
-            stopBreathing()
-        } else {
-            startBreathing()
-        }
-    }
+    /// Green throughout when armed (deliberately NOT `activityRunning`, which
+    /// is blue); off is the muted chrome dot with no glow.
+    func apply(mode newMode: AwakeMode, offColor: NSColor, animated: Bool) {
+        let green = NSColor(Theme.keepAwakeGreen)
+        let isOff = newMode == .off
 
-    func setShowsRing(_ visible: Bool, animated: Bool) {
-        guard visible != showsRing else { return }
-        showsRing = visible
+        // Colours are re-applied unconditionally: the chrome palette can move
+        // under us on a theme change with the dial untouched.
         CATransaction.begin()
-        CATransaction.setAnimationDuration(animated ? 0.3 : 0)
+        CATransaction.setDisableActions(true)
+        dotLayer.backgroundColor = (isOff ? offColor : green).cgColor
+        dotLayer.shadowColor = green.cgColor
+        dotLayer.shadowOpacity = isOff ? 0 : 0.85
+        ringLayer.borderColor = green.withAlphaComponent(0.55).cgColor
+        CATransaction.commit()
+
+        guard newMode != mode else { return }
+        let isFirstApply = mode == nil
+        mode = newMode
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(animated && !isFirstApply ? 0.3 : 0)
         CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeInEaseOut))
-        ringLayer.opacity = visible ? 1 : 0
+        ringLayer.opacity = newMode == .always ? 1 : 0
         CATransaction.commit()
     }
 
-    private func startBreathing() {
-        guard layer?.animation(forKey: Self.breathingAnimationKey) == nil else { return }
-        let animation = CABasicAnimation(keyPath: "opacity")
-        animation.fromValue = 0.5
-        animation.toValue = 1
-        animation.duration = 1.5
-        animation.autoreverses = true
-        animation.repeatCount = .infinity
-        animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        layer?.add(animation, forKey: Self.breathingAnimationKey)
+    /// Plays the pulse when the token moves. The first call only seeds it, so
+    /// a launch restore or a newly opened window starts steady rather than
+    /// flashing for no reason the user can connect to an action.
+    func syncPulseToken(_ token: Int) {
+        defer { lastPulseToken = token }
+        guard let last = lastPulseToken, last != token else { return }
+        pulse()
     }
 
-    func stopBreathing() {
-        layer?.removeAnimation(forKey: Self.breathingAnimationKey)
+    private func pulse() {
+        guard mode != .off else { return }
+        let animation = CAKeyframeAnimation(keyPath: "opacity")
+        // Starts AND ends at 1 — the layer's own opacity. An `autoreverses`
+        // basic animation would finish dimmed and then snap back to full when
+        // Core Animation removes it, which reads as a flash at the end.
+        animation.values = [1, 0.5, 1, 0.5, 1]
+        animation.keyTimes = [0, 0.25, 0.5, 0.75, 1]
+        animation.duration = Self.pulseLegDuration * 4
+        animation.timingFunctions = Array(
+            repeating: CAMediaTimingFunction(name: .easeInEaseOut), count: 4)
+        layer?.add(animation, forKey: Self.pulseAnimationKey)
     }
 }
