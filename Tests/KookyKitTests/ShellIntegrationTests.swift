@@ -346,6 +346,82 @@ final class ShellIntegrationTests: XCTestCase {
         XCTAssertTrue(KookyShellIntegration.droidSettingsPath.hasSuffix("/.factory/settings.json"))
     }
 
+    func testReasonixHooksMergePreservesUnrelatedSettingsAndUserHooks() throws {
+        // This file is the user's ENTIRE Reasonix global config — provider
+        // setup, UI prefs, their own hooks — not a hooks-only file kooky owns.
+        // Dropping a sibling key here would silently wipe real configuration,
+        // so pin both an unrelated top-level key and a user hook under an
+        // event kooky also writes.
+        let existing: [String: Any] = [
+            "theme": "dark",
+            "providers": ["deepseek": ["model": "deepseek-pro"]],
+            "hooks": [
+                "Stop": [["command": "user-hook"]],
+            ],
+        ]
+        let object = try XCTUnwrap(
+            KookyShellIntegration.reasonixHooksObject(existing: existing, hookCmd: Self.stubHook)
+        )
+
+        XCTAssertEqual(object["theme"] as? String, "dark")
+        XCTAssertNotNil(object["providers"], "must not drop unrelated config")
+
+        let hooks = try XCTUnwrap(object["hooks"] as? [String: Any])
+        let stop = try XCTUnwrap(hooks["Stop"] as? [[String: Any]])
+        XCTAssertEqual(stop.count, 2, "kooky's entry must be added alongside the user's, not replace it")
+        XCTAssertTrue(String(describing: stop).contains("user-hook"))
+        XCTAssertTrue(String(describing: stop).contains("reasonix attention"))
+    }
+
+    func testReasonixHooksMapEveryLifecycleAndToolEvent() throws {
+        let object = try XCTUnwrap(
+            KookyShellIntegration.reasonixHooksObject(hookCmd: Self.stubHook)
+        )
+        let hooks = try XCTUnwrap(object["hooks"] as? [String: Any])
+
+        // Notification is what makes a pending tool approval show up as
+        // "waiting on you" — Reasonix emits it natively for that case.
+        let expected: [String: String] = [
+            "SessionStart":     "reasonix running",
+            "UserPromptSubmit": "reasonix running",
+            "Stop":             "reasonix attention",
+            "StopFailure":      "reasonix attention",
+            "Notification":     "reasonix attention",
+            "SessionEnd":       "reasonix ended",
+        ]
+        for (event, fragment) in expected {
+            let entries = try XCTUnwrap(hooks[event] as? [[String: Any]], "missing \(event)")
+            let command = try XCTUnwrap(entries.first?["command"] as? String)
+            XCTAssertTrue(command.contains(fragment), "\(event) must map to \(fragment)")
+        }
+
+        // PostToolUseFailure is Reasonix's explicit tool-error event; without
+        // it a failed call waits on the tool_response heuristic (or the 60s
+        // stall timer) before the pill turns red.
+        for event in ["PreToolUse", "PostToolUse", "PostToolUseFailure"] {
+            let entries = try XCTUnwrap(hooks[event] as? [[String: Any]], "missing \(event)")
+            let entry = try XCTUnwrap(entries.first)
+            let command = try XCTUnwrap(entry["command"] as? String)
+            XCTAssertTrue(command.contains("reasonix \(event) --hook-stdin"),
+                          "tool events must pipe their payload for the activity pill")
+            XCTAssertEqual(entry["match"] as? String, "*", "must match every tool")
+        }
+
+        // Reasonix reads `timeout` as MILLISECONDS (Droid's is seconds). A
+        // seconds-shaped value here would time out every single ping, and
+        // PreToolUse/UserPromptSubmit are BLOCKING events — a timeout there
+        // stalls the user's agent, not just the dot.
+        for value in hooks.values {
+            for entry in (value as? [[String: Any]] ?? []) {
+                let timeout = try XCTUnwrap(entry["timeout"] as? Int)
+                XCTAssertGreaterThanOrEqual(timeout, 1000, "timeout is milliseconds, not seconds")
+                XCTAssertLessThanOrEqual(timeout, 5000, "must stay under Reasonix's blocking-event default")
+            }
+        }
+
+        XCTAssertTrue(KookyShellIntegration.reasonixSettingsPath.hasSuffix("/.reasonix/settings.json"))
+    }
+
     func testAntigravityHooksUseOwnedNamedCollection() throws {
         let object = KookyShellIntegration.antigravityHooksObject(
             existing: ["user-hook": ["enabled": true]],
@@ -435,7 +511,7 @@ final class ShellIntegrationTests: XCTestCase {
     }
 
     func testPiExtensionSubscribesLifecycleEventsAndPingsHook() {
-        let body = KookyShellIntegration.piExtensionScript
+        let body = KookyShellIntegration.piStyleExtensionScript(slug: "pi")
 
         // Subscribes to pi's session / turn lifecycle and maps each to a
         // KookyHook state — running while a turn runs, attention when it ends.
@@ -464,7 +540,7 @@ final class ShellIntegrationTests: XCTestCase {
     }
 
     func testPiExtensionReportsToolCallsForActivityPill() {
-        let body = KookyShellIntegration.piExtensionScript
+        let body = KookyShellIntegration.piStyleExtensionScript(slug: "pi")
         // Subscribes to pi's tool lifecycle and relays each to KookyHook's
         // `tool` argv branch (pre carries the identifier, post the ok/fail).
         XCTAssertTrue(body.contains("tool_execution_start"))
@@ -479,6 +555,49 @@ final class ShellIntegrationTests: XCTestCase {
         XCTAssertTrue(body.contains("args.command"))
         XCTAssertTrue(body.contains("args.path"))
         XCTAssertTrue(body.contains("args.pattern"))
+    }
+
+    func testPiStyleExtensionRoutesEveryPingToItsOwnSlug() {
+        // Oh My Pi is a fork of Pi, so both agents share one extension script
+        // with the slug substituted in. Every KookyHook argv the script emits
+        // opens with that slug — it is what attributes the ping to a tab's
+        // agent — so a single missed substitution would silently file omp's
+        // lifecycle, tool calls, and (worst) its resume id under Pi instead:
+        // omp's dot would never light and a Pi tab could be handed omp's
+        // session id. Assert the negative too, so any argv left hardcoded
+        // fails here rather than in the user's sidebar.
+        let body = KookyShellIntegration.piStyleExtensionScript(slug: "omp")
+
+        XCTAssertTrue(body.contains(#"pi.exec(hookBin, ["omp", state]"#), "lifecycle ping must carry the omp slug")
+        XCTAssertTrue(body.contains(#"["omp", "conversation", id]"#), "resume id must be reported as omp's")
+        XCTAssertTrue(body.contains(#"["omp", "tool", "pre""#), "tool pre must carry the omp slug")
+        XCTAssertTrue(body.contains(#"["omp", "tool", "post""#), "tool post must carry the omp slug")
+        XCTAssertFalse(
+            body.contains(#"["pi""#),
+            "no KookyHook argv may stay hardcoded to pi — that misattributes omp's events"
+        )
+        // The `pi` identifier itself is the extension API's own parameter name
+        // (`export default function (pi)`), shared by both forks — it is not
+        // the slug and must survive substitution.
+        XCTAssertTrue(body.contains("export default function (pi)"), "extension factory arg is API, not slug")
+    }
+
+    func testPiStyleExtensionReportsPendingToolApprovalAsAttention() {
+        // A tool waiting on approval blocks MID-turn, so `turn_end` never
+        // fires — without its own subscription the tab stays on "running"
+        // while the agent is in fact waiting on the user, costing the sidebar
+        // dot and the notification. Resolving hands control back to the agent,
+        // so that maps straight back to running.
+        let body = KookyShellIntegration.piStyleExtensionScript(slug: "omp")
+
+        XCTAssertTrue(
+            body.contains(#"pi.on("tool_approval_requested", async () => { await ping("attention") })"#),
+            "a pending approval must report attention, not stay on running"
+        )
+        XCTAssertTrue(
+            body.contains(#"pi.on("tool_approval_resolved", async () => { await ping("running") })"#),
+            "a resolved approval must return the tab to running"
+        )
     }
 
     func testAgentLaunchBlockRevertsIconAfterAgentReturns() {

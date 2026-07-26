@@ -2,6 +2,12 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.42.0 — 2026-07-26
+
+- New: Oh My Pi (`omp`) joins the built-in agents — a fork of Pi that adds LSP, a real debugger, and subagents. Fully wired: the sidebar dot tracks whether it's working or waiting on you, the status bar shows the tool it's running right now, and conversations resume after a kooky restart.
+- New: Reasonix (`reasonix`) joins the built-in agents — a DeepSeek-native coding agent. Same full support: activity dot, tool-call pill, and conversation resume.
+- New: the sidebar dot now shows when Oh My Pi is waiting for you to approve a tool. It previously stayed on "working" for the whole approval prompt, so nothing told you it needed an answer.
+
 ## v0.41.1 — 2026-07-26
 
 - Fixed: the Keep Awake status light no longer animates non-stop. It now pulses twice when you change the setting and then stays lit. Anything that keeps changing on screen — however few pixels it covers — holds the whole display at its full refresh rate, which showed up as high WindowServer CPU and battery drain on an otherwise idle terminal. (#39)

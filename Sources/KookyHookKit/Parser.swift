@@ -89,7 +89,7 @@ public enum KookyHookKit {
         switch agent {
         case "claude", "gemini", "kimi", "kiro-cli", "droid":
             keys = ["session_id"]
-        case "copilot":
+        case "copilot", "reasonix":
             keys = ["sessionId", "session_id"]
         case "cursor-agent":
             keys = ["conversation_id", "conversationId"]
@@ -135,7 +135,7 @@ public enum KookyHookKit {
             return false
         }
         switch agent {
-        case "claude", "gemini", "copilot", "cursor-agent", "kimi", "kiro-cli", "droid", "agy":
+        case "claude", "gemini", "copilot", "cursor-agent", "kimi", "kiro-cli", "droid", "agy", "reasonix":
             return true
         default:
             return false
@@ -200,10 +200,11 @@ public enum KookyHookKit {
         surface: String,
         agent: String
     ) -> [String: String]? {
+        let keys = ToolPayloadKeys.forAgent(agent)
         guard !data.isEmpty,
               let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let hookEventName = parsed["hook_event_name"] as? String,
-              let toolName = parsed["tool_name"] as? String,
+              let hookEventName = parsed[keys.event] as? String,
+              let toolName = parsed[keys.name] as? String,
               !toolName.isEmpty
         else { return nil }
 
@@ -216,14 +217,22 @@ public enum KookyHookKit {
         default:                   return nil  // not a tool event we handle
         }
 
-        let toolInput = parsed["tool_input"] as? [String: Any] ?? [:]
+        let toolInput = parsed[keys.args] as? [String: Any] ?? [:]
         let rawIdentifier = extractIdentifier(toolName: toolName, toolInput: toolInput)
 
         // PostToolUseFailure forces success=false (Claude's own signal);
         // PostToolUse falls back to the heuristic over `tool_response`. Pre
         // carries no success.
+        // A non-empty `failure` field is an explicit error signal and outranks
+        // the `tool_response` text heuristic — Reasonix leaves `toolResult`
+        // empty on a failed call and puts the message in `error`, which the
+        // heuristic alone would read as a clean success.
+        let explicitFailure = keys.failure
+            .flatMap { parsed[$0] as? String }
+            .map { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            == true
         let success: Bool? = event == "post"
-            ? (postSuccessOverride ?? detectSuccess(toolResponse: parsed["tool_response"]))
+            ? (postSuccessOverride ?? (explicitFailure ? false : detectSuccess(toolResponse: parsed[keys.result])))
             : nil
 
         return buildToolEventPayload(
@@ -232,7 +241,7 @@ public enum KookyHookKit {
             toolName: toolName,
             identifier: rawIdentifier,
             event: event,
-            toolUseId: parsed["tool_use_id"] as? String,
+            toolUseId: keys.callId.flatMap { parsed[$0] as? String },
             success: success
         )
     }
@@ -273,25 +282,99 @@ public enum KookyHookKit {
         return payload
     }
 
+    /// How one agent spells the fields of a tool-event hook payload.
+    ///
+    /// Agents that adopt Claude's hook CONTRACT (same event names, one JSON
+    /// line on stdin) do not necessarily adopt its field names — Reasonix
+    /// sends `event`/`toolName`/`toolArgs`/`toolResult`. Keying the spelling
+    /// off the agent, rather than trying every name on every field, matches
+    /// how `parseConversationId` already handles the same disagreement, and
+    /// keeps a generic key like `event` from being live for agents that mean
+    /// something else by it.
+    ///
+    /// `callId` is optional because it is the one field an agent can simply
+    /// not have: Reasonix exposes no per-call id, so its Pre/Post pairs fall
+    /// back to `Session.recordToolCallEnd`'s name+identifier match. Modelling
+    /// it as an empty slot rather than an untried key is what makes that
+    /// limitation visible here instead of surprising at the pill.
+    ///
+    /// `failure` is the inverse case — a field Claude has no equivalent for.
+    /// Reasonix carries a failed tool's message in `error` while `toolResult`
+    /// may be empty, so reading only the result would score every failure as
+    /// a success.
+    struct ToolPayloadKeys {
+        let event: String
+        let name: String
+        let args: String
+        let result: String
+        let callId: String?
+        let failure: String?
+
+        static let claude = ToolPayloadKeys(
+            event: "hook_event_name",
+            name: "tool_name",
+            args: "tool_input",
+            result: "tool_response",
+            callId: "tool_use_id",
+            failure: nil
+        )
+
+        static let reasonix = ToolPayloadKeys(
+            event: "event",
+            name: "toolName",
+            args: "toolArgs",
+            result: "toolResult",
+            callId: nil,
+            failure: "error"
+        )
+
+        /// Claude is the default so every Claude-based custom agent — which
+        /// ships hooks through `claudeHooksObject` under its own slug — keeps
+        /// working without being enumerated.
+        static func forAgent(_ agent: String) -> ToolPayloadKeys {
+            switch agent {
+            case "reasonix": return .reasonix
+            default:         return .claude
+            }
+        }
+    }
+
     /// Pick the most descriptive single string out of `tool_input` per
     /// tool kind — what pill UI shows as the "what" of the call. Unknown
     /// tools fall back to the first non-empty string value (alphabetised
     /// by key so the choice is deterministic across runs — Swift dict
     /// iteration order isn't stable). Empty if everything's empty.
+    ///
+    /// Matching is case-insensitive and file tools accept `path` as well as
+    /// Claude's `file_path`, because agents that reuse Claude's hook contract
+    /// do not reuse its tool vocabulary: Reasonix names them `bash` /
+    /// `edit_file` with a `path` argument. Without both, every such call
+    /// drops to the `default:` scan and Reasonix's `edit_file`
+    /// (`{new_string, old_string, path}`) alphabetises to `new_string` — the
+    /// pill would show the file's new CONTENT instead of its path. The same
+    /// divergence is already handled for Pi at the two other consumers
+    /// (`toolIcon` / `toolCounts` lowercase; the Pi extension ships its own
+    /// JS identifier helper) — this parser is the one that never got it.
     static func extractIdentifier(toolName: String, toolInput: [String: Any]) -> String {
-        switch toolName {
-        case "Bash":
-            return toolInput["command"] as? String ?? ""
-        case "Edit", "Write", "Read", "NotebookEdit", "MultiEdit":
-            return toolInput["file_path"] as? String ?? ""
-        case "Glob":
-            return toolInput["pattern"] as? String ?? toolInput["path"] as? String ?? ""
-        case "Grep":
-            return toolInput["pattern"] as? String ?? ""
-        case "WebFetch", "WebSearch":
-            return (toolInput["url"] as? String) ?? (toolInput["query"] as? String) ?? ""
-        case "Task":
-            return (toolInput["description"] as? String) ?? (toolInput["prompt"] as? String) ?? ""
+        func string(_ keys: String...) -> String? {
+            for key in keys {
+                if let value = toolInput[key] as? String, !value.isEmpty { return value }
+            }
+            return nil
+        }
+        switch toolName.lowercased() {
+        case "bash":
+            return string("command") ?? ""
+        case "edit", "write", "read", "notebookedit", "multiedit", "edit_file", "write_file", "read_file":
+            return string("file_path", "path") ?? ""
+        case "glob":
+            return string("pattern", "path") ?? ""
+        case "grep", "search":
+            return string("pattern") ?? ""
+        case "webfetch", "websearch":
+            return string("url", "query") ?? ""
+        case "task":
+            return string("description", "prompt") ?? ""
         default:
             // Unknown tool — pick the first non-empty String value, with
             // keys sorted alphabetically so the choice is deterministic

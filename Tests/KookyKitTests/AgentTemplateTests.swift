@@ -241,6 +241,8 @@ final class AgentTemplateTests: XCTestCase {
             (.grok, "grok --resume abc-123"),
             (.antigravity, "agy --conversation=abc-123"),
             (.kimi, "kimi --session abc-123"),
+            (.ohMyPi, "omp --resume abc-123"),
+            (.reasonix, "reasonix --resume abc-123"),
             (.kiro, "kiro-cli --resume-id abc-123"),
             (.droid, "droid --resume abc-123"),
         ]
@@ -328,10 +330,15 @@ final class AgentTemplateTests: XCTestCase {
     }
 
     func testReportsToolCallsOnlyForToolFeedingAgents() {
-        // Claude (hooks) + Pi (extension tool_execution_* events) feed kooky
-        // per-tool-call activity; every other builtin (incl. shells) does not.
+        // Claude (hooks) + Pi and its fork Oh My Pi (extension
+        // tool_execution_* events) feed kooky per-tool-call activity; every
+        // other builtin (incl. shells) does not.
         XCTAssertTrue(AgentTemplate.claudeCode.reportsToolCalls)
         XCTAssertTrue(AgentTemplate.pi.reportsToolCalls)
+        XCTAssertTrue(AgentTemplate.ohMyPi.reportsToolCalls)
+        // Reasonix feeds them through its Claude-shaped PreToolUse/PostToolUse
+        // hooks rather than an extension.
+        XCTAssertTrue(AgentTemplate.reasonix.reportsToolCalls)
         XCTAssertFalse(AgentTemplate.terminal.reportsToolCalls)
         XCTAssertFalse(AgentTemplate.codex.reportsToolCalls)
         XCTAssertFalse(AgentTemplate.gemini.reportsToolCalls)
@@ -382,6 +389,15 @@ final class AgentTemplateTests: XCTestCase {
         XCTAssertEqual(config.environment["KOOKY_AGENT"], "pi -p 'fix this error'")
     }
 
+    func testMakeSessionConfigFlagPromptForReasonix() {
+        // Reasonix's parser rejects positional arguments for interactive
+        // sessions outright, so Ask has to go through `-p` (a single-shot,
+        // like Kimi and Pi) rather than seeding a live REPL the way Droid
+        // and Kiro do.
+        let config = AgentTemplate.reasonix.makeSessionConfig(initialPrompt: "fix this error")
+        XCTAssertEqual(config.environment["KOOKY_AGENT"], "reasonix -p 'fix this error'")
+    }
+
     // MARK: - Monochrome icon theming
 
     func testMonochromeIconSetReferencesRealBuiltinAssets() {
@@ -394,13 +410,53 @@ final class AgentTemplateTests: XCTestCase {
         }
     }
 
+    func testBundledAgentIconsHaveTransparentCorners() throws {
+        // Every agent mark is a shape on transparency — the chrome behind it
+        // shows through, and a rounded tile without alpha renders as a light
+        // square glued onto a dark sidebar. Nothing about a PNG forces this:
+        // rendering an SVG through a thumbnailer (qlmanage) silently flattens
+        // transparency onto white, which is exactly how the first cut of the
+        // reasonix icon shipped a white box. Cheap to assert, invisible to
+        // miss by eye on a light theme.
+        // Read the checked-in source assets, not the runtime bundle:
+        // `bundleResourceURL` resolves against `Bundle.main`, which under
+        // xctest is the test runner, and the files in the repo are what a
+        // future icon lands as anyway.
+        let iconsDir = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // KookyKitTests
+            .deletingLastPathComponent()   // Tests
+            .deletingLastPathComponent()   // repo root
+            .appendingPathComponent("Sources/KookyKit/Resources/Icons")
+
+        let assets = Set(AgentTemplate.builtin.compactMap(\.iconAsset))
+        XCTAssertFalse(assets.isEmpty, "no builtin declares an icon — the loop below would vacuously pass")
+
+        for asset in assets {
+            let url = iconsDir.appendingPathComponent("\(asset).png")
+            let data = try Data(contentsOf: url)
+            let rep = try XCTUnwrap(NSBitmapImageRep(data: data), "\(asset).png is not decodable")
+            let maxX = rep.pixelsWide - 1
+            let maxY = rep.pixelsHigh - 1
+
+            for (x, y) in [(0, 0), (maxX, 0), (0, maxY), (maxX, maxY)] {
+                let alpha = try XCTUnwrap(rep.colorAt(x: x, y: y)).alphaComponent
+                // Tolerate antialiasing residue (droid's corners sit at 2/255)
+                // while still catching a fully-flattened background.
+                XCTAssertLessThanOrEqual(
+                    alpha, 8.0 / 255.0,
+                    "\(asset).png corner (\(x),\(y)) is opaque — the icon has a baked-in background"
+                )
+            }
+        }
+    }
+
     func testMonochromeBrandsTintedAndColorBrandsRenderedAsIs() {
         // The white-mark brands get template-tinted so they survive a light
         // theme; the color brands keep their own pixels on every theme.
         for mono in ["opencode", "cursor", "githubcopilot", "grok", "kimi", "pi", "droid"] {
             XCTAssertTrue(AgentIcon.isMonochrome(mono), "\(mono) should be template-tinted")
         }
-        for color in ["claudecode", "codex", "gemini", "amp", "antigravity", "kiro"] {
+        for color in ["claudecode", "codex", "gemini", "amp", "antigravity", "kiro", "omp", "reasonix"] {
             XCTAssertFalse(AgentIcon.isMonochrome(color), "\(color) is a color brand, render as-is")
         }
     }
@@ -414,6 +470,9 @@ final class AgentTemplateTests: XCTestCase {
             (.grok, "grok"),
             (.kiro, "kiro-cli"),
             (.droid, "droid"),
+            // omp's `-p` is the non-interactive single-shot, so Ask stays
+            // positional and rides omp's POSIX `--` support.
+            (.ohMyPi, "omp"),
         ]
         for (template, bin) in pairs {
             let config = template.makeSessionConfig(initialPrompt: "hello")

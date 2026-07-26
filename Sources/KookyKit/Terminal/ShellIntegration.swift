@@ -455,6 +455,15 @@ enum KookyShellIntegration {
             .appendingPathComponent(".gemini/config/hooks.json").path
     }()
 
+    /// Reasonix's global settings file. Note this is the user's WHOLE global
+    /// config (providers, UI, hooks), not a hooks-only file — `REASONIX_HOME`
+    /// could relocate it, but kooky must not set that: it also moves provider
+    /// credentials, which would silently break the user's API keys.
+    static let reasonixSettingsPath: String = {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".reasonix/settings.json").path
+    }()
+
     static let kimiConfigPath: String = {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".kimi-code/config.toml").path
@@ -602,6 +611,8 @@ enum KookyShellIntegration {
         writeWrapper(name: "agy", script: antigravityWrapperScript)
         writeWrapper(name: "kimi", script: bracketWrapperScript(slug: "kimi"))
         writeWrapper(name: "pi", script: bracketWrapperScript(slug: "pi"))
+        writeWrapper(name: "omp", script: bracketWrapperScript(slug: "omp"))
+        writeWrapper(name: "reasonix", script: bracketWrapperScript(slug: "reasonix"))
         writeWrapper(name: "kiro-cli", script: kiroWrapperScript)
         writeWrapper(name: "droid", script: bracketWrapperScript(slug: "droid"))
         // Private ssh entry point for SSH workspaces — always installed,
@@ -617,20 +628,23 @@ enum KookyShellIntegration {
         installCopilotHooksIfPresent(hookCmd: hookCmd)
         installCursorHooksIfPresent(hookCmd: hookCmd)
         installDroidHooksIfPresent(hookCmd: hookCmd)
+        installReasonixHooksIfPresent(hookCmd: hookCmd)
         installAntigravityHooksIfPresent(hookCmd: hookCmd)
         installKimiHooksIfPresent(hookCmd: hookCmd)
         installAmpPluginIfPresent()
         writeManagedFile(at: opencodePluginPath, contents: opencodePluginScript)
-        installPiExtensionIfPresent()
+        installPiStyleExtensionIfPresent(home: ".pi", slug: "pi")
+        installPiStyleExtensionIfPresent(home: ".omp", slug: "omp")
         installFishVendorConf()
         // Grok doesn't need a hook for resume: kooky assigns its UUID before
         // launch via `--session-id`, then uses `--resume` next time.
         //
-        // Pi rides a kooky-managed TypeScript extension (installed only when
-        // `~/.pi/` exists — see `installPiExtensionIfPresent`) that subscribes
-        // to pi's session / turn events and pings KookyHook, same model as the
-        // OpenCode plugin — so the dot also reaches `attention` (waiting on
-        // you), not just the bracket wrapper's running/ended.
+        // Pi and Oh My Pi (a fork of Pi, so the same extension API) each ride
+        // a kooky-managed TypeScript extension, installed only when that
+        // agent's home exists — see `installPiStyleExtensionIfPresent`. Both
+        // subscribe to session / turn events and ping KookyHook, same model as
+        // the OpenCode plugin — so the dot also reaches `attention` (waiting
+        // on you), not just the bracket wrapper's running/ended.
         //
         // Kiro's exact id comes from its per-surface ACP recording path
         // (`KIRO_ACP_RECORD_PATH`), not a user agent config. We wrap
@@ -667,7 +681,38 @@ enum KookyShellIntegration {
     private static let managedHookEnvironmentMarker = "KOOKY_MANAGED_HOOK=1"
 
     private static func hookCommand(hookCmd: String, slug: String, state: HookEvent) -> String {
-        "\(managedHookEnvironmentMarker) \(quote(hookCmd)) \(slug) \(state.rawValue) \(hookStdinMarker)"
+        hookCommand(hookCmd: hookCmd, slug: slug, token: state.rawValue)
+    }
+
+    /// `token` is what KookyHook receives as its event argument: a lifecycle
+    /// state for the mapped events, or the agent's raw event name for the
+    /// passthrough pair (which routes to the tool-payload parser instead).
+    /// Both forms must keep `quote(hookCmd)` — hooks run through `/bin/sh -c`
+    /// and break under an app path containing spaces — and `hookStdinMarker`,
+    /// which is what makes KookyHook read stdin at all.
+    private static func hookCommand(hookCmd: String, slug: String, token: String) -> String {
+        "\(managedHookEnvironmentMarker) \(quote(hookCmd)) \(slug) \(token) \(hookStdinMarker)"
+    }
+
+    /// Replaces kooky's own previously-written entries under `hooks[event]`
+    /// while preserving the user's. Returns false when the key exists with an
+    /// unexpected type — the caller must then bail rather than overwrite a
+    /// config we failed to understand.
+    ///
+    /// The `?? (… == nil ? [] : nil)` coercion carries that whole rule
+    /// (absent → start empty; present-but-wrong-type → refuse), which is why
+    /// it lives here instead of being hand-copied per agent.
+    private static func mergeManagedEntry(
+        into hooks: inout [String: Any],
+        event: String,
+        entry: [String: Any]
+    ) -> Bool {
+        guard var entries = hooks[event] as? [[String: Any]] ?? (hooks[event] == nil ? [] : nil)
+        else { return false }
+        entries.removeAll(where: containsManagedHook)
+        entries.append(entry)
+        hooks[event] = entries
+        return true
     }
 
     /// Cursor has one mergeable user hooks file. Preserve every user entry,
@@ -687,15 +732,76 @@ enum KookyShellIntegration {
             ("sessionEnd", .ended),
         ]
         for (event, state) in events {
-            guard var entries = hooks[event] as? [[String: Any]] ?? (hooks[event] == nil ? [] : nil)
-            else { return nil }
-            entries.removeAll(where: containsManagedHook)
-            entries.append(["command": hookCommand(hookCmd: hookCmd, slug: "cursor-agent", state: state)])
-            hooks[event] = entries
+            let entry: [String: Any] = ["command": hookCommand(hookCmd: hookCmd, slug: "cursor-agent", state: state)]
+            guard mergeManagedEntry(into: &hooks, event: event, entry: entry) else { return nil }
         }
         object["hooks"] = hooks
         return object
     }
+
+    /// Reasonix keys its hooks by Claude's event names but takes a flatter
+    /// entry (`{command, match, timeout}` — no `matcher` wrapper, no `type`),
+    /// so it gets its own builder rather than `hooksObject`. The file is the
+    /// user's whole global settings, not a hooks-only file, so every
+    /// unrelated key and user hook is preserved and only kooky's own marked
+    /// entries are replaced.
+    ///
+    /// `Notification` covers "waiting for tool approval" natively, which is
+    /// why this maps it to `.attention` alongside `Stop`.
+    ///
+    /// `PreToolUse` and `UserPromptSubmit` are BLOCKING events: a hook that
+    /// times out, or exits with status 2, stops the agent's own work. The
+    /// KookyHook ping is a local unix-socket write that returns in
+    /// milliseconds and exits 1 (never 2) when the socket is gone, so neither
+    /// failure mode can block the user's agent — anything added here later
+    /// must keep that property.
+    static func reasonixHooksObject(
+        existing: [String: Any] = [:],
+        hookCmd: String
+    ) -> [String: Any]? {
+        var object = existing
+        guard var hooks = object["hooks"] as? [String: Any] ?? (object["hooks"] == nil ? [:] : nil)
+        else { return nil }
+
+        // nil state = passthrough: ship the raw event name so KookyHook reads
+        // the payload off stdin for the activity pill. Those are also the only
+        // entries that take `match`, an anchored regex over the tool name —
+        // "" and "*" both mean every tool, written explicitly so a later edit
+        // can't read an absent key as "no tools".
+        let events: [(name: String, state: HookEvent?)] = [
+            ("SessionStart", .running),
+            ("UserPromptSubmit", .running),
+            ("Stop", .attention),
+            // Stop's failure twin — a turn that ended badly still hands
+            // control back to the user, so it reads the same on the dot.
+            ("StopFailure", .attention),
+            ("Notification", .attention),
+            ("SessionEnd", .ended),
+            ("PreToolUse", nil),
+            ("PostToolUse", nil),
+            // Reasonix fires this instead of PostToolUse when the tool
+            // errored. `parseToolEventPayload` already forces success=false
+            // for it, so the pill goes red immediately rather than waiting on
+            // the `tool_response` heuristic (or the 60s stall timer).
+            ("PostToolUseFailure", nil),
+        ]
+        for (name, state) in events {
+            var entry: [String: Any] = [
+                "command": hookCommand(hookCmd: hookCmd, slug: "reasonix", token: state?.rawValue ?? name),
+                "timeout": reasonixHookTimeoutMilliseconds,
+            ]
+            if state == nil { entry["match"] = "*" }
+            guard mergeManagedEntry(into: &hooks, event: name, entry: entry) else { return nil }
+        }
+
+        object["hooks"] = hooks
+        return object
+    }
+
+    /// Milliseconds — see `reasonixHooksObject`. Comfortably above a local
+    /// unix-socket round trip while staying under Reasonix's own 5000ms
+    /// default for blocking events.
+    private static let reasonixHookTimeoutMilliseconds = 3000
 
     /// Droid uses Claude-style matcher groups under the `hooks` key in its
     /// user settings file. Merge a dedicated no-matcher group per event while
@@ -715,18 +821,15 @@ enum KookyShellIntegration {
             ("SessionEnd", .ended),
         ]
         for (event, state) in events {
-            guard var groups = hooks[event] as? [[String: Any]] ?? (hooks[event] == nil ? [] : nil)
-            else { return nil }
-            groups.removeAll(where: containsManagedHook)
-            groups.append([
+            let group: [String: Any] = [
                 "matcher": "",
                 "hooks": [[
                     "type": "command",
                     "command": hookCommand(hookCmd: hookCmd, slug: "droid", state: state),
                     "timeout": 5,
                 ]],
-            ])
-            hooks[event] = groups
+            ]
+            guard mergeManagedEntry(into: &hooks, event: event, entry: group) else { return nil }
         }
         object["hooks"] = hooks
         return object
@@ -766,6 +869,13 @@ enum KookyShellIntegration {
             vendorHome: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".factory"),
             path: droidSettingsPath
         ) { droidHooksObject(existing: $0, hookCmd: hookCmd) }
+    }
+
+    private static func installReasonixHooksIfPresent(hookCmd: String) {
+        installMergedJSONIfVendorPresent(
+            vendorHome: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".reasonix"),
+            path: reasonixSettingsPath
+        ) { reasonixHooksObject(existing: $0, hookCmd: hookCmd) }
     }
 
     private static func installAntigravityHooksIfPresent(hookCmd: String) {
@@ -881,54 +991,80 @@ enum KookyShellIntegration {
         writeManagedFile(at: ampPluginPath, contents: ampPluginScript)
     }
 
-    /// Writes the Pi extension only when the user already has a `~/.pi/`
-    /// directory — i.e. they've run Pi at least once. Like the Copilot hooks,
-    /// this avoids pre-staging a vendor namespace for users who may never
-    /// install Pi; the bracket wrapper still gives running/ended on the first
-    /// run, and a kooky restart picks up the extension once `~/.pi/` exists.
-    /// Pi auto-loads every `*.ts` in `~/.pi/agent/extensions/`.
-    private static func installPiExtensionIfPresent() {
-        let piHome = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".pi", isDirectory: true)
-        guard FileManager.default.fileExists(atPath: piHome.path) else { return }
-        let dir = piHome.appendingPathComponent("agent/extensions", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        writeManagedFile(at: dir.appendingPathComponent("kooky.ts").path, contents: piExtensionScript)
+    /// Writes a Pi-family extension only when the user already has that
+    /// agent's home directory — i.e. they've run it at least once. Like the
+    /// Copilot hooks, this avoids pre-staging a vendor namespace for users who
+    /// may never install the agent; the bracket wrapper still gives
+    /// running/ended on the first run, and a kooky restart picks up the
+    /// extension once the directory exists. Both agents auto-load every `*.ts`
+    /// in `<home>/agent/extensions/`.
+    ///
+    /// `slug` is the binary name, which is also the agent id KookyHook routes
+    /// on — so the same script serves `pi` and `omp` with only that token
+    /// changing.
+    private static func installPiStyleExtensionIfPresent(home: String, slug: String) {
+        let fm = FileManager.default
+        let agentHome = fm.homeDirectoryForCurrentUser
+            .appendingPathComponent(home, isDirectory: true)
+        guard fm.fileExists(atPath: agentHome.path) else { return }
+
+        // A named profile (`omp --profile work`, reachable from an agent's
+        // launch options) reads extensions from its OWN agent dir and never
+        // the default one, so the status dot and tool pills would go missing
+        // there. Only profiles that already exist are written — same
+        // don't-pre-stage-a-vendor-namespace rule as the home check above.
+        let profilesRoot = agentHome.appendingPathComponent("profiles", isDirectory: true)
+        let profileHomes = (try? fm.contentsOfDirectory(at: profilesRoot, includingPropertiesForKeys: [.isDirectoryKey]))?
+            .filter { isDirectory($0) } ?? []
+
+        for root in [agentHome] + profileHomes {
+            let dir = root.appendingPathComponent("agent/extensions", isDirectory: true)
+            try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            writeManagedFile(
+                at: dir.appendingPathComponent("kooky.ts").path,
+                contents: piStyleExtensionScript(slug: slug)
+            )
+        }
     }
 
-    /// Pi extension (TypeScript, auto-loaded from `~/.pi/agent/extensions/`).
-    /// Subscribes to pi's lifecycle events and pings KookyHook so the sidebar
-    /// dot tracks per-session activity — running while a turn executes,
-    /// attention when the turn ends and pi waits on the user. Mirrors the
-    /// OpenCode plugin: gated on `KOOKY_SURFACE_ID`, reads `KOOKY_HOOK_BIN`
-    /// from the env kooky injects, and carries the managed marker so a user
-    /// edit isn't clobbered. Pi runs extensions under Node, so `process.env`
-    /// and `pi.exec` are available.
-    static let piExtensionScript = """
-    // \(managedFileMarker) — pings KookyHook on pi's session / turn / tool
+    /// Pi-family extension (TypeScript, auto-loaded from
+    /// `<agent home>/agent/extensions/`). Subscribes to the agent's lifecycle
+    /// events and pings KookyHook so the sidebar dot tracks per-session
+    /// activity — running while a turn executes, attention when the turn ends
+    /// and the agent waits on the user. Mirrors the OpenCode plugin: gated on
+    /// `KOOKY_SURFACE_ID`, reads `KOOKY_HOOK_BIN` from the env kooky injects,
+    /// and carries the managed marker so a user edit isn't clobbered.
+    ///
+    /// Shared verbatim by Pi and Oh My Pi — omp is a fork of pi, so the
+    /// extension API (`pi.on` / `pi.exec` / `ctx.sessionManager`) and every
+    /// event name below are identical across the two. Only `slug` differs; it
+    /// is the agent id KookyHook attributes the ping to.
+    static func piStyleExtensionScript(slug: String) -> String {
+        """
+    // \(managedFileMarker) — pings KookyHook on \(slug)'s session / turn / tool
     // events so the sidebar agent dot tracks per-session activity (running
     // while a turn runs, attention when it ends and waits on you), the pane
-    // status bar shows the tool pi is running right now (its tool_execution_*
-    // events), and the session id is reported so kooky can resume the
-    // conversation (`pi --session <id>`) after a restart. Safe to delete; it
-    // is regenerated next time kooky launches.
+    // status bar shows the tool \(slug) is running right now (its
+    // tool_execution_* events), and the session id is reported so kooky can
+    // resume the conversation after a restart. Safe to delete; it is
+    // regenerated next time kooky launches.
     export default function (pi) {
       const surface = process.env.KOOKY_SURFACE_ID
       const hookBin = process.env.KOOKY_HOOK_BIN
       if (!surface || !hookBin) return
 
       const ping = async (state) => {
-        try { await pi.exec(hookBin, ["pi", state]) } catch {}
+        try { await pi.exec(hookBin, ["\(slug)", state]) } catch {}
       }
       const reportSession = async (ctx) => {
         try {
           const manager = ctx && ctx.sessionManager
           if (!manager || !manager.getSessionFile()) return
           const id = manager.getSessionId()
-          if (id) await pi.exec(hookBin, ["pi", "conversation", id])
+          if (id) await pi.exec(hookBin, ["\(slug)", "conversation", id])
         } catch {}
       }
-      // The "what" shown in the tool-call pill. pi's args use `path` (not
+      // The "what" shown in the tool-call pill. The agent's args use `path` (not
       // Claude's `file_path`) and lowercase tool names; unknown / custom tools
       // fall back to the first non-empty string arg (keys sorted for a stable
       // pick). Mirrors KookyHookKit.extractIdentifier on the Claude side.
@@ -949,7 +1085,7 @@ enum KookyShellIntegration {
         }
       }
 
-      // Report the session id on session_start only — pi fires it on
+      // Report the session id on session_start only — it fires on
       // new / resume / fork (every time the session file changes); turns
       // don't move the file, so per-turn reporting would just respawn for the
       // same id.
@@ -958,22 +1094,31 @@ enum KookyShellIntegration {
       pi.on("turn_end", async () => { await ping("attention") })
       pi.on("session_shutdown", async () => { await ping("ended") })
 
+      // A pending approval blocks MID-turn, so turn_end never fires and the
+      // tab would sit on "running" while the agent waits on you. Resolving
+      // hands control back, hence straight back to running.
+      // Only omp emits these; upstream Pi's `on()` files handlers in a map
+      // with no validation, so subscribing is a harmless no-op there.
+      pi.on("tool_approval_requested", async () => { await ping("attention") })
+      pi.on("tool_approval_resolved", async () => { await ping("running") })
+
       // Tool-call activity pill. tool_execution_start carries the args, so it
       // ships the identifier; tool_execution_end has no args (just result /
-      // isError), so it ships an empty identifier + ok/fail. pi's toolCallId
+      // isError), so it ships an empty identifier + ok/fail. The toolCallId
       // is stable across the pair, so kooky matches start/end by it.
       pi.on("tool_execution_start", async (event) => {
         try {
-          await pi.exec(hookBin, ["pi", "tool", "pre", event.toolCallId || "", event.toolName || "", toolIdentifier(event.toolName, event.args)])
+          await pi.exec(hookBin, ["\(slug)", "tool", "pre", event.toolCallId || "", event.toolName || "", toolIdentifier(event.toolName, event.args)])
         } catch {}
       })
       pi.on("tool_execution_end", async (event) => {
         try {
-          await pi.exec(hookBin, ["pi", "tool", "post", event.toolCallId || "", event.toolName || "", "", event.isError ? "fail" : "ok"])
+          await pi.exec(hookBin, ["\(slug)", "tool", "post", event.toolCallId || "", event.toolName || "", "", event.isError ? "fail" : "ok"])
         } catch {}
       })
     }
     """
+    }
 
     /// Wired via `claude --settings <path>`. SessionStart promotes manually-typed
     /// `claude` immediately; without it the tab icon waits for the user's first
@@ -1140,7 +1285,7 @@ enum KookyShellIntegration {
             hooks[event] = [[
                 "hooks": [[
                     "type": "command",
-                    "command": "\(managedHookEnvironmentMarker) \(quote(hookCmd)) \(slug) \(event) \(hookStdinMarker)",
+                    "command": hookCommand(hookCmd: hookCmd, slug: slug, token: event),
                 ]],
             ]]
         }

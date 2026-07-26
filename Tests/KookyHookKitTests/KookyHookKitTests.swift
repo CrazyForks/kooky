@@ -555,4 +555,134 @@ final class KookyHookKitTests: XCTestCase {
         XCTAssertFalse(p["identifier"]?.contains("\n") ?? true)
         XCTAssertTrue(p["identifier"]?.hasPrefix("line1 line2") ?? false)
     }
+
+    // MARK: Reasonix payload spelling
+
+    func testParseToolEventPayloadAcceptsReasonixFieldNames() {
+        // Reasonix reuses Claude's event NAMES on its own field spelling.
+        // Read against Claude's keys the guard fails on the very first field
+        // and the whole payload is dropped — no tool pill, silently.
+        // Payload shape verbatim from Reasonix's own hook documentation.
+        let json = #"""
+        {"event":"PreToolUse","cwd":"/repo","toolName":"bash","toolArgs":{"command":"go test ./..."}}
+        """#
+        let p = KookyHookKit.parseToolEventPayload(
+            from: Data(json.utf8), surface: "s", agent: "reasonix"
+        )
+        XCTAssertEqual(p?["tool_name"], "bash")
+        XCTAssertEqual(p?["event"], "pre")
+        XCTAssertEqual(p?["identifier"], "go test ./...", "must read the identifier out of toolArgs")
+        XCTAssertNil(p?["tool_use_id"], "Reasonix supplies no per-call id")
+    }
+
+    func testParseToolEventPayloadReadsReasonixToolResultForSuccess() {
+        // Post carries `toolResult` where Claude has `tool_response`; the
+        // success heuristic has to see it or every Reasonix call renders as
+        // a failure. Post repeats `toolArgs` (per Reasonix's docs), which is
+        // what lets Pre/Post pair up on name+identifier despite there being
+        // no per-call id to match on.
+        let ok = #"""
+        {"event":"PostToolUse","cwd":"/repo","toolName":"bash","toolArgs":{"command":"go test ./..."},"toolResult":"ok"}
+        """#
+        let p = KookyHookKit.parseToolEventPayload(from: Data(ok.utf8), surface: "s", agent: "reasonix")
+        XCTAssertEqual(p?["success"], "true")
+        XCTAssertEqual(p?["identifier"], "go test ./...",
+                       "post must derive the same identifier as pre, or the pill never pairs up")
+    }
+
+    func testExtractIdentifierHandlesReasonixToolVocabulary() {
+        // Reasonix names tools lowercase (`edit_file`) and keys the path as
+        // `path`, not Claude's `file_path`. Matched against Claude's
+        // capitalized switch this drops to the alphabetical fallback, where
+        // `new_string` sorts ahead of `path` — the pill would show the file's
+        // NEW CONTENTS instead of its path.
+        let identifier = KookyHookKit.extractIdentifier(
+            toolName: "edit_file",
+            toolInput: [
+                "path": "/repo/main.go",
+                "old_string": "func main() {}",
+                "new_string": "func main() { fmt.Println(\"hi\") }",
+            ]
+        )
+        XCTAssertEqual(identifier, "/repo/main.go")
+    }
+
+    func testExtractIdentifierStillMatchesClaudeCasing() {
+        // Every input here carries a DECOY key that sorts ahead of the real
+        // one, so the alphabetical `default:` fallback returns the wrong
+        // answer. Without that, a single-key dict makes the fallback produce
+        // the right value by accident and the test pins nothing — which is
+        // exactly how the first version of this test passed while the
+        // capitalized switch was broken.
+        XCTAssertEqual(
+            KookyHookKit.extractIdentifier(
+                toolName: "Read",
+                toolInput: ["file_path": "/a.txt", "content": "decoy"]
+            ),
+            "/a.txt"
+        )
+        XCTAssertEqual(
+            KookyHookKit.extractIdentifier(
+                toolName: "Bash",
+                toolInput: ["command": "ls", "background": "decoy"]
+            ),
+            "ls"
+        )
+    }
+
+    func testParseConversationIdReadsReasonixSessionId() {
+        // Reasonix's hook payload carries `sessionId` on every event (the
+        // published field table omits it; `hook.Payload` defines it), and
+        // `reasonix --resume <id>` takes that exact id — so this is the whole
+        // difference between a restored tab resuming and starting fresh.
+        let json = #"{"event":"SessionStart","cwd":"/repo","sessionId":"01998f1e-7313-7001-8fc6"}"#
+        XCTAssertEqual(
+            KookyHookKit.parseConversationId(from: Data(json.utf8), agent: "reasonix"),
+            "01998f1e-7313-7001-8fc6"
+        )
+        XCTAssertTrue(
+            KookyHookKit.shouldMirrorConversationId(
+                agent: "reasonix",
+                payload: ["agent": "reasonix", "event": "running"],
+                environment: [:]
+            ),
+            "a captured id is useless unless the lifecycle payload mirrors it"
+        )
+    }
+
+    func testParseToolEventPayloadTreatsReasonixErrorFieldAsFailure() {
+        // Reasonix reports a failed tool via `error` and can leave
+        // `toolResult` empty. Scored on the result heuristic alone an empty
+        // string looks clean, so the pill would render a failed call green.
+        let json = #"""
+        {"event":"PostToolUse","cwd":"/repo","toolName":"bash","toolArgs":{"command":"go test ./..."},
+         "toolResult":"","error":"exit status 1"}
+        """#
+        XCTAssertEqual(
+            KookyHookKit.parseToolEventPayload(from: Data(json.utf8), surface: "s", agent: "reasonix")?["success"],
+            "false"
+        )
+    }
+
+    func testParseToolEventPayloadKeepsClaudeSuccessWhenNoFailureField() {
+        // The explicit-failure branch must not disturb Claude, which has no
+        // `error` field at all.
+        let json = #"""
+        {"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"ls"},"tool_response":"a.txt"}
+        """#
+        XCTAssertEqual(
+            KookyHookKit.parseToolEventPayload(from: Data(json.utf8), surface: "s", agent: "claude")?["success"],
+            "true"
+        )
+    }
+
+    func testToolPayloadKeysDefaultToClaudeForCustomAgents() {
+        // Claude-based custom agents ship hooks under their OWN slug via
+        // claudeHooksObject, so anything unrecognised has to resolve to
+        // Claude's spelling rather than being enumerated.
+        XCTAssertEqual(KookyHookKit.ToolPayloadKeys.forAgent("claude-opus").name, "tool_name")
+        XCTAssertEqual(KookyHookKit.ToolPayloadKeys.forAgent("reasonix").name, "toolName")
+        XCTAssertNil(KookyHookKit.ToolPayloadKeys.forAgent("reasonix").callId,
+                     "Reasonix exposes no per-call id — the empty slot is the point")
+    }
 }

@@ -555,7 +555,8 @@ extension AgentTemplate {
     /// Pi — Earendil's minimal terminal coding harness; binary `pi` (npm
     /// `@earendil-works/pi-coding-agent`). No JSON lifecycle hooks, but pi
     /// auto-loads TypeScript extensions with a rich event API, so kooky ships a
-    /// managed `~/.pi/agent/extensions/kooky.ts` (see `piExtensionScript`) that
+    /// managed `~/.pi/agent/extensions/kooky.ts` (see
+    /// `piStyleExtensionScript(slug:)`) that
     /// maps pi's session / turn events to running / attention / ended (same
     /// model as the OpenCode plugin) AND reports the session id back so resume
     /// works (below). The bracket wrapper stays as the running/ended fallback +
@@ -581,6 +582,63 @@ extension AgentTemplate {
         initialCommand: "pi",
         promptLaunchFlag: "-p",
         resumeStrategy: .arguments(["--session"]),
+        reportsToolCalls: true
+    )
+
+    /// Oh My Pi — a fork of Pi (`can1357/oh-my-pi`, npm
+    /// `@oh-my-pi/pi-coding-agent`, MIT) that adds LSP/DAP, subagents, and a
+    /// Rust core; binary `omp` (curl / brew / bun installed). Because it
+    /// descends from the same codebase as `.pi`, the extension API is
+    /// identical, so kooky ships the same extension under omp's auto-load
+    /// directory (`~/.omp/agent/extensions/`, see
+    /// `installPiStyleExtensionIfPresent`) and gets attention state, tool-call
+    /// pills, and resume rather than settling for the wrapper's running/ended.
+    ///
+    /// Prompt is positional — interactive `omp "<prompt>"` seeds the REPL,
+    /// while `-p` / `--print` is the separate non-interactive single-shot
+    /// (not what Ask wants), so Ask sends `omp -- "<prompt>"`. omp's argument
+    /// parser honours the POSIX `--` separator, so a prompt starting with `-`
+    /// is safe. Restored tabs launch with `--resume <id>`.
+    ///
+    /// The brand mark is a gradient π (pink → purple → cyan) on a near-black
+    /// rounded tile — a full-color mark like codex / kiro, so it is
+    /// deliberately NOT in `AgentIcon.monochromeAssets`; `tintHex` takes the
+    /// gradient's midpoint purple for the sidebar pip.
+    static let ohMyPi = AgentTemplate(
+        id: "omp",
+        title: "Oh My Pi",
+        symbol: "pi",
+        iconAsset: "omp",
+        tintHex: "9B4DFF",
+        initialCommand: "omp",
+        resumeStrategy: .arguments(["--resume"]),
+        reportsToolCalls: true
+    )
+
+    /// Reasonix — DeepSeek-native coding agent (`esengine/DeepSeek-Reasonix`,
+    /// npm `reasonix` / Homebrew, MIT); a single static Go binary. Its hooks
+    /// reuse Claude's event names and one-JSON-line-on-stdin contract, so the
+    /// lifecycle mapping carries over wholesale; the per-entry schema is
+    /// flatter, hence its own `reasonixHooksObject`. Tool payloads use their
+    /// own field spelling — see `KookyHookKit.ToolPayloadKeys`.
+    ///
+    /// Prompt uses `-p`: Reasonix's argument parser states outright that
+    /// "interactive sessions have no positional arguments", so unlike Droid /
+    /// Kiro there is no way to seed a live REPL — Ask single-shots.
+    ///
+    /// Resume is fully wired: every hook payload carries `sessionId` (a field
+    /// the published docs omit but `hook.Payload` defines), which
+    /// `parseConversationId` mirrors, and `reasonix --resume <id>` takes that
+    /// exact id.
+    static let reasonix = AgentTemplate(
+        id: "reasonix",
+        title: "Reasonix",
+        symbol: "brain",
+        iconAsset: "reasonix",
+        tintHex: "7A6BFF",
+        initialCommand: "reasonix",
+        promptLaunchFlag: "-p",
+        resumeStrategy: .arguments(["--resume"]),
         reportsToolCalls: true
     )
 
@@ -636,9 +694,9 @@ extension AgentTemplate {
         resumeStrategy: .arguments(["--resume"])
     )
 
-    /// The 14 templates shipped with kooky. User-defined custom agents are
+    /// The 16 templates shipped with kooky. User-defined custom agents are
     /// merged on top via `all` at runtime.
-    static let builtin: [AgentTemplate] = [.terminal, .claudeCode, .codex, .gemini, .opencode, .amp, .cursor, .copilot, .grok, .antigravity, .kimi, .pi, .kiro, .droid]
+    static let builtin: [AgentTemplate] = [.terminal, .claudeCode, .codex, .gemini, .opencode, .amp, .cursor, .copilot, .grok, .antigravity, .kimi, .pi, .ohMyPi, .reasonix, .kiro, .droid]
 
     /// All templates available right now — `builtin` plus the user's custom
     /// agents from Settings → Agents. MainActor-isolated because it
