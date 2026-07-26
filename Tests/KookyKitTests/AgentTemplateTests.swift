@@ -450,6 +450,48 @@ final class AgentTemplateTests: XCTestCase {
         }
     }
 
+    func testReadmeAgentTableMatchesBuiltins() throws {
+        // The READMEs list every shipped agent and which signals it supports.
+        // That list drifted silently for two releases (it still said 13 agents
+        // after 15 shipped) because nothing tied it to the code — and it is
+        // the first thing a new user reads. Pin all three translations: the
+        // command column against `builtin`, and the tool-pill column against
+        // `reportsToolCalls`.
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+
+        let agents = AgentTemplate.builtin.filter { !$0.isShell }
+        let expectedCommands = Set(agents.compactMap(\.initialCommand))
+        let expectedPill = Set(agents.filter(\.reportsToolCalls).compactMap(\.initialCommand))
+        XCTAssertFalse(expectedCommands.isEmpty)
+
+        // `| Name | `cmd` | <dot> | <pill> |` — the dot/pill cells are ● or –.
+        let row = try NSRegularExpression(
+            pattern: #"^\|[^|]+\|\s*`([^`]+)`\s*\|\s*(.)\s*\|\s*(.)\s*\|$"#,
+            options: [.anchorsMatchLines]
+        )
+
+        for name in ["README.md", "README_CN.md", "README_JA.md"] {
+            let text = try String(contentsOf: root.appendingPathComponent(name), encoding: .utf8)
+            let range = NSRange(text.startIndex..., in: text)
+
+            var commands: Set<String> = []
+            var pill: Set<String> = []
+            for match in row.matches(in: text, range: range) {
+                guard let cmdRange = Range(match.range(at: 1), in: text),
+                      let pillRange = Range(match.range(at: 3), in: text) else { continue }
+                let command = String(text[cmdRange])
+                commands.insert(command)
+                if text[pillRange] == "✓" { pill.insert(command) }
+            }
+
+            XCTAssertEqual(commands, expectedCommands, "\(name): agent table is out of sync with AgentTemplate.builtin")
+            XCTAssertEqual(pill, expectedPill, "\(name): tool-pill column disagrees with reportsToolCalls")
+        }
+    }
+
     func testMonochromeBrandsTintedAndColorBrandsRenderedAsIs() {
         // The white-mark brands get template-tinted so they survive a light
         // theme; the color brands keep their own pixels on every theme.

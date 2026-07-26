@@ -26,7 +26,27 @@ A minimal modern terminal built for AI coding. Sidebar workspaces; horizontal / 
 
 **Tell your workspaces apart.** Right-click a workspace and give it a colour — seven presets, or **Custom Tag…** for your own colour plus a name. It shows as a stripe down the left edge of the row, in both sidebar widths, and clicking the colour it already has clears it. Tags carry into the agent panel too, so every agent in one project reads as a group in a list otherwise sorted by who needs you first (switch that off under Settings → Appearance). Hovering a workspace shows its title, any `#tag`, which agents are running, and where it lives.
 
-**One-click AI agent sessions.** Claude Code · Codex · Gemini CLI · OpenCode · Amp · Cursor CLI · Copilot CLI · Grok Build · Antigravity CLI · Kimi Code · Pi · Oh My Pi · Reasonix · Kiro CLI · Droid. Pick one from the `+` menu; the agent boots before your first prompt prints. Agent conversations auto-resume across kooky restarts using each CLI's exact session ID, so closing and reopening a tab picks up where you left off.
+**One-click AI agent sessions.** Pick one from the `+` menu; the agent boots before your first prompt prints. All fifteen resume their conversation across kooky restarts using each CLI's exact session ID, so closing and reopening a tab picks up where you left off.
+
+| Agent | Command | Waiting dot | Tool pill |
+| --- | --- | :---: | :---: |
+| Claude Code | `claude` | ✓ | ✓ |
+| Codex | `codex` | ✓ | ✗ |
+| Gemini CLI | `gemini` | ✓ | ✗ |
+| OpenCode | `opencode` | ✓ | ✗ |
+| Amp | `amp` | ✓ | ✗ |
+| Cursor CLI | `cursor-agent` | ✓ | ✗ |
+| Copilot CLI | `copilot` | ✓ | ✗ |
+| Grok Build | `grok` | ✗ | ✗ |
+| Antigravity CLI | `agy` | ✓ | ✗ |
+| Kimi Code | `kimi` | ✓ | ✗ |
+| Pi | `pi` | ✓ | ✓ |
+| Oh My Pi (new) | `omp` | ✓ | ✓ |
+| Reasonix (new) | `reasonix` | ✓ | ✓ |
+| Kiro CLI | `kiro-cli` | ✗ | ✗ |
+| Droid | `droid` | ✓ | ✗ |
+
+**Waiting dot** turns amber the moment the agent stops and needs an answer, including a pending tool approval; Grok Build and Kiro CLI expose no such signal, so their dot only reports running and finished. **Tool pill** shows the tool running right now in the pane status bar. Hide any agent you don't use under Settings → Agents.
 
 ![Every supported agent, each toggleable in Settings](img/screenshot-4.png)
 
@@ -50,7 +70,7 @@ A minimal modern terminal built for AI coding. Sidebar workspaces; horizontal / 
 
 **Prompt composer (⌘L).** A chat-style box rises from the bottom of the pane for writing a long, multi-line prompt without a stray Return firing it off mid-thought. Return sends it to the current agent (or shell), Shift+Return adds a newline, Esc cancels and keeps your draft. Open it with ⌘L or the compose button in the pane status bar.
 
-**Agent activity readout.** Sidebar dot tracks each agent in real time — running (blue), waiting on you (amber), idle (none). Tab + workspace dots also turn red when the last command exited non-zero; hover for `exit N · 12.4s`. For Claude Code, Pi, Oh My Pi, and Reasonix sessions, the pane status bar also shows the tool the agent is running right now (Bash / Edit / Read / etc.) and how long — click the pill for the full session history; failed calls turn red immediately. Toggle the pill per agent in Settings → Status Bar.
+**Agent activity readout.** Sidebar dot tracks each agent in real time — running (blue), waiting on you (amber), idle (none). Tab + workspace dots also turn red when the last command exited non-zero; hover for `exit N · 12.4s`. For the agents marked above, the pane status bar also shows the tool the agent is running right now (Bash / Edit / Read / etc.) and how long — click the pill for the full session history; failed calls turn red immediately. Toggle the pill per agent in Settings → Status Bar.
 
 **Works with zsh, bash, and fish.** Manually-typed agent detection, cwd tracking, the status-bar slots, and one-click agent launch behave the same across all three shells — and keep working even alongside shell autocomplete tools like Fig / Amazon Q / kiro.
 

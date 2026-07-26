@@ -26,7 +26,27 @@ AI コーディングのために作られた、ミニマルでモダンな macO
 
 **workspace を一目で見分ける。** workspace を右クリックして色を付けられます —— 7 つのプリセット、または **Custom Tag…** で好きな色と名前を。行の左端に縦線として表示され、サイドバーの広い / 狭いどちらでも出ます。同じ色をもう一度クリックすれば解除されます。タグは agent パネルにも引き継がれるので、「誰があなたを必要としているか」順に並ぶあの一覧の中で、同じプロジェクトの agent が自然に一つのまとまりとして読めます (Settings → Appearance でオフにできます)。workspace にホバーすると、タイトル・`#タグ`・動いている agent・場所が表示されます。
 
-**ワンクリックで AI agent セッション。** Claude Code · Codex · Gemini CLI · OpenCode · Amp · Cursor CLI · Copilot CLI · Grok Build · Antigravity CLI · Kimi Code · Pi · Oh My Pi · Reasonix · Kiro CLI · Droid。`+` メニューから選ぶだけで、最初の prompt を打つ前に agent が起動します。agent の会話は各 CLI 固有の session ID を使って kooky の再起動を跨いで自動で resume されるので、tab を閉じて再度開いても直前の続きから再開できます。
+**ワンクリックで AI agent セッション。** `+` メニューから選ぶだけで、最初の prompt を打つ前に agent が起動します。15 個すべてが各 CLI 固有の session ID を使って kooky の再起動を跨いで会話を resume するので、tab を閉じて再度開いても直前の続きから再開できます。
+
+| Agent | コマンド | ユーザー待ち | ツール pill |
+| --- | --- | :---: | :---: |
+| Claude Code | `claude` | ✓ | ✓ |
+| Codex | `codex` | ✓ | ✗ |
+| Gemini CLI | `gemini` | ✓ | ✗ |
+| OpenCode | `opencode` | ✓ | ✗ |
+| Amp | `amp` | ✓ | ✗ |
+| Cursor CLI | `cursor-agent` | ✓ | ✗ |
+| Copilot CLI | `copilot` | ✓ | ✗ |
+| Grok Build | `grok` | ✗ | ✗ |
+| Antigravity CLI | `agy` | ✓ | ✗ |
+| Kimi Code | `kimi` | ✓ | ✗ |
+| Pi | `pi` | ✓ | ✓ |
+| Oh My Pi (new) | `omp` | ✓ | ✓ |
+| Reasonix (new) | `reasonix` | ✓ | ✓ |
+| Kiro CLI | `kiro-cli` | ✗ | ✗ |
+| Droid | `droid` | ✓ | ✗ |
+
+**ユーザー待ち**: agent が停止して応答を必要としている時 (ツールの承認待ちを含む) にドットが琥珀色になります。Grok Build と Kiro CLI はこの信号を出さないため、ドットは実行中と終了のみを表します。**ツール pill**: 現在実行中のツールを pane 下部のステータスバーに表示します。使わない agent は Settings → Agents で非表示にできます。
 
 ![対応する全 agent、それぞれ Settings で切り替え可能](img/screenshot-4.png)
 
@@ -50,7 +70,7 @@ AI コーディングのために作られた、ミニマルでモダンな macO
 
 **Prompt composer (⌘L)。** pane 下部からチャット風の入力ボックスがせり上がり、長い複数行の prompt を落ち着いて書けます —— うっかり Return で途中送信されることはありません。Return で現在の agent (または shell) に送信、Shift+Return で改行、Esc でキャンセル (下書きは保持)。⌘L か pane 下部ステータスバーの compose ボタンで開きます。
 
-**Agent ステータスをリアルタイム表示。** サイドバーのドットが各 agent の状態を示します —— 実行中 (青)、ユーザー待ち (琥珀)、アイドル (なし)。直前のコマンドが非ゼロ終了したときは tab と workspace のドットが赤くなり、ホバーで `exit N · 12.4s` が確認できます。Claude Code、Pi、Oh My Pi、Reasonix のセッションでは pane 下部のステータスバーに agent が今走らせているツール (Bash / Edit / Read など) と経過時間も表示されます —— pill をクリックすればセッション全体の履歴を確認でき、失敗したツール呼び出しはすぐに赤くなります。pill は Settings → Status Bar で agent ごとに表示/非表示を切り替えられます。
+**Agent ステータスをリアルタイム表示。** サイドバーのドットが各 agent の状態を示します —— 実行中 (青)、ユーザー待ち (琥珀)、アイドル (なし)。直前のコマンドが非ゼロ終了したときは tab と workspace のドットが赤くなり、ホバーで `exit N · 12.4s` が確認できます。上の表でツール pill が付いている agent は、pane 下部のステータスバーに今走らせているツール (Bash / Edit / Read など) と経過時間も表示されます —— pill をクリックすればセッション全体の履歴を確認でき、失敗したツール呼び出しはすぐに赤くなります。pill は Settings → Status Bar で agent ごとに表示/非表示を切り替えられます。
 
 **zsh・bash・fish に対応。** 手入力した agent の検出、cwd 追跡、ステータスバーの各スロット、ワンクリック agent 起動が 3 つの shell すべてで同じように動作します —— Fig / Amazon Q / kiro のような shell 補完ツールを併用していても動き続けます。
 

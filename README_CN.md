@@ -26,7 +26,27 @@
 
 **让 workspace 一眼可分。** 右键任意 workspace 给它一个颜色 —— 七个预设，或者 **Custom Tag…** 自己选颜色、起个名字。它会在行的左边缘画一条竖条，展开和紧凑两种宽度下都在；再点一次当前颜色就取消。标签也会带到 agent 面板里，于是同一个项目的所有 agent 在那个按「谁最需要你」排序的列表里自然聚成一组（可以在 Settings → Appearance 里关掉）。hover 一个 workspace 会显示它的标题、`#标签`、正在跑哪些 agent，以及它在哪。
 
-**一键启动各种 agent。** Claude Code · Codex · Gemini CLI · OpenCode · Amp · Cursor CLI · Copilot CLI · Grok Build · Antigravity CLI · Kimi Code · Pi · Oh My Pi · Reasonix · Kiro CLI · Droid。`+` 菜单里选一个,agent 会在第一个 prompt 出现前启动。agent 对话还会跨 kooky 重启自动 resume,用的是每个 CLI 自己的 session ID,关掉 tab 再打开能从离开的地方接上。
+**一键启动各种 agent。** `+` 菜单里选一个,agent 会在第一个 prompt 出现前启动。十五个 agent 全都能跨 kooky 重启自动 resume,用的是每个 CLI 自己的 session ID,关掉 tab 再打开能从离开的地方接上。
+
+| Agent | 命令 | 等你处理 | 工具 pill |
+| --- | --- | :---: | :---: |
+| Claude Code | `claude` | ✓ | ✓ |
+| Codex | `codex` | ✓ | ✗ |
+| Gemini CLI | `gemini` | ✓ | ✗ |
+| OpenCode | `opencode` | ✓ | ✗ |
+| Amp | `amp` | ✓ | ✗ |
+| Cursor CLI | `cursor-agent` | ✓ | ✗ |
+| Copilot CLI | `copilot` | ✓ | ✗ |
+| Grok Build | `grok` | ✗ | ✗ |
+| Antigravity CLI | `agy` | ✓ | ✗ |
+| Kimi Code | `kimi` | ✓ | ✗ |
+| Pi | `pi` | ✓ | ✓ |
+| Oh My Pi (new) | `omp` | ✓ | ✓ |
+| Reasonix (new) | `reasonix` | ✓ | ✓ |
+| Kiro CLI | `kiro-cli` | ✗ | ✗ |
+| Droid | `droid` | ✓ | ✗ |
+
+**等你处理**:agent 停下来需要你回应时圆点变琥珀色,包括在等你批准某个工具;Grok Build 和 Kiro CLI 没有这个信号,所以它们的圆点只报运行中和已结束。**工具 pill**:在 pane 底部状态栏显示当前正在跑的工具。用不上的 agent 可以在 Settings → Agents 里隐藏。
 
 ![支持的所有 agent，每个都能在 Settings 里单独开关](img/screenshot-4.png)
 
@@ -50,7 +70,7 @@
 
 **Prompt composer (⌘L)。** pane 底部升起一个聊天式输入框，让你安心写长的、多行的 prompt——不会手一抖回车就发出去。回车发给当前 agent（或 shell），Shift+回车换行，Esc 取消并保留草稿。⌘L 或 pane 底部状态栏的 compose 按钮打开。
 
-**Agent 状态实时展示。** 侧边栏圆点显示每个 agent 的状态：运行中（蓝）、等待你处理（琥珀）、空闲（无色）。上一条命令非零退出时，tab 和 workspace 会同步显示红点；悬停可看到 `exit N · 12.4s`。Claude Code、Pi、Oh My Pi 和 Reasonix 会话还会在 pane 底部状态栏显示 agent 当前正在跑的工具（Bash / Edit / Read 等）和已运行的时间——点击 pill 看完整历史；失败的工具调用立刻变红。可在 Settings → Status Bar 里按 agent 单独开关这个 pill。
+**Agent 状态实时展示。** 侧边栏圆点显示每个 agent 的状态：运行中（蓝）、等待你处理（琥珀）、空闲（无色）。上一条命令非零退出时，tab 和 workspace 会同步显示红点；悬停可看到 `exit N · 12.4s`。上表标了工具 pill 的 agent 还会在 pane 底部状态栏显示当前正在跑的工具（Bash / Edit / Read 等）和已运行的时间——点击 pill 看完整历史；失败的工具调用立刻变红。可在 Settings → Status Bar 里按 agent 单独开关这个 pill。
 
 **zsh、bash、fish 都支持。** 手输 agent 识别、cwd 跟踪、状态栏插槽、一键启动 agent，在三种 shell 下表现一致——即使开着 Fig / Amazon Q / kiro 这类 shell 自动补全工具也照常工作。
 
