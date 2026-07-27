@@ -53,6 +53,12 @@ final class KookySettingsModelTests: XCTestCase {
         XCTAssertEqual(AgentMenuBarController.shortMenuText("first\nsecond"), "first second")
     }
 
+    func testAgentMenuBarCountIsHiddenWhenNoAgentIsRunning() {
+        XCTAssertEqual(AgentMenuBarController.countTitle(0), "")
+        XCTAssertEqual(AgentMenuBarController.countTitle(1), "1")
+        XCTAssertEqual(AgentMenuBarController.countTitle(12), "12")
+    }
+
     // MARK: - Custom agent persistence
 
     /// Every field must survive settings.json and come back. Serialise and

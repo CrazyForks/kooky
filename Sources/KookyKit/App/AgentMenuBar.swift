@@ -57,7 +57,8 @@ final class AgentMenuBarController: NSObject, NSMenuDelegate {
         let count = monitor.entries.count
         let item = ensureStatusItem()
         guard let button = item.button else { return }
-        button.title = "\(count)"
+        button.title = Self.countTitle(count)
+        button.imagePosition = count == 0 ? .imageOnly : .imageLeading
         button.toolTip = count == 0 ? "No agents running" : "\(count) agent\(count == 1 ? "" : "s") active"
         button.setAccessibilityLabel(button.toolTip)
     }
@@ -66,10 +67,12 @@ final class AgentMenuBarController: NSObject, NSMenuDelegate {
         if let statusItem { return statusItem }
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
-            let image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Kooky agents")
-            image?.isTemplate = true
+            let image = NSApp.applicationIconImage.copy() as? NSImage
+            image?.size = NSSize(width: 18, height: 18)
+            image?.isTemplate = false
             button.image = image
-            button.imagePosition = .imageLeading
+            button.imageScaling = .scaleProportionallyDown
+            button.imagePosition = .imageOnly
             button.font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .medium)
         }
         item.menu = menu
@@ -135,6 +138,10 @@ final class AgentMenuBarController: NSObject, NSMenuDelegate {
     @objc private func activateAgent(_ sender: NSMenuItem) {
         guard let sessionId = sender.representedObject as? UUID else { return }
         monitor.onActivate(sessionId)
+    }
+
+    static func countTitle(_ count: Int) -> String {
+        count > 0 ? "\(count)" : ""
     }
 
     /// Native menu labels stay compact even when an OSC title or path is long.
