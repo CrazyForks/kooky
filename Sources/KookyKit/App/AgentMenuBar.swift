@@ -67,10 +67,7 @@ final class AgentMenuBarController: NSObject, NSMenuDelegate {
         if let statusItem { return statusItem }
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
-            let image = NSApp.applicationIconImage.copy() as? NSImage
-            image?.size = NSSize(width: 18, height: 18)
-            image?.isTemplate = false
-            button.image = image
+            button.image = KookyMenuBarIcon.make()
             button.imageScaling = .scaleProportionallyDown
             button.imagePosition = .imageOnly
             button.font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .medium)

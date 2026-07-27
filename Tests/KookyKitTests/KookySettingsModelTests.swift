@@ -59,6 +59,13 @@ final class KookySettingsModelTests: XCTestCase {
         XCTAssertEqual(AgentMenuBarController.countTitle(12), "12")
     }
 
+    func testKookyMenuBarIconIsAnEighteenPointTemplate() {
+        let image = KookyMenuBarIcon.make()
+        XCTAssertEqual(image.size, NSSize(width: 18, height: 18))
+        XCTAssertTrue(image.isTemplate)
+        XCTAssertNotNil(image.tiffRepresentation)
+    }
+
     // MARK: - Custom agent persistence
 
     /// Every field must survive settings.json and come back. Serialise and
