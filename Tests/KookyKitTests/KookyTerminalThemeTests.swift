@@ -6,6 +6,10 @@ final class KookyTerminalThemeTests: XCTestCase {
     func testPresetLookupAcceptsStableId() {
         let theme = KookyTerminalTheme.preset(for: "solarized-light")
         XCTAssertEqual(theme?.title, "Solarized Light")
+        XCTAssertEqual(
+            KookyTerminalTheme.preset(for: "kooky:solarized-light"),
+            theme
+        )
     }
 
     func testPresetLookupAcceptsLegacyDisplayName() {
@@ -26,6 +30,52 @@ final class KookyTerminalThemeTests: XCTestCase {
         ] {
             XCTAssertNotNil(KookyTerminalTheme.preset(for: id), "missing preset \(id)")
         }
+    }
+
+    func testCodexOpenSourceThemeSetIsRegisteredWithConcreteTerminalColors() throws {
+        let ids = [
+            "ayu-dark", "ayu-light", "ayu-mirage",
+            "catppuccin-macchiato", "catppuccin-mocha", "dracula-soft",
+            "everforest-dark", "everforest-light",
+            "github-dark-default", "github-dark-dimmed", "github-dark-high-contrast",
+            "github-light-default", "github-light-high-contrast",
+            "gruvbox-dark-hard", "gruvbox-dark-soft",
+            "gruvbox-light-hard", "gruvbox-light-soft",
+            "material-theme", "material-theme-darker", "material-theme-lighter",
+            "material-theme-ocean", "material-theme-palenight",
+            "monokai", "night-owl", "night-owl-light", "nord",
+            "one-dark-pro", "rose-pine-moon",
+        ]
+
+        XCTAssertEqual(ids.count, 28)
+        for id in ids {
+            let theme = try XCTUnwrap(KookyTerminalTheme.preset(for: id), "missing preset \(id)")
+            XCTAssertEqual(
+                theme.lines.filter { $0.hasPrefix("palette = ") }.count,
+                16,
+                "incomplete ANSI palette for \(id)"
+            )
+            for line in theme.lines {
+                let color = try XCTUnwrap(line.split(separator: "=").last)
+                    .trimmingCharacters(in: .whitespaces)
+                XCTAssertEqual(color.count, 7, "non-RGB color in \(id): \(line)")
+                XCTAssertEqual(color.first, "#", "invalid color in \(id): \(line)")
+                XCTAssertTrue(
+                    color.dropFirst().allSatisfy(\.isHexDigit),
+                    "invalid color in \(id): \(line)"
+                )
+            }
+        }
+    }
+
+    func testBundledThemesAreAlphabeticalByDisplayName() {
+        let titles = KookyTerminalTheme.presets.map(\.title)
+        XCTAssertEqual(
+            titles,
+            titles.sorted {
+                $0.localizedStandardCompare($1) == .orderedAscending
+            }
+        )
     }
 
     func testGhosttyDarkMatchesPinnedLibghosttyDefaults() {
@@ -79,7 +129,7 @@ final class KookyTerminalThemeTests: XCTestCase {
                 selection: state.selection,
                 customRawValue: nil
             ),
-            "solarized-light"
+            "kooky:solarized-light"
         )
     }
 
@@ -107,11 +157,11 @@ final class KookyTerminalThemeTests: XCTestCase {
         )
         XCTAssertEqual(
             KookySettings.effectiveThemeValue(parsed: parsed, systemIsDark: false),
-            KookyTerminalTheme.defaultLightID
+            KookyTerminalTheme.defaultLightStoredValue
         )
         XCTAssertEqual(
             KookySettings.effectiveThemeValue(parsed: parsed, systemIsDark: true),
-            KookyTerminalTheme.defaultDarkID
+            KookyTerminalTheme.defaultDarkStoredValue
         )
     }
 
@@ -197,7 +247,7 @@ final class KookyTerminalThemeTests: XCTestCase {
         ]
         XCTAssertEqual(
             KookySettings.effectiveThemeValue(parsed: forcedLight, systemIsDark: true),
-            KookyTerminalTheme.defaultLightID
+            KookyTerminalTheme.defaultLightStoredValue
         )
     }
 
@@ -279,6 +329,56 @@ final class KookyTerminalThemeTests: XCTestCase {
             ),
             "Issue 17"
         )
+    }
+
+    func testUnprefixedCollisionPrefersGhosttyUserThemeWhileNamespaceSelectsBundled() throws {
+        let dir = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try "background = #010203\nforeground = #F0F0F0\n"
+            .write(
+                to: dir.appendingPathComponent("nord"),
+                atomically: true,
+                encoding: .utf8
+            )
+
+        let themes = KookyTerminalTheme.presets + KookyTerminalTheme.userThemes(in: dir)
+        let legacy = KookySettingsModel.themeSelection(for: "nord", in: themes)
+        XCTAssertEqual(legacy.selection, "ghostty-user:nord")
+        XCTAssertEqual(
+            KookySettingsModel.persistedThemeValue(
+                selection: legacy.selection,
+                customRawValue: nil,
+                in: themes
+            ),
+            "nord"
+        )
+
+        let bundled = KookySettingsModel.themeSelection(for: "kooky:nord", in: themes)
+        XCTAssertEqual(bundled.selection, "nord")
+        XCTAssertEqual(
+            KookySettingsModel.persistedThemeValue(
+                selection: bundled.selection,
+                customRawValue: nil,
+                in: themes
+            ),
+            "kooky:nord"
+        )
+
+        try "background = #FDFDFD\nforeground = #101010\n"
+            .write(
+                to: dir.appendingPathComponent("one-light"),
+                atomically: true,
+                encoding: .utf8
+            )
+        let themesWithDefaultCollision = KookyTerminalTheme.presets
+            + KookyTerminalTheme.userThemes(in: dir)
+        let defaults = KookySettingsModel.themePreferences(
+            appearance: ["themeSchemaVersion": 2],
+            legacyRawTheme: nil,
+            in: themesWithDefaultCollision
+        )
+        XCTAssertEqual(defaults.lightSelection, KookyTerminalTheme.defaultLightID)
+        XCTAssertEqual(defaults.darkSelection, KookyTerminalTheme.defaultDarkID)
     }
 
     func testGhosttyUserThemesDirectoryHonorsXDGConfigHome() {

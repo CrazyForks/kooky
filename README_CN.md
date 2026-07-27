@@ -86,7 +86,7 @@
 
 **SwiftUI 原生开发，简约风格。** Onest + JetBrains Mono 字体。自定义 About 面板、带快捷键提示的原生菜单,中日韩 IME 输入完整支持。
 
-**Light + Dark 双主题。** Light 和 Dark 可以各选一套 terminal 配色，再单独选择 System / Light / Dark 外观模式。System 会实时跟随 macOS，同时切换 terminal 和整个窗口。内置配色包括 **Ghostty Dark**；放在 `~/.config/ghostty/themes` 的自定义主题会按背景颜色自动出现在对应的 Light 或 Dark 下拉框。老用户升级时仍保留原本的 Default 行为：如果以前没有选过主题，kooky 会继续继承 Ghostty 配置，直到你主动修改 Appearance。
+**Light + Dark 双主题。** Light 和 Dark 可以各选一套 terminal 配色，再单独选择 System / Light / Dark 外观模式。System 会实时跟随 macOS，同时切换 terminal 和整个窗口。40 多套内置配色包括 **Ghostty Dark**、Ayu、Catppuccin、Everforest、GitHub、Gruvbox、Material、Night Owl、Nord、Rosé Pine，以及 Codex Desktop 也在使用的其他开源主题；放在 `~/.config/ghostty/themes` 的自定义主题会按背景颜色自动出现在对应的 Light 或 Dark 下拉框。内置主题设置使用 `kooky:` 命名空间，因此升级后也不会覆盖同名的 Ghostty 自定义主题。老用户升级时仍保留原本的 Default 行为：如果以前没有选过主题，kooky 会继续继承 Ghostty 配置，直到你主动修改 Appearance。
 
 **可配置。** Settings 面板（`⌘,`）还可以调字体、光标、默认新 tab 行为、Terminal 预设、agents、Open in 和 pane 底部状态栏。外观修改会立即同步到所有已打开的窗口。
 
@@ -142,7 +142,7 @@ macOS **只拦第一次启动**。之后从 Spotlight、Dock、Finder 启动都�
 ./scripts/setup-libghostty.sh        # 一次性：把预编译的 libghostty xcframework 下到 Vendor/
 swift build
 swift run                            # 开发模式直接跑
-swift test                           # 697 个单测
+swift test                           # 700 个单测
 
 ./scripts/build-app.sh               # 产出 dist/Kooky.app
 ./scripts/build-dmg.sh --build       # 产出 dist/Kooky-vX.Y.Z.dmg
@@ -152,7 +152,7 @@ swift test                           # 697 个单测
 
 ## Star 趋势
 
-[![Star History Chart](https://api.star-history.com/svg?repos=iAmCorey/kooky&type=Date)](https://star-history.com/#iAmCorey/kooky&Date)
+[![Star History Chart](https://api.star-history.com/chart?repos=iAmCorey/kooky&type=date&legend=top-left&sealed_token=ZX5h8laOXIE38b__FRNpP7ae52yRupThIRrcgidF7RI0OOzVcsKIo1iJ_iDp6UcMoxzNCL99N3RY__N7TFUszIgxzljBSBRRiAPYPt9QC9lKf7X3ShAQJg)](https://www.star-history.com/?type=date&repos=iAmCorey%2Fkooky)
 
 ## 许可证
 

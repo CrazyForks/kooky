@@ -488,8 +488,12 @@ final class KookySettingsModel {
         if pairedThemeSchemaEnabled {
             appearance["themeSchemaVersion"] = KookySettings.pairedThemeSchemaVersion
             appearance["mode"] = appearanceMode == .system ? nil : appearanceMode.rawValue
-            appearance["lightTheme"] = lightTheme == Self.defaultLightThemeSelection ? nil : lightTheme
-            appearance["darkTheme"] = darkTheme == Self.defaultDarkThemeSelection ? nil : darkTheme
+            appearance["lightTheme"] = lightTheme == KookyTerminalTheme.defaultLightStoredValue
+                ? nil
+                : lightTheme
+            appearance["darkTheme"] = darkTheme == KookyTerminalTheme.defaultDarkStoredValue
+                ? nil
+                : darkTheme
         }
         appearance["showSearchPill"] = showSearchPill ? nil : false
         appearance["showAgentPanelTag"] = showAgentPanelTag ? nil : false
@@ -693,11 +697,11 @@ final class KookySettingsModel {
         if hasPairedTheme {
             let light = state(
                 for: appearance["lightTheme"] as? String,
-                defaultSelection: defaultLightThemeSelection
+                defaultSelection: KookyTerminalTheme.defaultLightStoredValue
             )
             let dark = state(
                 for: appearance["darkTheme"] as? String,
-                defaultSelection: defaultDarkThemeSelection
+                defaultSelection: KookyTerminalTheme.defaultDarkStoredValue
             )
             return ThemePreferences(
                 mode: explicitMode ?? .system,
@@ -716,11 +720,11 @@ final class KookySettingsModel {
             // old implementation, so dark is the compatibility-safe side.
             let legacyIsDark = knownLegacy?.isDark ?? true
             let light = legacyIsDark
-                ? state(for: nil, defaultSelection: defaultLightThemeSelection)
+                ? state(for: nil, defaultSelection: KookyTerminalTheme.defaultLightStoredValue)
                 : legacy
             let dark = legacyIsDark
                 ? legacy
-                : state(for: nil, defaultSelection: defaultDarkThemeSelection)
+                : state(for: nil, defaultSelection: KookyTerminalTheme.defaultDarkStoredValue)
             return ThemePreferences(
                 mode: explicitMode ?? (legacyIsDark ? .dark : .light),
                 lightSelection: light.selection,
@@ -730,8 +734,8 @@ final class KookySettingsModel {
             )
         }
 
-        let light = state(for: nil, defaultSelection: defaultLightThemeSelection)
-        let dark = state(for: nil, defaultSelection: defaultDarkThemeSelection)
+        let light = state(for: nil, defaultSelection: KookyTerminalTheme.defaultLightStoredValue)
+        let dark = state(for: nil, defaultSelection: KookyTerminalTheme.defaultDarkStoredValue)
         return ThemePreferences(
             mode: explicitMode ?? .system,
             lightSelection: light.selection,
@@ -1279,7 +1283,7 @@ struct KookySettingsView: View {
             if let customLabel {
                 Text(customLabel).tag(KookySettingsModel.customThemeSelection)
             }
-            Section("Bundled") {
+            Section("Built-in") {
                 ForEach(bundledThemes) { preset in
                     Text(preset.title).tag(preset.id)
                 }

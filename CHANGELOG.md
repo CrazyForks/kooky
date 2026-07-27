@@ -2,6 +2,12 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.43.1 — 2026-07-27
+
+- New: 28 additional MIT-licensed open-source terminal palettes — including Ayu, Catppuccin, Everforest, GitHub, Gruvbox, Material, Night Owl, Nord, One Dark Pro, and Rosé Pine Moon — bring the built-in collection to more than 40 themes. Attribution is included in `NOTICE.md`.
+- Polish: Light and Dark theme menus are sorted alphabetically and use the clearer **Built-in** / **Custom** section labels.
+- Compatibility: built-in selections now use an explicit `kooky:` namespace. Existing unprefixed values prefer a matching file in `~/.config/ghostty/themes` before falling back to an old built-in id, so adding a same-named built-in theme cannot silently replace a user's colors after upgrading.
+
 ## v0.43.0 — 2026-07-26
 
 - New: Appearance now keeps two independent terminal palettes — one for Light and one for Dark — while System / Light / Dark is a separate mode. System follows macOS live, switching both the terminal and the whole window without reopening Settings.

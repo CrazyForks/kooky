@@ -86,7 +86,7 @@ A minimal modern terminal built for AI coding. Sidebar workspaces; horizontal / 
 
 **SwiftUI-native, minimal chrome.** Onest + JetBrains Mono. Custom About panel, native menus with shortcut hints, full IME support.
 
-**Paired Light + Dark themes.** Pick a terminal palette for Light and another for Dark, then choose System / Light / Dark independently. System follows macOS live and switches both the terminal and the whole window. Bundled palettes include **Ghostty Dark**, and theme files in `~/.config/ghostty/themes` appear automatically in the matching Light or Dark picker. Upgrades preserve the old Default behavior: if you never chose a theme, kooky keeps inheriting your Ghostty config until you change Appearance.
+**Paired Light + Dark themes.** Pick a terminal palette for Light and another for Dark, then choose System / Light / Dark independently. System follows macOS live and switches both the terminal and the whole window. More than 40 built-in palettes include **Ghostty Dark**, Ayu, Catppuccin, Everforest, GitHub, Gruvbox, Material, Night Owl, Nord, Rosé Pine, and other open-source themes also available in Codex Desktop. Theme files in `~/.config/ghostty/themes` appear automatically in the matching Light or Dark picker. Built-in selections use a `kooky:` namespace, so a same-named custom Ghostty theme remains yours after upgrading. Upgrades also preserve the old Default behavior: if you never chose a theme, kooky keeps inheriting your Ghostty config until you change Appearance.
 
 **Configurable.** Settings (`⌘,`) also covers font, cursor, default new-tab behavior, Terminal presets, agents, Open in, and the pane status bar. Appearance changes update every open window immediately.
 
@@ -142,7 +142,7 @@ Requires Xcode 26+ and macOS 14+ (Sonoma — `@Observable` is the floor).
 ./scripts/setup-libghostty.sh        # one-time: fetch the libghostty xcframework
 swift build
 swift run                            # dev mode
-swift test                           # 697 unit tests
+swift test                           # 700 unit tests
 
 ./scripts/build-app.sh               # writes dist/Kooky.app
 ./scripts/build-dmg.sh --build       # writes dist/Kooky-vX.Y.Z.dmg
@@ -152,7 +152,7 @@ swift test                           # 697 unit tests
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=iAmCorey/kooky&type=Date)](https://star-history.com/#iAmCorey/kooky&Date)
+[![Star History Chart](https://api.star-history.com/chart?repos=iAmCorey/kooky&type=date&legend=top-left&sealed_token=ZX5h8laOXIE38b__FRNpP7ae52yRupThIRrcgidF7RI0OOzVcsKIo1iJ_iDp6UcMoxzNCL99N3RY__N7TFUszIgxzljBSBRRiAPYPt9QC9lKf7X3ShAQJg)](https://www.star-history.com/?type=date&repos=iAmCorey%2Fkooky)
 
 ## License
 

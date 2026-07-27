@@ -86,7 +86,7 @@ AI コーディングのために作られた、ミニマルでモダンな macO
 
 **SwiftUI ネイティブ、ミニマルな chrome。** Onest + JetBrains Mono。カスタム About パネル、ショートカットヒント付きのネイティブメニュー、日本語 IME を完全サポート。
 
-**Light + Dark のペアテーマ。** Light 用と Dark 用の terminal 配色をそれぞれ選び、System / Light / Dark の外観モードは別に設定できます。System は macOS の変更にリアルタイムで追従し、terminal とウィンドウ全体を同時に切り替えます。組み込みテーマには **Ghostty Dark** が含まれ、`~/.config/ghostty/themes` のカスタムテーマは背景色に応じて Light または Dark の picker に自動表示されます。アップグレード時も以前の Default の挙動は維持され、テーマを選んだことがない場合は Appearance を変更するまで Ghostty の設定を引き継ぎます。
+**Light + Dark のペアテーマ。** Light 用と Dark 用の terminal 配色をそれぞれ選び、System / Light / Dark の外観モードは別に設定できます。System は macOS の変更にリアルタイムで追従し、terminal とウィンドウ全体を同時に切り替えます。40 種類以上の組み込み配色には **Ghostty Dark**、Ayu、Catppuccin、Everforest、GitHub、Gruvbox、Material、Night Owl、Nord、Rosé Pine のほか、Codex Desktop でも使われているオープンソーステーマが含まれます。`~/.config/ghostty/themes` のカスタムテーマは背景色に応じて Light または Dark の picker に自動表示されます。組み込みテーマの設定値には `kooky:` 名前空間を使うため、同名の Ghostty カスタムテーマもアップグレード後にそのまま維持されます。以前の Default の挙動も維持され、テーマを選んだことがない場合は Appearance を変更するまで Ghostty の設定を引き継ぎます。
 
 **設定可能。** Settings (`⌘,`) ではフォント、カーソル、デフォルトの新規 tab 挙動、Terminal preset、agents、Open in、pane ステータスバーも調整できます。外観の変更は開いているすべてのウィンドウに即時反映されます。
 
@@ -142,7 +142,7 @@ Xcode 26+ と macOS 14+ (Sonoma —— `@Observable` の最低システム要件
 ./scripts/setup-libghostty.sh        # 初回のみ：プリビルドの libghostty xcframework を Vendor/ にダウンロード
 swift build
 swift run                            # 開発モードで直接起動
-swift test                           # 697 個のユニットテスト
+swift test                           # 700 個のユニットテスト
 
 ./scripts/build-app.sh               # dist/Kooky.app を出力
 ./scripts/build-dmg.sh --build       # dist/Kooky-vX.Y.Z.dmg を出力
@@ -152,7 +152,7 @@ swift test                           # 697 個のユニットテスト
 
 ## スター履歴
 
-[![Star History Chart](https://api.star-history.com/svg?repos=iAmCorey/kooky&type=Date)](https://star-history.com/#iAmCorey/kooky&Date)
+[![Star History Chart](https://api.star-history.com/chart?repos=iAmCorey/kooky&type=date&legend=top-left&sealed_token=ZX5h8laOXIE38b__FRNpP7ae52yRupThIRrcgidF7RI0OOzVcsKIo1iJ_iDp6UcMoxzNCL99N3RY__N7TFUszIgxzljBSBRRiAPYPt9QC9lKf7X3ShAQJg)](https://www.star-history.com/?type=date&repos=iAmCorey%2Fkooky)
 
 ## ライセンス
 

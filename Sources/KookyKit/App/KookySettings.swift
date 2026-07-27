@@ -42,8 +42,8 @@ enum KookySettings {
       "appearance": {
         "themeSchemaVersion": 2,
         "mode": "system",
-        "lightTheme": "one-light",
-        "darkTheme": "one-dark"
+        "lightTheme": "\(KookyTerminalTheme.defaultLightStoredValue)",
+        "darkTheme": "\(KookyTerminalTheme.defaultDarkStoredValue)"
       },
 
       // === Terminal rendering (forwarded to libghostty) ===
@@ -87,11 +87,18 @@ enum KookySettings {
             parsed: parsed,
             systemIsDark: KookySettingsModel.shared.systemAppearanceIsDark
         ) {
-            if let preset = KookyTerminalTheme.preset(for: rawTheme) {
-                lines.append(contentsOf: preset.lines)
+            if let theme = KookyTerminalTheme.theme(
+                for: rawTheme,
+                in: KookyTerminalTheme.availableThemes()
+            ) {
+                if theme.isBundled {
+                    lines.append(contentsOf: theme.lines)
+                } else {
+                    lines.append(contentsOf: formatGhosttyLines(key: "theme", value: theme.storedValue))
+                }
             } else if !rawTheme.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 // Raw JSON users can still point at a custom Ghostty theme
-                // path or name. The Settings UI only writes bundled preset ids.
+                // path or name. Namespaced bundled values are handled above.
                 lines.append(contentsOf: formatGhosttyLines(key: "theme", value: rawTheme))
             }
         }
@@ -143,8 +150,8 @@ enum KookySettings {
             let isDark = mode.resolvesDark(systemIsDark: systemIsDark)
             let key = isDark ? "darkTheme" : "lightTheme"
             let fallback = isDark
-                ? KookyTerminalTheme.defaultDarkID
-                : KookyTerminalTheme.defaultLightID
+                ? KookyTerminalTheme.defaultDarkStoredValue
+                : KookyTerminalTheme.defaultLightStoredValue
             let raw = (appearance[key] as? String)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             return raw?.isEmpty == false ? raw : fallback
