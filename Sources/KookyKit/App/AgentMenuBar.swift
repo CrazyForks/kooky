@@ -151,12 +151,13 @@ final class AgentMenuBarController: NSObject, NSMenuDelegate {
 
     private func menuItem(for entry: AgentMonitor.Entry) -> NSMenuItem {
         let item = NSMenuItem(
-            title: Self.menuItemText(
-                tabTitle: entry.tabTitle,
-                path: entry.locationPathLabel
-            ),
+            title: Self.shortMenuText(entry.tabTitle),
             action: #selector(activateAgent(_:)),
             keyEquivalent: ""
+        )
+        item.attributedTitle = Self.menuItemAttributedTitle(
+            tabTitle: entry.tabTitle,
+            path: entry.locationPathLabel
         )
         item.target = self
         item.representedObject = entry.id
@@ -210,14 +211,28 @@ final class AgentMenuBarController: NSObject, NSMenuDelegate {
         return String(flattened.prefix(limit - 1)) + "…"
     }
 
-    /// Keep menu rows useful without letting a long OSC title or workspace
-    /// path stretch the whole menu. Titles preserve their beginning; paths
-    /// preserve their deepest components where the project name lives.
-    static func menuItemText(tabTitle: String, path: String) -> String {
-        let title = shortMenuText(tabTitle, limit: 24)
-        let location = tailTruncatedText(path, limit: 32)
-        guard !location.isEmpty else { return title }
-        return "\(title) — \(location)"
+    /// Two-line native menu label matching the task rows in ChatGPT's menu:
+    /// the tab title leads, while the project path sits underneath in smaller
+    /// secondary text. Long paths retain their deepest components.
+    static func menuItemAttributedTitle(tabTitle: String, path: String) -> NSAttributedString {
+        let title = shortMenuText(tabTitle, limit: 34)
+        let location = tailTruncatedText(path, limit: 44)
+        let result = NSMutableAttributedString(
+            string: title,
+            attributes: [
+                .font: NSFont.menuFont(ofSize: 0),
+                .foregroundColor: NSColor.labelColor,
+            ]
+        )
+        guard !location.isEmpty else { return result }
+        result.append(NSAttributedString(
+            string: "\n\(location)",
+            attributes: [
+                .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize),
+                .foregroundColor: NSColor.secondaryLabelColor,
+            ]
+        ))
+        return result
     }
 
     private static func tailTruncatedText(_ text: String, limit: Int) -> String {

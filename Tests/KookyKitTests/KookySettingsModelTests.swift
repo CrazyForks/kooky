@@ -74,26 +74,43 @@ final class KookySettingsModelTests: XCTestCase {
         XCTAssertEqual(AgentMenuBarController.shortMenuText("first\nsecond"), "first second")
     }
 
-    func testAgentMenuBarItemShowsTitleAndTailTruncatedPath() {
+    func testAgentMenuBarItemShowsPathOnASecondSecondaryLine() throws {
+        let attributed = AgentMenuBarController.menuItemAttributedTitle(
+            tabTitle: "Fixing scroll",
+            path: "~/Github/kookycode"
+        )
+        XCTAssertEqual(attributed.string, "Fixing scroll\n~/Github/kookycode")
+
+        let subtitleStart = attributed.string.distance(
+            from: attributed.string.startIndex,
+            to: attributed.string.firstIndex(of: "~")!
+        )
         XCTAssertEqual(
-            AgentMenuBarController.menuItemText(
-                tabTitle: "Fixing scroll",
-                path: "~/Github/kookycode"
-            ),
-            "Fixing scroll — ~/Github/kookycode"
+            attributed.attribute(.foregroundColor, at: subtitleStart, effectiveRange: nil) as? NSColor,
+            .secondaryLabelColor
         )
 
-        let text = AgentMenuBarController.menuItemText(
+        let longLabel = AgentMenuBarController.menuItemAttributedTitle(
             tabTitle: String(repeating: "title", count: 8),
-            path: "/Users/corey/Github/a-very-long-parent-directory/kookycode"
-        )
-        let parts = text.components(separatedBy: " — ")
+            path: "/Users/corey/Github/a-very-long-parent-directory/with-another-level/kookycode"
+        ).string
+        let parts = longLabel.components(separatedBy: "\n")
         XCTAssertEqual(parts.count, 2)
-        XCTAssertEqual(parts[0].count, 24)
+        XCTAssertEqual(parts[0].count, 34)
         XCTAssertTrue(parts[0].hasSuffix("…"))
-        XCTAssertEqual(parts[1].count, 32)
+        XCTAssertEqual(parts[1].count, 44)
         XCTAssertTrue(parts[1].hasPrefix("…"))
         XCTAssertTrue(parts[1].hasSuffix("/kookycode"))
+    }
+
+    func testAgentMenuBarItemOmitsEmptyPathLine() {
+        XCTAssertEqual(
+            AgentMenuBarController.menuItemAttributedTitle(
+                tabTitle: "Fixing scroll",
+                path: ""
+            ).string,
+            "Fixing scroll"
+        )
     }
 
     func testAgentMenuBarCountIsHiddenWhenNoAgentIsRunning() {
