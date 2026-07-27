@@ -1,15 +1,20 @@
 import AppKit
 
-/// Menu-bar-specific Kooky mark. The full AppIcon's rounded tile, colour, and
-/// shading are correct in the Dock but turn into a tiny sticker at 18pt.
-/// Drawing just the `>_` brand mark as a template image lets AppKit tint it
-/// white/black with the menu bar while keeping the geometry sharp on Retina.
+/// Menu-bar-specific Kooky mark. Keep the Dock icon's tile-and-glyph identity,
+/// but flatten it to a crisp white tile with a black `>_` at menu-bar size.
 @MainActor
 enum KookyMenuBarIcon {
     static let size = NSSize(width: 18, height: 18)
 
     static func make() -> NSImage {
         let image = NSImage(size: size, flipped: false) { _ in
+            NSColor.white.setFill()
+            NSBezierPath(
+                roundedRect: NSRect(x: 1, y: 1, width: 16, height: 16),
+                xRadius: 4,
+                yRadius: 4
+            ).fill()
+
             NSColor.black.setStroke()
 
             let chevron = NSBezierPath()
@@ -29,7 +34,9 @@ enum KookyMenuBarIcon {
             underscore.stroke()
             return true
         }
-        image.isTemplate = true
+        // A template image would tint the tile and glyph as one colour. This
+        // mark intentionally keeps its white background and black foreground.
+        image.isTemplate = false
         return image
     }
 }

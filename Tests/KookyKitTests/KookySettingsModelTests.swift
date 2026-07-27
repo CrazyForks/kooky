@@ -59,10 +59,10 @@ final class KookySettingsModelTests: XCTestCase {
         XCTAssertEqual(AgentMenuBarController.countTitle(12), "12")
     }
 
-    func testKookyMenuBarIconIsAnEighteenPointTemplate() {
+    func testKookyMenuBarIconIsAnEighteenPointColourImage() {
         let image = KookyMenuBarIcon.make()
         XCTAssertEqual(image.size, NSSize(width: 18, height: 18))
-        XCTAssertTrue(image.isTemplate)
+        XCTAssertFalse(image.isTemplate)
         XCTAssertNotNil(image.tiffRepresentation)
     }
 
