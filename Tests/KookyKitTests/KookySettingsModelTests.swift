@@ -133,20 +133,19 @@ final class KookySettingsModelTests: XCTestCase {
 
         controller.menuNeedsUpdate(menu)
 
-        XCTAssertEqual(menu.items.count, 7)
-        XCTAssertTrue(menu.items[0].isSectionHeader)
-        XCTAssertEqual(menu.items[0].title, "Recent Agents")
-        XCTAssertEqual(menu.items[1].title, "No agents running")
-        XCTAssertTrue(menu.items[2].isSeparatorItem)
-        XCTAssertEqual(menu.items[3].title, "Open Kooky")
-        XCTAssertEqual(menu.items[4].title, "Settings…")
-        XCTAssertEqual(menu.items[5].title, "Keep Awake")
-        XCTAssertEqual(menu.items[6].title, "Quit Kooky")
+        XCTAssertEqual(menu.items.count, 6)
+        XCTAssertFalse(menu.items.contains(where: \.isSectionHeader))
+        XCTAssertEqual(menu.items[0].title, "No agents running")
+        XCTAssertTrue(menu.items[1].isSeparatorItem)
+        XCTAssertEqual(menu.items[2].title, "Open Kooky")
+        XCTAssertEqual(menu.items[3].title, "Settings…")
+        XCTAssertEqual(menu.items[4].title, "Keep Awake")
+        XCTAssertEqual(menu.items[5].title, "Quit Kooky")
         for item in menu.items where !item.isSeparatorItem {
             XCTAssertNil(item.image, "\(item.title) must remain text-only")
         }
 
-        let awakeItems = try XCTUnwrap(menu.items[5].submenu).items
+        let awakeItems = try XCTUnwrap(menu.items[4].submenu).items
         XCTAssertEqual(awakeItems.map(\.title), ["Off", "Auto", "Always"])
         XCTAssertEqual(awakeItems.map(\.state), [.off, .on, .off])
         XCTAssertTrue(awakeItems.allSatisfy { $0.image == nil })
