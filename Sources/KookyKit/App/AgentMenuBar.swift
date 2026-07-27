@@ -94,6 +94,7 @@ final class AgentMenuBarController: NSObject, NSMenuDelegate {
     // set are current even if AppKit kept the native menu object around.
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+        menu.addItem(.sectionHeader(title: "Recent Agents"))
         let entries = monitor.entries
         if entries.isEmpty {
             let empty = NSMenuItem(title: "No agents running", action: nil, keyEquivalent: "")
