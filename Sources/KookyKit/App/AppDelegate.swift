@@ -45,6 +45,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     /// Posts macOS notifications when a backgrounded agent needs attention or
     /// a command fails. Bundle-gated, so it no-ops under `swift run`.
     private let notificationManager = NotificationManager()
+    /// Native `NSStatusItem` showing the same cross-window live agent set as
+    /// the right sidebar. It starts only after `AgentMonitor` is wired below.
+    private var agentMenuBarController: AgentMenuBarController?
     /// Agent hook events carry a global surface-UUID. Broadcast to every
     /// window's store — `applyHookEvent` & friends no-op when the session
     /// isn't theirs, so exactly the owning window reacts.
@@ -135,6 +138,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         AgentMonitor.shared.onActivate = { [weak self] sessionId in
             self?.activateFromNotification(sessionId)
         }
+        let agentMenuBarController = AgentMenuBarController(
+            monitor: .shared,
+            settings: settings
+        )
+        self.agentMenuBarController = agentMenuBarController
+        agentMenuBarController.start()
         // Keep-awake watches the same monitor; start after its stores are wired.
         SleepGuard.shared.start()
 
@@ -544,6 +553,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         // If closed-lid mode is engaged, re-enable lid sleep before dying —
         // a system-wide pmset flag outlives the process, unlike assertions.
         SleepGuard.shared.shutdownCleanup()
+        agentMenuBarController?.stop()
         hookServer.stop()
         KookyShellIntegration.cleanup()
     }

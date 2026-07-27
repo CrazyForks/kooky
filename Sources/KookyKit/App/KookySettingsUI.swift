@@ -121,6 +121,11 @@ final class KookySettingsModel {
     /// Persisted under `appearance.showSearchPill` (only when non-default).
     /// The legacy `general.showSearchPill` key is still read during migration.
     var showSearchPill: Bool = true
+    /// Shows an app-level menu-bar item with the live agent count. Clicking it
+    /// lists the same cross-window sessions as the right agent panel and jumps
+    /// to the selected tab. Persisted under
+    /// `appearance.showAgentMenuBarItem`, only when non-default.
+    var showAgentMenuBarItem: Bool = true
 
     /// Whether the agent panel repeats each session's workspace tag as a stripe
     /// (and a `#name` hover line). Persisted under
@@ -254,6 +259,7 @@ final class KookySettingsModel {
         sshRemoteAgentDetection = (ssh["remoteAgentDetection"] as? Bool) ?? false
 
         let general = parsed["general"] as? [String: Any] ?? [:]
+        showAgentMenuBarItem = Self.resolvedShowAgentMenuBarItem(appearance: appearance)
         showAgentPanelTag = (appearance["showAgentPanelTag"] as? Bool) ?? true
         showSearchPill = Self.resolvedShowSearchPill(
             appearance: appearance,
@@ -496,6 +502,7 @@ final class KookySettingsModel {
                 : darkTheme
         }
         appearance["showSearchPill"] = showSearchPill ? nil : false
+        appearance["showAgentMenuBarItem"] = showAgentMenuBarItem ? nil : false
         appearance["showAgentPanelTag"] = showAgentPanelTag ? nil : false
         if appearance.isEmpty {
             parsed.removeValue(forKey: "appearance")
@@ -618,6 +625,10 @@ final class KookySettingsModel {
         (appearance["showSearchPill"] as? Bool)
             ?? (legacyGeneral["showSearchPill"] as? Bool)
             ?? true
+    }
+
+    static func resolvedShowAgentMenuBarItem(appearance: [String: Any]) -> Bool {
+        (appearance["showAgentMenuBarItem"] as? Bool) ?? true
     }
 
     var selectedTerminalTheme: KookyTerminalTheme? {
@@ -913,6 +924,7 @@ struct KookySettingsView: View {
             .onChange(of: model.resumeConversations) { _, _ in model.scheduleSave() }
             .onChange(of: model.sshRemoteAgentDetection) { _, _ in model.scheduleSave() }
             .onChange(of: model.showSearchPill) { _, _ in model.scheduleSave() }
+            .onChange(of: model.showAgentMenuBarItem) { _, _ in model.scheduleSave() }
             .onChange(of: model.showAgentPanelTag) { _, _ in model.scheduleSave() }
             .onChange(of: model.terminalPresets) { _, _ in model.scheduleSave() }
             .onChange(of: model.hiddenPresets) { _, _ in model.scheduleSave() }
@@ -1103,6 +1115,12 @@ struct KookySettingsView: View {
             SettingsSection(title: "Window Chrome") {
                 SettingsRow(label: "show-search-pill") {
                     Toggle("", isOn: $model.showSearchPill)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                }
+                SettingsHairline()
+                SettingsRow(label: "show-agent-menu-bar-item") {
+                    Toggle("", isOn: $model.showAgentMenuBarItem)
                         .labelsHidden()
                         .toggleStyle(.switch)
                 }

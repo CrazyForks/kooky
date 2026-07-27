@@ -30,6 +30,29 @@ final class KookySettingsModelTests: XCTestCase {
         )
     }
 
+    func testAgentMenuBarItemDefaultsToVisible() {
+        XCTAssertTrue(KookySettingsModel.resolvedShowAgentMenuBarItem(appearance: [:]))
+    }
+
+    func testAgentMenuBarItemReadsAppearanceSetting() {
+        XCTAssertFalse(
+            KookySettingsModel.resolvedShowAgentMenuBarItem(
+                appearance: ["showAgentMenuBarItem": false]
+            )
+        )
+    }
+
+    func testAgentMenuBarTextIsCappedAtThirtyCharacters() {
+        let exact = String(repeating: "a", count: 30)
+        XCTAssertEqual(AgentMenuBarController.shortMenuText(exact), exact)
+
+        let long = String(repeating: "b", count: 40)
+        let shortened = AgentMenuBarController.shortMenuText(long)
+        XCTAssertEqual(shortened.count, 30)
+        XCTAssertTrue(shortened.hasSuffix("…"))
+        XCTAssertEqual(AgentMenuBarController.shortMenuText("first\nsecond"), "first second")
+    }
+
     // MARK: - Custom agent persistence
 
     /// Every field must survive settings.json and come back. Serialise and
