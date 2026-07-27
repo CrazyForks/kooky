@@ -10,26 +10,26 @@ enum KookyMenuBarIcon {
         let image = NSImage(size: size, flipped: false) { _ in
             NSColor.white.setFill()
             NSBezierPath(
-                roundedRect: NSRect(x: 1, y: 1, width: 16, height: 16),
-                xRadius: 4,
-                yRadius: 4
+                roundedRect: NSRect(x: 2, y: 2, width: 14, height: 14),
+                xRadius: 3.5,
+                yRadius: 3.5
             ).fill()
 
             NSColor.black.setStroke()
 
             let chevron = NSBezierPath()
-            chevron.move(to: NSPoint(x: 4, y: 14))
-            chevron.line(to: NSPoint(x: 9.25, y: 9.5))
-            chevron.line(to: NSPoint(x: 4, y: 5))
-            chevron.lineWidth = 1.8
+            chevron.move(to: NSPoint(x: 5, y: 12.25))
+            chevron.line(to: NSPoint(x: 9.25, y: 9))
+            chevron.line(to: NSPoint(x: 5, y: 5.75))
+            chevron.lineWidth = 1.5
             chevron.lineCapStyle = .butt
             chevron.lineJoinStyle = .miter
             chevron.stroke()
 
             let underscore = NSBezierPath()
-            underscore.move(to: NSPoint(x: 9.25, y: 5))
-            underscore.line(to: NSPoint(x: 15, y: 5))
-            underscore.lineWidth = 1.8
+            underscore.move(to: NSPoint(x: 9.25, y: 5.75))
+            underscore.line(to: NSPoint(x: 13.5, y: 5.75))
+            underscore.lineWidth = 1.5
             underscore.lineCapStyle = .butt
             underscore.stroke()
             return true
