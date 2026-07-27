@@ -2,6 +2,13 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.44.0 — 2026-07-27
+
+- New: an optional Kooky item in the macOS menu bar mirrors the live agent list across every window. The count appears only while agents are present; open the menu to see each tab title and project path on two lines, then pick one to jump straight to it.
+- Convenience: the same menu provides Open Kooky, Settings, Keep Awake (Off / Auto / Always), and Quit. Turn the item on or off under Settings → General → `show-in-menu-bar`.
+
+**SHA-256:** `5d8facec7eb87a51453d352c83fc4fbe543e38eea27108e4885da4dab4a20bb9`
+
 ## v0.43.1 — 2026-07-27
 
 - New: 28 additional MIT-licensed open-source terminal palettes — including Ayu, Catppuccin, Everforest, GitHub, Gruvbox, Material, Night Owl, Nord, One Dark Pro, and Rosé Pine Moon — bring the built-in collection to more than 40 themes. Attribution is included in `NOTICE.md`.

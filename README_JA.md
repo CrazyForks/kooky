@@ -80,6 +80,8 @@ AI コーディングのために作られた、ミニマルでモダンな macO
 
 **Agent パネル。** 上部のトグル (左サイドバーと同じ 3 段階の折りたたみ) で右サイドバーを開くと、全ウィンドウの agent を一覧でき、あなたを必要とする順に並びます —— ユーザー待ち、失敗、実行中、アイドル。任意の行をクリックすればその tab に直接ジャンプ、コンパクトモードではステータス色のドット付きアイコンの細い列に縮みます。
 
+**メニューバーの Agent 一覧。** macOS のメニューバーに任意で Kooky アイテムを表示でき、agent が存在するときだけリアルタイムの件数が付きます。開くと、すべてのアクティブな agent tab のタイトルとプロジェクトパスを確認して直接ジャンプできるほか、Open Kooky、Settings、Keep Awake の 3 段階切り替え、Quit も利用できます。Settings → General → `show-in-menu-bar` で表示を切り替えられます。
+
 **エディタやターミナルで開く。** 上部 chrome の分割ボタンが、現在の tab のディレクトリを別のアプリに渡します。アイコンをクリックすると直前に使ったアプリで再度開き、シェブロンをクリックすると Mac にインストール済みの対応アプリから選べます: VS Code · Cursor · Windsurf · Zed · Sublime Text · Antigravity · Trae · Kiro · Xcode · IntelliJ IDEA · PyCharm · WebStorm · Terminal · iTerm · Ghostty · Warp · Finder。Settings → Open in で並べ替えや非表示ができます。
 
 **作業環境の状態が一目で見える。** pane 下部のステータスバーに Git リポジトリ + branch + diff (`N files +X −Y`)、Python venv、Node バージョン、有効中の proxy (`https_proxy` / `http_proxy` / `all_proxy`)、そしてリモートに SSH したときのログイン先 `user@host` (Settings → General で有効化) を表示。agent の Bash ツールや別ターミナルで branch を切り替えても自動で更新されます。Node バージョンや Git branch の pill をクリックすればコマンドを打たずに切り替え可能、リポジトリの pill をクリックすると GitHub (GitLab / Bitbucket も対応) で開く・URL のコピー・Finder で表示ができ、proxy pill をクリックすると完全な `name=value` を表示してコピーできます。
