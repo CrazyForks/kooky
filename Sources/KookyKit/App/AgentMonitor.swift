@@ -77,6 +77,14 @@ final class AgentMonitor {
         /// for a list whose order is purely by state.
         let tag: WorkspaceTag?
 
+        /// Stable location text used when a compact surface needs the actual
+        /// project path. Remote sessions name the host because their local
+        /// workspace path would be misleading.
+        var locationPathLabel: String {
+            if let remoteHost { return "ssh \(remoteHost)" }
+            return (directory.path as NSString).abbreviatingWithTildeInPath
+        }
+
         /// Second line of the full row. Nothing else on the row says where a
         /// session lives, and this list is flat across every window — a row's
         /// position tells you nothing about its project. Falls back to naming
@@ -84,8 +92,7 @@ final class AgentMonitor {
         /// with no reported title is named after its own directory, and in
         /// `$HOME` both sides render as `~`.
         var locationLabel: String {
-            if let remoteHost { return "ssh \(remoteHost)" }
-            let label = (directory.path as NSString).abbreviatingWithTildeInPath
+            let label = locationPathLabel
             return label == tabTitle ? agent.title : label
         }
 

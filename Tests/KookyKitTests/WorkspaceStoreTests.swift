@@ -2463,6 +2463,7 @@ final class WorkspaceStoreTests: XCTestCase {
     func testAgentEntryNamesTheRemoteHostInsteadOfTheLocalPath() {
         let entry = agentEntry(tabTitle: "deploy", directory: projectA, remoteHost: "corey@prod")
 
+        XCTAssertEqual(entry.locationPathLabel, "ssh corey@prod")
         XCTAssertEqual(entry.locationLabel, "ssh corey@prod")
         XCTAssertFalse(entry.hoverText(tag: entry.tag).contains("/tmp/projectA"),
                        "a local path must not appear anywhere on a remote row")
@@ -2474,7 +2475,9 @@ final class WorkspaceStoreTests: XCTestCase {
     /// is otherwise missing, since it carries the agent only as an icon.
     func testAgentEntryFallsBackToTheAgentNameWhenTheLocationWouldRepeat() {
         let home = URL(fileURLWithPath: NSHomeDirectory())
-        XCTAssertEqual(agentEntry(tabTitle: "~", directory: home).locationLabel, "Claude Code")
+        let homeEntry = agentEntry(tabTitle: "~", directory: home)
+        XCTAssertEqual(homeEntry.locationPathLabel, "~")
+        XCTAssertEqual(homeEntry.locationLabel, "Claude Code")
 
         // The ordinary case is untouched: a real title over a real path.
         XCTAssertEqual(agentEntry(tabTitle: "Fixing scroll", directory: projectA).locationLabel,

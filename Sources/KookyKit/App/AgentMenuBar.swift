@@ -150,7 +150,10 @@ final class AgentMenuBarController: NSObject, NSMenuDelegate {
 
     private func menuItem(for entry: AgentMonitor.Entry) -> NSMenuItem {
         let item = NSMenuItem(
-            title: Self.shortMenuText(entry.tabTitle),
+            title: Self.menuItemText(
+                tabTitle: entry.tabTitle,
+                path: entry.locationPathLabel
+            ),
             action: #selector(activateAgent(_:)),
             keyEquivalent: ""
         )
@@ -204,5 +207,23 @@ final class AgentMenuBarController: NSObject, NSMenuDelegate {
         guard flattened.count > limit else { return flattened }
         guard limit > 1 else { return "…" }
         return String(flattened.prefix(limit - 1)) + "…"
+    }
+
+    /// Keep menu rows useful without letting a long OSC title or workspace
+    /// path stretch the whole menu. Titles preserve their beginning; paths
+    /// preserve their deepest components where the project name lives.
+    static func menuItemText(tabTitle: String, path: String) -> String {
+        let title = shortMenuText(tabTitle, limit: 24)
+        let location = tailTruncatedText(path, limit: 32)
+        guard !location.isEmpty else { return title }
+        return "\(title) — \(location)"
+    }
+
+    private static func tailTruncatedText(_ text: String, limit: Int) -> String {
+        guard limit > 0 else { return "" }
+        let flattened = singleLine(text)
+        guard flattened.count > limit else { return flattened }
+        guard limit > 1 else { return "…" }
+        return "…" + String(flattened.suffix(limit - 1))
     }
 }

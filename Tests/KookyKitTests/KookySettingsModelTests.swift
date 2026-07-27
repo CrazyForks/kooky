@@ -74,6 +74,28 @@ final class KookySettingsModelTests: XCTestCase {
         XCTAssertEqual(AgentMenuBarController.shortMenuText("first\nsecond"), "first second")
     }
 
+    func testAgentMenuBarItemShowsTitleAndTailTruncatedPath() {
+        XCTAssertEqual(
+            AgentMenuBarController.menuItemText(
+                tabTitle: "Fixing scroll",
+                path: "~/Github/kookycode"
+            ),
+            "Fixing scroll — ~/Github/kookycode"
+        )
+
+        let text = AgentMenuBarController.menuItemText(
+            tabTitle: String(repeating: "title", count: 8),
+            path: "/Users/corey/Github/a-very-long-parent-directory/kookycode"
+        )
+        let parts = text.components(separatedBy: " — ")
+        XCTAssertEqual(parts.count, 2)
+        XCTAssertEqual(parts[0].count, 24)
+        XCTAssertTrue(parts[0].hasSuffix("…"))
+        XCTAssertEqual(parts[1].count, 32)
+        XCTAssertTrue(parts[1].hasPrefix("…"))
+        XCTAssertTrue(parts[1].hasSuffix("/kookycode"))
+    }
+
     func testAgentMenuBarCountIsHiddenWhenNoAgentIsRunning() {
         XCTAssertEqual(AgentMenuBarController.countTitle(0), "")
         XCTAssertEqual(AgentMenuBarController.countTitle(1), "1")
