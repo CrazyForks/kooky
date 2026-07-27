@@ -101,10 +101,14 @@ final class KookySettingsModelTests: XCTestCase {
         XCTAssertEqual(menu.items[3].title, "Settings…")
         XCTAssertEqual(menu.items[4].title, "Keep Awake")
         XCTAssertEqual(menu.items[5].title, "Quit Kooky")
+        for item in menu.items where !item.isSeparatorItem {
+            XCTAssertNil(item.image, "\(item.title) must remain text-only")
+        }
 
         let awakeItems = try XCTUnwrap(menu.items[4].submenu).items
         XCTAssertEqual(awakeItems.map(\.title), ["Off", "Auto", "Always"])
         XCTAssertEqual(awakeItems.map(\.state), [.off, .on, .off])
+        XCTAssertTrue(awakeItems.allSatisfy { $0.image == nil })
     }
 
     func testKookyMenuBarIconIsAnEighteenPointColourImage() {

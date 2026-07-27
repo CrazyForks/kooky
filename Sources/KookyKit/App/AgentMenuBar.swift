@@ -106,7 +106,7 @@ final class AgentMenuBarController: NSObject, NSMenuDelegate {
         }
         menu.addItem(.separator())
         menu.addItem(actionItem(title: "Open Kooky", action: #selector(openKooky)))
-        menu.addItem(actionItem(title: "Settings…", action: #selector(openSettings)))
+        menu.addItem(actionItem(title: "Settings…", action: #selector(showSettingsWindow)))
 
         let keepAwake = NSMenuItem(title: "Keep Awake", action: nil, keyEquivalent: "")
         keepAwake.submenu = keepAwakeMenu()
@@ -114,6 +114,13 @@ final class AgentMenuBarController: NSObject, NSMenuDelegate {
         menu.addItem(keepAwake)
 
         menu.addItem(actionItem(title: "Quit Kooky", action: #selector(quitKooky)))
+
+        // AppKit injects standard symbols after insertion (notably a gear for
+        // Settings…), even when the item was created with `image == nil`.
+        // Clear the completed menu so every row stays deliberately text-only.
+        for item in menu.items where !item.isSeparatorItem {
+            item.image = nil
+        }
     }
 
     private func actionItem(title: String, action: Selector) -> NSMenuItem {
@@ -150,20 +157,8 @@ final class AgentMenuBarController: NSObject, NSMenuDelegate {
         item.target = self
         item.representedObject = entry.id
         item.toolTip = entry.hoverText(tag: entry.tag)
-        item.image = menuImage(for: entry.agent)
         item.isEnabled = true
         return item
-    }
-
-    private func menuImage(for agent: AgentTemplate) -> NSImage? {
-        if let asset = agent.iconAsset, let source = AgentIcon.nsImage(asset: asset),
-           let image = source.copy() as? NSImage {
-            image.isTemplate = AgentIcon.isMonochrome(asset)
-            return image
-        }
-        let image = NSImage(systemSymbolName: agent.symbol, accessibilityDescription: agent.title)
-        image?.isTemplate = true
-        return image
     }
 
     @objc private func activateAgent(_ sender: NSMenuItem) {
@@ -175,7 +170,7 @@ final class AgentMenuBarController: NSObject, NSMenuDelegate {
         onOpenKooky()
     }
 
-    @objc private func openSettings() {
+    @objc private func showSettingsWindow() {
         onOpenSettings()
     }
 
