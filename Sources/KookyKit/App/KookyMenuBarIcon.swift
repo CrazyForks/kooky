@@ -18,17 +18,17 @@ enum KookyMenuBarIcon {
             NSColor.black.setStroke()
 
             let chevron = NSBezierPath()
-            chevron.move(to: NSPoint(x: 5, y: 12.25))
-            chevron.line(to: NSPoint(x: 9.25, y: 9))
-            chevron.line(to: NSPoint(x: 5, y: 5.75))
+            chevron.move(to: NSPoint(x: 4.75, y: 11.75))
+            chevron.line(to: NSPoint(x: 7.75, y: 9))
+            chevron.line(to: NSPoint(x: 4.75, y: 6.25))
             chevron.lineWidth = 1.5
             chevron.lineCapStyle = .butt
             chevron.lineJoinStyle = .miter
             chevron.stroke()
 
             let underscore = NSBezierPath()
-            underscore.move(to: NSPoint(x: 9.25, y: 5.75))
-            underscore.line(to: NSPoint(x: 13.5, y: 5.75))
+            underscore.move(to: NSPoint(x: 8.75, y: 6.25))
+            underscore.line(to: NSPoint(x: 13.5, y: 6.25))
             underscore.lineWidth = 1.5
             underscore.lineCapStyle = .butt
             underscore.stroke()
