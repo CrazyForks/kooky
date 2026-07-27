@@ -108,13 +108,6 @@ final class AgentMenuBarController: NSObject, NSMenuDelegate {
         )
         item.target = self
         item.representedObject = entry.id
-        if #available(macOS 14.4, *) {
-            item.subtitle = Self.shortMenuText("\(entry.locationLabel) · \(entry.state.label)")
-        } else {
-            // `NSMenuItem.subtitle` arrived after kooky's 14.0 floor. Keep
-            // state visible on 14.0–14.3; the full path remains in the tooltip.
-            item.title = Self.shortMenuText("\(entry.tabTitle) · \(entry.state.label)")
-        }
         item.toolTip = entry.hoverText(tag: entry.tag)
         item.image = menuImage(for: entry.agent)
         item.isEnabled = true
