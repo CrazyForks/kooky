@@ -181,7 +181,64 @@ private func agentAccent(_ state: AgentMonitor.State) -> Color {
 
 // MARK: - Right sidebar
 
+/// Shared 32pt title row + hairline for the right panel's two pages, so
+/// "agents" and "session history" stay pixel-identical by construction.
+/// The height matches the top strip so left/right chrome aligns.
+struct RightPanelHeader<Trailing: View>: View {
+    let title: String
+    let count: Int
+    @ViewBuilder let trailing: () -> Trailing
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 7) {
+                Text(title)
+                    .font(Theme.mono(13, weight: .semibold))
+                    .foregroundStyle(Theme.chromeForeground)
+                if count > 0 {
+                    Text("\(count)")
+                        .font(Theme.mono(10, weight: .medium))
+                        .foregroundStyle(Theme.chromeMuted)
+                }
+                Spacer(minLength: 0)
+                trailing()
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 32)
+            Rectangle().fill(Theme.chromeHairline).frame(height: 1)
+        }
+    }
+}
+
+extension RightPanelHeader where Trailing == EmptyView {
+    init(title: String, count: Int) {
+        self.init(title: title, count: count) { EmptyView() }
+    }
+}
+
+/// Shared empty placeholder for the right panel's two pages.
+struct PanelEmptyState: View {
+    let symbol: String
+    let message: String
+
+    var body: some View {
+        VStack(spacing: 7) {
+            Spacer(minLength: 0)
+            Image(systemName: symbol)
+                .font(.system(size: 18, weight: .light))
+                .foregroundStyle(Theme.chromeMuted.opacity(0.4))
+            Text(message)
+                .font(Theme.mono(11))
+                .foregroundStyle(Theme.chromeMuted)
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 120)
+    }
+}
+
 struct AgentOverviewSidebar: View {
+    let store: WorkspaceStore
     var monitor = AgentMonitor.shared
     /// Reading the model here registers the observation, so flipping the
     /// setting re-renders the panel live.
@@ -197,26 +254,28 @@ struct AgentOverviewSidebar: View {
         .glassChromeBackground()
     }
 
-    // Full: header + labelled rows.
+    // Full: content (live agents or session history) + the footer toggle.
+    // Compact never shows the footer — a 44pt rail can't host the history
+    // list, so it pins to the agents rail (mirrors the left sidebar's
+    // full-mode-only files toggle).
     private var fullBody: some View {
+        VStack(spacing: 0) {
+            if store.rightSidebarContent == .history {
+                SessionHistoryView(store: store)
+            } else {
+                agentsBody
+            }
+            footer
+        }
+        .frame(width: 230)
+    }
+
+    private var agentsBody: some View {
         let entries = monitor.entries   // aggregate once per render, not per read
         return VStack(spacing: 0) {
-            HStack(spacing: 7) {
-                Text("agents")
-                    .font(Theme.mono(13, weight: .semibold))
-                    .foregroundStyle(Theme.chromeForeground)
-                if !entries.isEmpty {
-                    Text("\(entries.count)")
-                        .font(Theme.mono(10, weight: .medium))
-                        .foregroundStyle(Theme.chromeMuted)
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 14)
-            .frame(height: 32)   // matches the top strip so left/right align
-            Rectangle().fill(Theme.chromeHairline).frame(height: 1)
+            RightPanelHeader(title: "agents", count: entries.count)
             if entries.isEmpty {
-                empty
+                PanelEmptyState(symbol: "sparkles", message: "no agents running")
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
@@ -230,22 +289,30 @@ struct AgentOverviewSidebar: View {
             }
             Spacer(minLength: 0)
         }
-        .frame(width: 230)
     }
 
-    private var empty: some View {
-        VStack(spacing: 7) {
-            Spacer(minLength: 0)
-            Image(systemName: "sparkles")
-                .font(.system(size: 18, weight: .light))
-                .foregroundStyle(Theme.chromeMuted.opacity(0.4))
-            Text("no agents running")
-                .font(Theme.mono(11))
-                .foregroundStyle(Theme.chromeMuted)
+    @ViewBuilder
+    private var footer: some View {
+        Rectangle().fill(Theme.chromeHairline).frame(height: 1)
+        HStack(spacing: 2) {
+            footerSegment(.agents, systemName: "sparkles", help: "Agents")
+            footerSegment(.history, systemName: "clock", help: "Session History")
             Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity)
-        .frame(height: 120)
+        .padding(.horizontal, Theme.space2)
+        .padding(.vertical, Theme.space1)
+    }
+
+    private func footerSegment(_ content: RightSidebarContent, systemName: String, help: String) -> some View {
+        FooterSegment(
+            systemName: systemName,
+            isActive: store.rightSidebarContent == content,
+            help: help
+        ) {
+            withAnimation(Theme.chromeTransition) {
+                store.setRightSidebarContent(content)
+            }
+        }
     }
 
     // Compact: a narrow rail of status-tinted agent icons; hover for detail.

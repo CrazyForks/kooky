@@ -135,6 +135,26 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(decoded.sidebarContent, .files)
     }
 
+    func testRightSidebarContentRoundtrips() throws {
+        var state = makeState()
+        state.rightSidebarContent = .history
+        let data = try JSONEncoder().encode(state)
+        let decoded = try JSONDecoder().decode(PersistedState.self, from: data)
+        XCTAssertEqual(decoded.rightSidebarContent, .history)
+    }
+
+    func testRightSidebarContentDecodesNilFromPreHistoryStateFiles() throws {
+        // state.json files written before the History pane omit the key —
+        // decode must succeed and leave it nil (→ `.agents`).
+        let data = try JSONEncoder().encode(makeState())
+        XCTAssertFalse(
+            String(decoding: data, as: UTF8.self).contains("rightSidebarContent"),
+            "nil must encode as an absent key, or old kooky versions choke on the file"
+        )
+        let decoded = try JSONDecoder().decode(PersistedState.self, from: data)
+        XCTAssertNil(decoded.rightSidebarContent)
+    }
+
     func testSidebarContentDecodesNilFromPreFileTreeStateFiles() throws {
         // state.json files written before the file-tree toggle existed omit
         // the key — decode must succeed and leave it nil (→ `.workspaces`).

@@ -97,11 +97,10 @@ final class NotificationInbox {
 /// renders (the panel rebuilds its host on every open, so each open is fresh).
 enum InboxTime {
     static func relative(from date: Date, now: Date = Date()) -> String {
-        let s = max(0, now.timeIntervalSince(date))
-        if s < 60 { return "now" }
-        if s < 3600 { return "\(Int(s / 60))m ago" }
-        if s < 86400 { return "\(Int(s / 3600))h ago" }
-        return "\(Int(s / 86400))d ago"
+        // One ago-vocabulary app-wide: the tiers live in `relativeAgeTier`
+        // (shared with the session-history rows); the inbox adds the suffix.
+        let tier = relativeAgeTier(max(0, now.timeIntervalSince(date)))
+        return tier == "now" ? tier : "\(tier) ago"
     }
 }
 

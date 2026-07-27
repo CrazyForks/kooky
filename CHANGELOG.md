@@ -2,6 +2,13 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.45.0 — 2026-07-27
+
+- New: **Session history** — flip the agent panel to its second page (the clock at the bottom) to browse every Claude Code and Codex conversation on your Mac, newest first, including ones started outside kooky. Search by title or project, filter by agent, and click a row to pick the conversation back up: a new tab opens in the conversation's own folder and resumes it with the agent's exact session ID.
+- Polish: the agent panel's top-bar toggle now uses the right-sidebar icon, mirroring the left sidebar's button.
+
+**SHA-256:** `8422af40c864785405ac202da6386886e148e0d73675daf65da0b11aa2b82fcc`
+
 ## v0.44.0 — 2026-07-27
 
 - New: an optional Kooky item in the macOS menu bar mirrors the live agent list across every window. The count appears only while agents are present; open the menu to see each tab title and project path on two lines, then pick one to jump straight to it.

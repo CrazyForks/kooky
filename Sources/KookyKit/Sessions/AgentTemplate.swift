@@ -698,6 +698,12 @@ extension AgentTemplate {
     /// merged on top via `all` at runtime.
     static let builtin: [AgentTemplate] = [.terminal, .claudeCode, .codex, .gemini, .opencode, .amp, .cursor, .copilot, .grok, .antigravity, .kimi, .pi, .ohMyPi, .reasonix, .kiro, .droid]
 
+    /// Builtin lookup by id — session-history resume, filter chips, and row
+    /// icons all resolve records back to a template through this.
+    static func builtin(id: String) -> AgentTemplate? {
+        builtin.first { $0.id == id }
+    }
+
     /// All templates available right now — `builtin` plus the user's custom
     /// agents from Settings → Agents. MainActor-isolated because it
     /// reads `KookySettingsModel.shared` to materialise custom entries.

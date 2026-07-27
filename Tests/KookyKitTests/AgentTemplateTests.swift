@@ -465,11 +465,14 @@ final class AgentTemplateTests: XCTestCase {
         let agents = AgentTemplate.builtin.filter { !$0.isShell }
         let expectedCommands = Set(agents.compactMap(\.initialCommand))
         let expectedPill = Set(agents.filter(\.reportsToolCalls).compactMap(\.initialCommand))
+        let historyIds = Set(AgentSessionScanner.supportedAgentIds)
+        let expectedHistory = Set(agents.filter { historyIds.contains($0.id) }.compactMap(\.initialCommand))
         XCTAssertFalse(expectedCommands.isEmpty)
+        XCTAssertFalse(expectedHistory.isEmpty)
 
-        // `| Name | `cmd` | <dot> | <pill> |` — the dot/pill cells are ● or –.
+        // `| Name | `cmd` | <dot> | <pill> | <history> |`.
         let row = try NSRegularExpression(
-            pattern: #"^\|[^|]+\|\s*`([^`]+)`\s*\|\s*(.)\s*\|\s*(.)\s*\|$"#,
+            pattern: #"^\|[^|]+\|\s*`([^`]+)`\s*\|\s*(.)\s*\|\s*(.)\s*\|\s*(.)\s*\|$"#,
             options: [.anchorsMatchLines]
         )
 
@@ -479,16 +482,20 @@ final class AgentTemplateTests: XCTestCase {
 
             var commands: Set<String> = []
             var pill: Set<String> = []
+            var history: Set<String> = []
             for match in row.matches(in: text, range: range) {
                 guard let cmdRange = Range(match.range(at: 1), in: text),
-                      let pillRange = Range(match.range(at: 3), in: text) else { continue }
+                      let pillRange = Range(match.range(at: 3), in: text),
+                      let historyRange = Range(match.range(at: 4), in: text) else { continue }
                 let command = String(text[cmdRange])
                 commands.insert(command)
                 if text[pillRange] == "✓" { pill.insert(command) }
+                if text[historyRange] == "✓" { history.insert(command) }
             }
 
             XCTAssertEqual(commands, expectedCommands, "\(name): agent table is out of sync with AgentTemplate.builtin")
             XCTAssertEqual(pill, expectedPill, "\(name): tool-pill column disagrees with reportsToolCalls")
+            XCTAssertEqual(history, expectedHistory, "\(name): session-history column disagrees with AgentSessionScanner.supportedAgentIds")
         }
     }
 

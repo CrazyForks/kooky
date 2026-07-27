@@ -217,6 +217,41 @@ struct ReorderDropZone<Item: Equatable>: View {
     }
 }
 
+/// One segment of a sidebar footer toggle (left sidebar's workspaces/files,
+/// right panel's agents/history). `HoverableIconButton` has no active-fill
+/// state, so this is its selected-capable sibling: active segments read
+/// `chromeActive` (same fill as the selected workspace row), hover reads
+/// `chromeHover`.
+struct FooterSegment: View {
+    let systemName: String
+    let isActive: Bool
+    let help: String
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(isActive ? Theme.chromeForeground : Theme.chromeMuted)
+                .frame(width: 26, height: 22)
+                .background(fill)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .help(help)
+    }
+
+    private var fill: Color {
+        if isActive { return Theme.chromeActive }
+        if isHovered { return Theme.chromeHover }
+        return .clear
+    }
+}
+
 /// Shared rename-popover body used by tab + workspace rename. Both render
 /// inside `.popover` modifiers anchored to their own row; the caller picks
 /// the arrowEdge so the popover points the right way.

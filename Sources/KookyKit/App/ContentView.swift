@@ -17,7 +17,7 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 if store.rightSidebarMode != .hidden {
                     Rectangle().fill(Theme.chromeHairline).frame(width: 1)
-                    AgentOverviewSidebar(mode: store.rightSidebarMode)
+                    AgentOverviewSidebar(store: store, mode: store.rightSidebarMode)
                 }
             }
         }
@@ -61,7 +61,7 @@ struct ContentView: View {
             OpenInButton(store: store)
                 .padding(.trailing, 2)
             HoverableIconButton(
-                systemName: "square.grid.2x2",
+                systemName: "sidebar.right",
                 fontSize: 12,
                 size: 28,
                 help: "Agent Panel"

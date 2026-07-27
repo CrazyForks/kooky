@@ -559,40 +559,6 @@ struct SidebarView: View {
     }
 }
 
-/// One segment of the sidebar's footer toggle. `HoverableIconButton` has no
-/// active-fill state, so this is its selected-capable sibling: active
-/// segments read `chromeActive` (same fill as the selected workspace row),
-/// hover reads `chromeHover`.
-private struct FooterSegment: View {
-    let systemName: String
-    let isActive: Bool
-    let help: String
-    let action: () -> Void
-
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(isActive ? Theme.chromeForeground : Theme.chromeMuted)
-                .frame(width: 26, height: 22)
-                .background(fill)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { isHovered = $0 }
-        .help(help)
-    }
-
-    private var fill: Color {
-        if isActive { return Theme.chromeActive }
-        if isHovered { return Theme.chromeHover }
-        return .clear
-    }
-}
-
 /// Drag source + drop target with a direction-aware edge indicator —
 /// `top` when origin is below (dragging up), `bottom` when origin is above
 /// (dragging down), so the line always shows where the dropped row will land.

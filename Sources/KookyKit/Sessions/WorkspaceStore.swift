@@ -78,6 +78,15 @@ enum SidebarContent: String, Codable, Equatable, Sendable {
     case files
 }
 
+/// What the right sidebar shows in full mode — the live agent overview or the
+/// on-disk session history. Mirrors `SidebarContent`'s footer-toggle model.
+/// Compact mode always renders agents: a 44pt icon rail can't say anything
+/// useful about a history row.
+enum RightSidebarContent: String, Codable, Equatable, Sendable {
+    case agents
+    case history
+}
+
 @MainActor
 @Observable
 final class WorkspaceStore {
@@ -96,6 +105,9 @@ final class WorkspaceStore {
     /// Left sidebar's middle content — workspace list or file tree. Persisted
     /// like `sidebarMode`; the footer toggle in `SidebarView` flips it.
     var sidebarContent: SidebarContent = .workspaces
+    /// Right sidebar's full-mode content — live agents or session history.
+    /// Persisted like `sidebarContent`; the panel's own footer toggle flips it.
+    var rightSidebarContent: RightSidebarContent = .agents
     /// Full-mode sidebar width, user-draggable from the trailing edge.
     /// `SidebarView.fullWidth` is the floor (the design width — the sidebar
     /// can only grow); compact stays fixed at `compactWidth` and hidden is
@@ -160,6 +172,14 @@ final class WorkspaceStore {
         guard rightSidebarMode != mode else { return }
         suspendSizePropagationForLayoutAnimation(active?.root.allEngines ?? [])
         rightSidebarMode = mode
+        scheduleSave()
+    }
+
+    /// Content-only swap like `setSidebarContent` — the panel keeps its width,
+    /// so no size-propagation suspension is needed.
+    func setRightSidebarContent(_ content: RightSidebarContent) {
+        guard rightSidebarContent != content else { return }
+        rightSidebarContent = content
         scheduleSave()
     }
 
@@ -349,7 +369,7 @@ final class WorkspaceStore {
             workspace.worktreePath = dir.standardizedFileURL
         }
         let session = spawnSession(template: template, initialCwd: dir, sshRemoteHost: workspace.sshRemoteHost)
-        wireSessionCallbacks(engine: session.engine, session: session, workspace: workspace)
+        wireSessionCallbacks(engine: session.engine, session: session, workspace: workspace, codexRolloutId: session.resumedConversationId)
         pane.tabs.append(session)
         pane.activeTabId = session.id
         // Worktrees insert right after their source (or after the source's
@@ -830,6 +850,7 @@ final class WorkspaceStore {
         template: AgentTemplate = .terminal,
         initialCwd: URL? = nil,
         conversationId: String? = nil,
+        forceResume: Bool = false,
         initialPrompt: String? = nil
     ) -> Session {
         guard let target = pane ?? workspace.activePane ?? workspace.root.firstPane else {
@@ -843,8 +864,8 @@ final class WorkspaceStore {
         let cwd = initialCwd
             ?? template.extraCwd.map { resolvedSpawnCwd(($0 as NSString).expandingTildeInPath) }
             ?? workspace.workingDirectory
-        let session = spawnSession(template: template, initialCwd: cwd, conversationId: conversationId, initialPrompt: initialPrompt, sshRemoteHost: workspace.sshRemoteHost)
-        wireSessionCallbacks(engine: session.engine, session: session, workspace: workspace)
+        let session = spawnSession(template: template, initialCwd: cwd, conversationId: conversationId, forceResume: forceResume, initialPrompt: initialPrompt, sshRemoteHost: workspace.sshRemoteHost)
+        wireSessionCallbacks(engine: session.engine, session: session, workspace: workspace, codexRolloutId: session.resumedConversationId)
         target.tabs.append(session)
         target.activeTabId = session.id
         if workspace.activePaneId != target.id {
@@ -859,6 +880,38 @@ final class WorkspaceStore {
     func duplicateTab(_ session: Session, in workspace: Workspace) -> Session? {
         guard let pane = pane(containing: session, in: workspace) else { return nil }
         return addTab(in: workspace, pane: pane, template: session.agent, initialCwd: session.currentDirectory)
+    }
+
+    /// History-list resume: a new tab in the active workspace, running the
+    /// record's agent with its resume arguments, spawned in the conversation's
+    /// own directory (a different cwd would break every file reference the
+    /// conversation holds — `resolvedSpawnCwd` still falls back to `$HOME`
+    /// when the directory is gone, which at least opens a resumable shell).
+    /// `forceResume` because a click on a history row is an explicit ask —
+    /// the `agents.resumeConversations` setting only governs automatic
+    /// relaunch-time resume.
+    @discardableResult
+    func resumeAgentSession(_ record: AgentSessionRecord) -> Session? {
+        guard let template = AgentTemplate.builtin(id: record.agentId),
+              template.supportsResume
+        else { return nil }
+        // The conversation lives on the LOCAL disk; an SSH workspace would
+        // wrap the launch in kooky-ssh and drop the resume id
+        // (`makeSessionConfig(sshHost:)`), yielding a plain remote tab. Land
+        // in the first local workspace — and when EVERY workspace is SSH,
+        // open one at the conversation's own directory, so a history click
+        // can never silently no-op.
+        let workspace = (active?.sshRemoteHost == nil ? active : nil)
+            ?? workspaces.first { $0.sshRemoteHost == nil }
+            ?? addWorkspace(workingDirectory: resolvedSpawnCwd(record.cwd.path))
+        activateWorkspace(workspace)
+        return addTab(
+            in: workspace,
+            template: template,
+            initialCwd: resolvedSpawnCwd(record.cwd.path),
+            conversationId: record.conversationId,
+            forceResume: true
+        )
     }
 
     /// Set or clear a user-provided tab title. Empty / whitespace input clears
@@ -957,7 +1010,7 @@ final class WorkspaceStore {
         for source in peerStores() where source !== self {
             if let session = source.surrenderSession(id: droppedId) {
                 attachSession(session, to: destPane, at: destIndex, in: workspace)
-                wireSessionCallbacks(engine: session.engine, session: session, workspace: workspace)
+                wireSessionCallbacks(engine: session.engine, session: session, workspace: workspace, codexRolloutId: session.conversationId)
                 return true
             }
         }
@@ -1182,7 +1235,7 @@ final class WorkspaceStore {
         let template = existing.activeTab?.agent ?? .terminal
         let cwd = existing.activeTab?.currentDirectory ?? workspace.workingDirectory
         let newSession = spawnSession(template: template, initialCwd: cwd, sshRemoteHost: workspace.sshRemoteHost)
-        wireSessionCallbacks(engine: newSession.engine, session: newSession, workspace: workspace)
+        wireSessionCallbacks(engine: newSession.engine, session: newSession, workspace: workspace, codexRolloutId: newSession.resumedConversationId)
         let newPane = Pane(tabs: [newSession], activeTabId: newSession.id)
         let firstChild = PaneNode(pane: existing)
         let secondChild = PaneNode(pane: newPane)
@@ -1480,7 +1533,7 @@ final class WorkspaceStore {
             // the workspace ref for cwd-sync callbacks).
             for pane in workspace.root.allPanes {
                 for session in pane.tabs {
-                    wireSessionCallbacks(engine: session.engine, session: session, workspace: workspace)
+                    wireSessionCallbacks(engine: session.engine, session: session, workspace: workspace, codexRolloutId: session.resumedConversationId)
                 }
             }
             if let id = ws.activePaneId, workspace.root.allPanes.contains(where: { $0.id == id }) {
@@ -1496,6 +1549,7 @@ final class WorkspaceStore {
         sidebarMode = state.sidebarMode ?? .full
         rightSidebarMode = state.rightSidebarMode ?? .hidden
         sidebarContent = state.sidebarContent ?? .workspaces
+        rightSidebarContent = state.rightSidebarContent ?? .agents
         sidebarWidth = state.sidebarWidth
             .map { SidebarView.clampWidth(CGFloat($0)) }
             ?? SidebarView.fullWidth
@@ -1539,7 +1593,7 @@ final class WorkspaceStore {
     /// Spawns the engine + Session. Caller wires `onPwdChange` / `onFocus`
     /// after a workspace ref is available — `restore` builds sessions before
     /// the workspace exists, so callbacks can't capture it here.
-    private func spawnSession(template: AgentTemplate, initialCwd: URL, sessionId: UUID = UUID(), conversationId: String? = nil, initialPrompt: String? = nil, sshRemoteHost: String? = nil) -> Session {
+    private func spawnSession(template: AgentTemplate, initialCwd: URL, sessionId: UUID = UUID(), conversationId: String? = nil, forceResume: Bool = false, initialPrompt: String? = nil, sshRemoteHost: String? = nil) -> Session {
         let engine = engineFactory()
         let extraOptions = optionsProvider(template.id)
         let persistsConversation = template.persistsConversation(extraOptions: extraOptions)
@@ -1548,10 +1602,13 @@ final class WorkspaceStore {
         // losing the persisted conversation id (it stays on disk so the
         // setting can be flipped back on later). Plain shells ignore the value
         // through `makeSessionConfig`, so we don't have to re-check here.
+        // `forceResume` bypasses the gate: picking a session from the History
+        // list is an explicit ask, not the automatic relaunch the setting
+        // exists to switch off.
         var normalizedConversationId = persistsConversation
             ? template.normalizedConversationId(conversationId)
             : nil
-        let resumeId = resumeProvider() ? normalizedConversationId : nil
+        let resumeId = (forceResume || resumeProvider()) ? normalizedConversationId : nil
         // Grok accepts a caller-assigned UUID for a fresh session. Generate it
         // before launch and persist the same value immediately, eliminating
         // the hook/file-discovery race every other agent has to solve. When
@@ -1594,6 +1651,14 @@ final class WorkspaceStore {
             agent: template,
             conversationId: normalizedConversationId
         )
+        // Mirror the drops `makeSessionConfig` applies downstream, so the
+        // field records what actually reached the command line: an SSH host
+        // never carries the LOCAL resume id (M5.rrrr), a non-empty initial
+        // prompt suppresses the resume fragment (M5.hh), and a template
+        // without a resume strategy never emits one at all.
+        let promptSuppressesResume = !(initialPrompt?.isEmpty ?? true)
+        session.resumedConversationId = (sshHost == nil && !promptSuppressesResume && template.supportsResume)
+            ? resumeId : nil
         if let sshHost {
             session.sshWorkspaceHost = sshHost
             // Optimistic: the remote shim's `running` marker confirms once
@@ -1612,7 +1677,18 @@ final class WorkspaceStore {
         raw.flatMap(normalizedTitle)
     }
 
-    private func wireSessionCallbacks(engine: any TerminalEngine, session: Session, workspace: Workspace) {
+    /// `codexRolloutId` is the id of the rollout file this session ALREADY
+    /// has on disk, nil when none exists yet — it steers the Codex usage
+    /// monitor's file resolution. Spawn-path callers pass
+    /// `session.resumedConversationId` (the post-gate value `spawnSession`
+    /// put on the command line — re-deriving `resumeProvider() ?
+    /// conversationId : nil` would miss a forced History-list resume);
+    /// the cross-window attach path passes `session.conversationId` instead,
+    /// because a live Codex tab's rollout predates the DESTINATION store's
+    /// monitor snapshot and would otherwise be excluded as another session's
+    /// file (the id is reliable there: the source window's monitor backfilled
+    /// it while the tab ran).
+    private func wireSessionCallbacks(engine: any TerminalEngine, session: Session, workspace: Workspace, codexRolloutId: String?) {
         // Initial refresh — without these, the status bar stays empty until
         // the user `cd`s or runs a command. Both fetchers silently hide
         // results for non-applicable cwds, so the calls are harmless.
@@ -1621,7 +1697,7 @@ final class WorkspaceStore {
         installGitWatcher(for: session)
         startCodexUsageIfNeeded(
             for: session,
-            resumingConversationId: resumeProvider() ? session.conversationId : nil
+            resumingConversationId: codexRolloutId
         )
         startKiroConversationIfNeeded(for: session)
         // Paste-time upload routing. Deliberately `sshWorkspaceHost` (spawn
@@ -1950,6 +2026,7 @@ final class WorkspaceStore {
             sidebarMode: sidebarMode,
             rightSidebarMode: rightSidebarMode,
             sidebarContent: sidebarContent,
+            rightSidebarContent: rightSidebarContent,
             sidebarWidth: Double(sidebarWidth)
         )
     }

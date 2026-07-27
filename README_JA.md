@@ -28,25 +28,25 @@ AI コーディングのために作られた、ミニマルでモダンな macO
 
 **ワンクリックで AI agent セッション。** `+` メニューから選ぶだけで、最初の prompt を打つ前に agent が起動します。15 個すべてが各 CLI 固有の session ID を使って kooky の再起動を跨いで会話を resume するので、tab を閉じて再度開いても直前の続きから再開できます。
 
-| Agent | コマンド | ユーザー待ち | ツール pill |
-| --- | --- | :---: | :---: |
-| Claude Code | `claude` | ✓ | ✓ |
-| Codex | `codex` | ✓ | ✗ |
-| Gemini CLI | `gemini` | ✓ | ✗ |
-| OpenCode | `opencode` | ✓ | ✗ |
-| Amp | `amp` | ✓ | ✗ |
-| Cursor CLI | `cursor-agent` | ✓ | ✗ |
-| Copilot CLI | `copilot` | ✓ | ✗ |
-| Grok Build | `grok` | ✗ | ✗ |
-| Antigravity CLI | `agy` | ✓ | ✗ |
-| Kimi Code | `kimi` | ✓ | ✗ |
-| Pi | `pi` | ✓ | ✓ |
-| Oh My Pi (new) | `omp` | ✓ | ✓ |
-| Reasonix (new) | `reasonix` | ✓ | ✓ |
-| Kiro CLI | `kiro-cli` | ✗ | ✗ |
-| Droid | `droid` | ✓ | ✗ |
+| Agent | コマンド | ユーザー待ち | ツール pill | セッション履歴 |
+| --- | --- | :---: | :---: | :---: |
+| Claude Code | `claude` | ✓ | ✓ | ✓ |
+| Codex | `codex` | ✓ | ✗ | ✓ |
+| Gemini CLI | `gemini` | ✓ | ✗ | ✗ |
+| OpenCode | `opencode` | ✓ | ✗ | ✗ |
+| Amp | `amp` | ✓ | ✗ | ✗ |
+| Cursor CLI | `cursor-agent` | ✓ | ✗ | ✗ |
+| Copilot CLI | `copilot` | ✓ | ✗ | ✗ |
+| Grok Build | `grok` | ✗ | ✗ | ✗ |
+| Antigravity CLI | `agy` | ✓ | ✗ | ✗ |
+| Kimi Code | `kimi` | ✓ | ✗ | ✗ |
+| Pi | `pi` | ✓ | ✓ | ✗ |
+| Oh My Pi (new) | `omp` | ✓ | ✓ | ✗ |
+| Reasonix (new) | `reasonix` | ✓ | ✓ | ✗ |
+| Kiro CLI | `kiro-cli` | ✗ | ✗ | ✗ |
+| Droid | `droid` | ✓ | ✗ | ✗ |
 
-**ユーザー待ち**: agent が停止して応答を必要としている時 (ツールの承認待ちを含む) にドットが琥珀色になります。Grok Build と Kiro CLI はこの信号を出さないため、ドットは実行中と終了のみを表します。**ツール pill**: 現在実行中のツールを pane 下部のステータスバーに表示します。使わない agent は Settings → Agents で非表示にできます。
+**ユーザー待ち**: agent が停止して応答を必要としている時 (ツールの承認待ちを含む) にドットが琥珀色になります。Grok Build と Kiro CLI はこの信号を出さないため、ドットは実行中と終了のみを表します。**ツール pill**: 現在実行中のツールを pane 下部のステータスバーに表示します。**セッション履歴**: 過去の会話を agent パネルの履歴ページで閲覧・再開できる agent を示します —— 下記参照。使わない agent は Settings → Agents で非表示にできます。
 
 ![対応する全 agent、それぞれ Settings で切り替え可能](img/screenshot-4.png)
 
@@ -79,6 +79,10 @@ AI コーディングのために作られた、ミニマルでモダンな macO
 ![全ウィンドウ横断で集約される通知センター](img/screenshot-3.png)
 
 **Agent パネル。** 上部のトグル (左サイドバーと同じ 3 段階の折りたたみ) で右サイドバーを開くと、全ウィンドウの agent を一覧でき、あなたを必要とする順に並びます —— ユーザー待ち、失敗、実行中、アイドル。任意の行をクリックすればその tab に直接ジャンプ、コンパクトモードではステータス色のドット付きアイコンの細い列に縮みます。
+
+**セッション履歴。** Agent パネルを 2 ページ目 (下部の時計アイコン) に切り替えると、この Mac 上のすべての Claude Code / Codex の会話を新しい順に一覧できます —— kooky の外で始めた会話も含まれます。タイトルやプロジェクトで検索、agent で絞り込み、行をクリックすればその会話を再開: 会話の元のフォルダに新しい tab が開き、agent 自身のセッション ID でコンテキストが完全に復元されます。
+
+![過去の Claude Code / Codex の会話を検索して再開](img/screenshot-5.webp)
 
 **メニューバーの Agent 一覧。** macOS のメニューバーに任意で Kooky アイテムを表示でき、agent が存在するときだけリアルタイムの件数が付きます。開くと、すべてのアクティブな agent tab のタイトルとプロジェクトパスを確認して直接ジャンプできるほか、Open Kooky、Settings、Keep Awake の 3 段階切り替え、Quit も利用できます。Settings → General → `show-in-menu-bar` で表示を切り替えられます。
 

@@ -92,6 +92,13 @@ final class Session: Identifiable {
     /// where the user left off. Per-Session because each tab owns its own
     /// conversation and `KOOKY_SURFACE_ID` routes hook payloads precisely.
     var conversationId: String?
+    /// The conversation id this spawn ACTUALLY resumed with, nil for a fresh
+    /// launch. Distinct from `conversationId` (which persists even while the
+    /// resume *setting* is off) — `spawnSession` records the value that
+    /// reached the command line, mirroring `makeSessionConfig`'s ssh/prompt
+    /// drops, so `wireSessionCallbacks` consumers (Codex usage monitor)
+    /// don't have to re-derive any gate. Runtime-only.
+    var resumedConversationId: String?
     /// Exit status of the most recent command — populated from libghostty's
     /// `OSC 133;D` event. `nil` until the shell reports its first finish (or
     /// when it omits the exit field). Not persisted: each launch starts fresh.
