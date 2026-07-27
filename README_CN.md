@@ -148,7 +148,8 @@ macOS **只拦第一次启动**。之后从 Spotlight、Dock、Finder 启动都�
 ./scripts/setup-libghostty.sh        # 一次性：把预编译的 libghostty xcframework 下到 Vendor/
 swift build
 swift run                            # 开发模式直接跑
-swift test                           # 700 个单测
+swift test                           # 750+ 个单测
+./scripts/bench.sh                   # 性能基准（release 构建，结果记录在 bench-history.jsonl）
 
 ./scripts/build-app.sh               # 产出 dist/Kooky.app
 ./scripts/build-dmg.sh --build       # 产出 dist/Kooky-vX.Y.Z.dmg
