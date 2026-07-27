@@ -50,3 +50,4 @@ IDEAS.md
 
 # Antigravity CLI runtime state (project-scoped symlinks into ~/.gemini)
 .antigravitycli/
+bench-history.jsonl

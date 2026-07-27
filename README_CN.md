@@ -32,19 +32,19 @@
 | --- | --- | :---: | :---: | :---: |
 | Claude Code | `claude` | ✓ | ✓ | ✓ |
 | Codex | `codex` | ✓ | ✗ | ✓ |
-| Gemini CLI | `gemini` | ✓ | ✗ | ✗ |
-| OpenCode | `opencode` | ✓ | ✗ | ✗ |
+| Gemini CLI | `gemini` | ✓ | ✗ | ✓ |
+| OpenCode | `opencode` | ✓ | ✗ | ✓ |
 | Amp | `amp` | ✓ | ✗ | ✗ |
-| Cursor CLI | `cursor-agent` | ✓ | ✗ | ✗ |
-| Copilot CLI | `copilot` | ✓ | ✗ | ✗ |
-| Grok Build | `grok` | ✗ | ✗ | ✗ |
+| Cursor CLI | `cursor-agent` | ✓ | ✗ | ✓ |
+| Copilot CLI | `copilot` | ✓ | ✗ | ✓ |
+| Grok Build | `grok` | ✗ | ✗ | ✓ |
 | Antigravity CLI | `agy` | ✓ | ✗ | ✗ |
-| Kimi Code | `kimi` | ✓ | ✗ | ✗ |
-| Pi | `pi` | ✓ | ✓ | ✗ |
-| Oh My Pi (new) | `omp` | ✓ | ✓ | ✗ |
-| Reasonix (new) | `reasonix` | ✓ | ✓ | ✗ |
-| Kiro CLI | `kiro-cli` | ✗ | ✗ | ✗ |
-| Droid | `droid` | ✓ | ✗ | ✗ |
+| Kimi Code | `kimi` | ✓ | ✗ | ✓ |
+| Pi | `pi` | ✓ | ✓ | ✓ |
+| Oh My Pi (new) | `omp` | ✓ | ✓ | ✓ |
+| Reasonix (new) | `reasonix` | ✓ | ✓ | ✓ |
+| Kiro CLI | `kiro-cli` | ✗ | ✗ | ✓ |
+| Droid | `droid` | ✓ | ✗ | ✓ |
 
 **等你处理**:agent 停下来需要你回应时圆点变琥珀色,包括在等你批准某个工具;Grok Build 和 Kiro CLI 没有这个信号,所以它们的圆点只报运行中和已结束。**工具 pill**:在 pane 底部状态栏显示当前正在跑的工具。**会话历史**:标出哪些 agent 的历史对话能在 agent 面板的历史页里翻阅和恢复——见下文。用不上的 agent 可以在 Settings → Agents 里隐藏。
 
@@ -80,7 +80,7 @@
 
 **Agent 面板。** 顶栏有个开关（三种折叠状态，跟左边栏一样）能拉出右侧边栏，把所有窗口里的 agent 一次性列出来，按谁最需要你排序：等你处理、失败、运行中、空闲。点任意一行直接跳到对应 tab；折叠模式会收成一条带状态色圆点的窄图标栏。
 
-**会话历史。** 把 agent 面板翻到第二页（底部的时钟图标），这台 Mac 上所有 Claude Code 和 Codex 的历史对话按最近排序全在这里——在 kooky 外面开的也算。按标题或项目搜索、按 agent 过滤，点一行就接着聊：kooky 会在那个对话原来的目录里开一个新 tab，用 agent 自己的会话 ID 把上下文完整恢复回来。
+**会话历史。** 把 agent 面板翻到第二页（底部的时钟图标），大部分内置 agent（见上表）的历史对话按最近排序全在这里——在 kooky 外面开的也算。按标题或项目搜索、按 agent 过滤，点一行就接着聊：kooky 会在那个对话原来的目录里开一个新 tab，用 agent 自己的会话 ID 把上下文完整恢复回来。
 
 ![搜索并恢复任意一条 Claude Code / Codex 历史对话](img/screenshot-5.webp)
 

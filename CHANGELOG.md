@@ -2,6 +2,15 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.45.1 — 2026-07-27
+
+- New: Session history now covers thirteen agents — Pi, Oh My Pi, Kimi Code, OpenCode, Grok Build, Cursor CLI, Copilot CLI, Kiro CLI, Gemini CLI, Droid, and Reasonix join Claude Code and Codex. Each store is read in its agent's own on-disk format, and conversations started outside kooky appear too. Amp stores threads server-side and can't join; Antigravity is pending format verification.
+- Fixed: Copilot CLI conversation resume — the CLI ships resume-by-id as `--resume=<id>`, not the `--session-id` flag kooky passed, so resumed Copilot tabs silently started fresh. History clicks and relaunch resume both work now.
+- Fixed: the History pane keeps its agent filter and search text when the panel is collapsed or its mode is cycled — they no longer reset to "all".
+- Faster: history scans read all stores in parallel and each Codex rollout once — a full scan of ~200 real conversations dropped from roughly half a second to ~0.15s, always off the main thread.
+
+**SHA-256:** `f1f90fa356a4ada671d92af990f4dc14e63ee1cc7cf4848861f599d8e0839af6`
+
 ## v0.45.0 — 2026-07-27
 
 - New: **Session history** — flip the agent panel to its second page (the clock at the bottom) to browse every Claude Code and Codex conversation on your Mac, newest first, including ones started outside kooky. Search by title or project, filter by agent, and click a row to pick the conversation back up: a new tab opens in the conversation's own folder and resumes it with the agent's exact session ID.

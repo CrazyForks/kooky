@@ -108,6 +108,12 @@ final class WorkspaceStore {
     /// Right sidebar's full-mode content — live agents or session history.
     /// Persisted like `sidebarContent`; the panel's own footer toggle flips it.
     var rightSidebarContent: RightSidebarContent = .agents
+    /// History pane's agent filter + search text. Runtime-only, but owned by
+    /// the STORE, not the view: collapsing the panel (or cycling its mode)
+    /// unmounts `SessionHistoryView`, and `@State` there would reset both to
+    /// defaults on every reopen.
+    var historyFilterAgentId: String?
+    var historySearchQuery = ""
     /// Full-mode sidebar width, user-draggable from the trailing edge.
     /// `SidebarView.fullWidth` is the floor (the design width — the sidebar
     /// can only grow); compact stays fixed at `compactWidth` and hidden is

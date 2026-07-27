@@ -32,19 +32,19 @@ AI コーディングのために作られた、ミニマルでモダンな macO
 | --- | --- | :---: | :---: | :---: |
 | Claude Code | `claude` | ✓ | ✓ | ✓ |
 | Codex | `codex` | ✓ | ✗ | ✓ |
-| Gemini CLI | `gemini` | ✓ | ✗ | ✗ |
-| OpenCode | `opencode` | ✓ | ✗ | ✗ |
+| Gemini CLI | `gemini` | ✓ | ✗ | ✓ |
+| OpenCode | `opencode` | ✓ | ✗ | ✓ |
 | Amp | `amp` | ✓ | ✗ | ✗ |
-| Cursor CLI | `cursor-agent` | ✓ | ✗ | ✗ |
-| Copilot CLI | `copilot` | ✓ | ✗ | ✗ |
-| Grok Build | `grok` | ✗ | ✗ | ✗ |
+| Cursor CLI | `cursor-agent` | ✓ | ✗ | ✓ |
+| Copilot CLI | `copilot` | ✓ | ✗ | ✓ |
+| Grok Build | `grok` | ✗ | ✗ | ✓ |
 | Antigravity CLI | `agy` | ✓ | ✗ | ✗ |
-| Kimi Code | `kimi` | ✓ | ✗ | ✗ |
-| Pi | `pi` | ✓ | ✓ | ✗ |
-| Oh My Pi (new) | `omp` | ✓ | ✓ | ✗ |
-| Reasonix (new) | `reasonix` | ✓ | ✓ | ✗ |
-| Kiro CLI | `kiro-cli` | ✗ | ✗ | ✗ |
-| Droid | `droid` | ✓ | ✗ | ✗ |
+| Kimi Code | `kimi` | ✓ | ✗ | ✓ |
+| Pi | `pi` | ✓ | ✓ | ✓ |
+| Oh My Pi (new) | `omp` | ✓ | ✓ | ✓ |
+| Reasonix (new) | `reasonix` | ✓ | ✓ | ✓ |
+| Kiro CLI | `kiro-cli` | ✗ | ✗ | ✓ |
+| Droid | `droid` | ✓ | ✗ | ✓ |
 
 **ユーザー待ち**: agent が停止して応答を必要としている時 (ツールの承認待ちを含む) にドットが琥珀色になります。Grok Build と Kiro CLI はこの信号を出さないため、ドットは実行中と終了のみを表します。**ツール pill**: 現在実行中のツールを pane 下部のステータスバーに表示します。**セッション履歴**: 過去の会話を agent パネルの履歴ページで閲覧・再開できる agent を示します —— 下記参照。使わない agent は Settings → Agents で非表示にできます。
 
@@ -80,7 +80,7 @@ AI コーディングのために作られた、ミニマルでモダンな macO
 
 **Agent パネル。** 上部のトグル (左サイドバーと同じ 3 段階の折りたたみ) で右サイドバーを開くと、全ウィンドウの agent を一覧でき、あなたを必要とする順に並びます —— ユーザー待ち、失敗、実行中、アイドル。任意の行をクリックすればその tab に直接ジャンプ、コンパクトモードではステータス色のドット付きアイコンの細い列に縮みます。
 
-**セッション履歴。** Agent パネルを 2 ページ目 (下部の時計アイコン) に切り替えると、この Mac 上のすべての Claude Code / Codex の会話を新しい順に一覧できます —— kooky の外で始めた会話も含まれます。タイトルやプロジェクトで検索、agent で絞り込み、行をクリックすればその会話を再開: 会話の元のフォルダに新しい tab が開き、agent 自身のセッション ID でコンテキストが完全に復元されます。
+**セッション履歴。** Agent パネルを 2 ページ目 (下部の時計アイコン) に切り替えると、ほとんどの内蔵 agent (上の表参照) の過去の会話を新しい順に一覧できます —— kooky の外で始めた会話も含まれます。タイトルやプロジェクトで検索、agent で絞り込み、行をクリックすればその会話を再開: 会話の元のフォルダに新しい tab が開き、agent 自身のセッション ID でコンテキストが完全に復元されます。
 
 ![過去の Claude Code / Codex の会話を検索して再開](img/screenshot-5.webp)
 

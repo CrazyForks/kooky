@@ -34,10 +34,51 @@ struct AgentSessionRecord: Identifiable, Hashable, Sendable {
 /// session transcript can be tens of MB, but everything the list needs
 /// (title, cwd, id) lives in the first lines.
 enum AgentSessionScanner {
-    /// The agents whose session stores this scanner reads. Single source for
-    /// the History view's filter chips and the README table's session-history
-    /// column guard test — extend it alongside a new `scan` branch.
-    static let supportedAgentIds: [String] = [AgentTemplate.claudeCodeID, AgentTemplate.codex.id]
+    /// One agent's session store: where it lives by default and how to turn
+    /// it into records. `scan` iterates this table and `supportedAgentIds`
+    /// derives from it, so a new agent is exactly one entry — the filter
+    /// chips and the README-table guard test follow automatically.
+    struct Store: Sendable {
+        let agentId: String
+        let defaultRoot: @Sendable () -> URL
+        let collect: @Sendable (URL) -> [AgentSessionRecord]
+    }
+
+    private static func home(_ path: String) -> @Sendable () -> URL {
+        { FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(path) }
+    }
+
+    static let stores: [Store] = [
+        Store(agentId: AgentTemplate.claudeCodeID, defaultRoot: home(".claude/projects"), collect: collectClaude),
+        // Static default root only: the scan isn't tied to any live session,
+        // so there's no shell env to consult (`CodexUsageMonitor` needs one
+        // because a Dock-launched kooky lacks the user's CODEX_HOME; the
+        // ProcessInfo fallback inside `defaultSessionsRoot` is the best
+        // available).
+        Store(agentId: AgentTemplate.codex.id, defaultRoot: { CodexUsageMonitor.defaultSessionsRoot() }, collect: collectCodex),
+        Store(agentId: AgentTemplate.pi.id, defaultRoot: home(".pi/agent/sessions"),
+              collect: { piStyleRecords(under: $0, agentId: AgentTemplate.pi.id) }),
+        Store(agentId: AgentTemplate.ohMyPi.id, defaultRoot: home(".omp/agent/sessions"),
+              collect: { piStyleRecords(under: $0, agentId: AgentTemplate.ohMyPi.id) }),
+        Store(agentId: AgentTemplate.kimi.id, defaultRoot: home(".kimi-code"), collect: collectKimi),
+        Store(agentId: AgentTemplate.opencode.id, defaultRoot: home(".local/share/opencode/opencode.db"), collect: collectOpencode),
+        Store(agentId: AgentTemplate.grok.id, defaultRoot: home(".grok/sessions"), collect: collectGrok),
+        Store(agentId: AgentTemplate.cursor.id, defaultRoot: home(".cursor/chats"), collect: collectCursor),
+        Store(agentId: AgentTemplate.copilot.id, defaultRoot: home(".copilot/session-state"), collect: collectCopilot),
+        Store(agentId: AgentTemplate.kiro.id, defaultRoot: home("Library/Application Support/kiro-cli/data.sqlite3"), collect: collectKiro),
+        Store(agentId: AgentTemplate.gemini.id, defaultRoot: home(".gemini/tmp"), collect: collectGemini),
+        Store(agentId: AgentTemplate.droid.id, defaultRoot: home(".factory/sessions"), collect: collectDroid),
+        Store(agentId: AgentTemplate.reasonix.id, defaultRoot: home(".reasonix/projects"), collect: collectReasonix),
+        // Absent by design: Amp keeps threads server-side (the local files
+        // are create-time stubs with no cwd or content), and Antigravity's
+        // CLI store layout is unverified — every local sample is the IDE's;
+        // one real `agy` conversation pins it.
+    ]
+
+    /// The agents whose session stores this scanner reads — derived from the
+    /// table above so the roster and the scan branches can't drift.
+    static let supportedAgentIds: [String] = stores.map(\.agentId)
+
     /// Head bytes per file. Big enough to clear oversized leading lines
     /// (Codex `session_meta` carries the whole base_instructions blob, which
     /// alone can pass 64KB — the M5.iiii lesson) while keeping a 300-file
@@ -45,40 +86,99 @@ enum AgentSessionScanner {
     static let headByteLimit = 262_144
     /// Per-agent record cap. Files are stat'd and mtime-sorted BEFORE any
     /// content is read, so the cap bounds parsing work, not just list length.
+    /// This is the ONLY cap — a merged-list cap was tried and removed: it
+    /// clipped the data the filter chips and search operate on, so an agent
+    /// whose newest session was old enough could vanish entirely while
+    /// "search is the deep-recall path" claimed otherwise.
     static let perAgentCap = 150
 
-    static func scan(claudeProjectsRoot: URL, codexSessionsRoot: URL) -> [AgentSessionRecord] {
-        let claude = scanStore(files: claudeSessionFiles(under: claudeProjectsRoot), parse: claudeRecord)
-        let codex = scanStore(files: codexRolloutFiles(under: codexSessionsRoot), parse: codexRecord)
-        return (claude + codex).sorted { $0.lastActivity > $1.lastActivity }
+    /// Production entry — every store at its real default location. The
+    /// explicit name makes "reads the user's actual agent stores" a
+    /// deliberate call at each call site; everything else (tests, fixtures)
+    /// must build a roots dict for `scan(roots:)`, so an accidental
+    /// real-store scan is unrepresentable rather than convention-guarded.
+    static func scanDefaultRoots() -> [AgentSessionRecord] {
+        scan(roots: Dictionary(uniqueKeysWithValues: stores.map { ($0.agentId, $0.defaultRoot()) }))
     }
 
-    private static func scanStore(
-        files: [(url: URL, mtime: Date)],
-        parse: (URL, Date) -> AgentSessionRecord?
+    /// Stores without an entry in `roots` are skipped; a missing/empty root
+    /// yields an empty slice, never an error. Stores are independent, so
+    /// they collect CONCURRENTLY — wall time is roughly the slowest store
+    /// instead of the sum (measured ~2x on a full scan; parallelism was
+    /// declined at 2 stores and revisited at 13). `concurrentPerform` keeps
+    /// the call synchronous, so the detached refresh task and tests use it
+    /// alike.
+    static func scan(roots: [String: URL]) -> [AgentSessionRecord] {
+        final class Collector: @unchecked Sendable {
+            private let lock = NSLock()
+            private var slices: [(index: Int, records: [AgentSessionRecord])] = []
+            func add(_ index: Int, _ records: [AgentSessionRecord]) {
+                lock.lock()
+                slices.append((index, records))
+                lock.unlock()
+            }
+            /// Table order first, so equal-timestamp records tie-break
+            /// deterministically and the refresh equality gate never sees
+            /// ordering-only diffs across runs.
+            var ordered: [AgentSessionRecord] {
+                lock.lock()
+                defer { lock.unlock() }
+                return slices.sorted { $0.index < $1.index }.flatMap(\.records)
+            }
+        }
+        let collector = Collector()
+        DispatchQueue.concurrentPerform(iterations: stores.count) { index in
+            let store = stores[index]
+            guard let root = roots[store.agentId] else { return }
+            collector.add(index, store.collect(root))
+        }
+        return collector.ordered.sorted {
+            $0.lastActivity != $1.lastActivity
+                ? $0.lastActivity > $1.lastActivity
+                : $0.id < $1.id
+        }
+    }
+
+    static func scanStore<Item>(
+        files: [(item: Item, mtime: Date)],
+        parse: (Item, Date) -> AgentSessionRecord?
     ) -> [AgentSessionRecord] {
         files
             .sorted { $0.mtime > $1.mtime }
             .prefix(perAgentCap)
-            .compactMap { parse($0.url, $0.mtime) }
+            .compactMap { parse($0.item, $0.mtime) }
+    }
+
+    private static func collectClaude(root: URL) -> [AgentSessionRecord] {
+        scanStore(files: claudeSessionFiles(under: root), parse: claudeRecord)
+    }
+
+    private static func collectCodex(root: URL) -> [AgentSessionRecord] {
+        scanStore(files: codexRolloutFiles(under: root), parse: codexRecord)
     }
 
     // MARK: Claude Code (~/.claude/projects/<munged-cwd>/<uuid>.jsonl)
 
-    private static func claudeSessionFiles(under root: URL) -> [(url: URL, mtime: Date)] {
+    /// The `root/<project-dir>[/subdir]/*.jsonl` walk Claude, Pi-style, and
+    /// Reasonix stores share; `isSession` carries each store's filename
+    /// rules. One home for the stat-then-cap enumeration invariant.
+    static func projectFiles(
+        under root: URL,
+        subdir: String? = nil,
+        isSession: (URL) -> Bool
+    ) -> [(item: URL, mtime: Date)] {
         let fm = FileManager.default
         guard let projects = try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else {
             return []
         }
-        return projects.flatMap { project -> [(url: URL, mtime: Date)] in
+        return projects.flatMap { project -> [(item: URL, mtime: Date)] in
+            let dir = subdir.map { project.appendingPathComponent($0, isDirectory: true) } ?? project
             guard let files = try? fm.contentsOfDirectory(
-                at: project, includingPropertiesForKeys: [.contentModificationDateKey]
+                at: dir, includingPropertiesForKeys: [.contentModificationDateKey]
             ) else { return [] }
             return files.compactMap { file in
-                // Session files sit next to same-named checkpoint DIRECTORIES;
-                // the UUID gate also keeps stray non-session jsonl out.
                 guard file.pathExtension == "jsonl",
-                      UUID(uuidString: file.deletingPathExtension().lastPathComponent) != nil,
+                      isSession(file),
                       let mtime = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
                 else { return nil }
                 return (file, mtime)
@@ -86,8 +186,17 @@ enum AgentSessionScanner {
         }
     }
 
+    private static func claudeSessionFiles(under root: URL) -> [(item: URL, mtime: Date)] {
+        // Session files sit next to same-named checkpoint DIRECTORIES;
+        // the UUID gate also keeps stray non-session jsonl out.
+        projectFiles(under: root) { file in
+            UUID(uuidString: file.deletingPathExtension().lastPathComponent) != nil
+        }
+    }
+
     private static let customTitleMarker = Data("custom-title".utf8)
-    private static let summaryMarker = Data("\"summary\"".utf8)
+    /// Also gates Gemini's `$set.summary` walk in AgentSessionStores.swift.
+    static let summaryMarker = Data("\"summary\"".utf8)
 
     static func claudeRecord(file: URL, mtime: Date) -> AgentSessionRecord? {
         let conversationId = file.deletingPathExtension().lastPathComponent
@@ -144,7 +253,7 @@ enum AgentSessionScanner {
 
     /// Claude `message.content` is either a plain string or an array of
     /// content blocks; the first text block carries what the user typed.
-    private static func messageContent(_ content: Any?) -> String? {
+    static func messageContent(_ content: Any?) -> String? {
         if let text = content as? String { return text }
         guard let blocks = content as? [[String: Any]] else { return nil }
         for block in blocks where block["type"] as? String == "text" {
@@ -155,14 +264,14 @@ enum AgentSessionScanner {
 
     // MARK: Codex (~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl)
 
-    private static func codexRolloutFiles(under root: URL) -> [(url: URL, mtime: Date)] {
+    private static func codexRolloutFiles(under root: URL) -> [(item: URL, mtime: Date)] {
         let fm = FileManager.default
         guard let enumerator = fm.enumerator(
             at: root,
             includingPropertiesForKeys: [.contentModificationDateKey],
             options: [.skipsHiddenFiles]
         ) else { return [] }
-        var result: [(url: URL, mtime: Date)] = []
+        var result: [(item: URL, mtime: Date)] = []
         for case let file as URL in enumerator {
             guard file.pathExtension == "jsonl",
                   file.lastPathComponent.hasPrefix("rollout-"),
@@ -173,17 +282,32 @@ enum AgentSessionScanner {
         return result
     }
 
+    private static let userMessageMarker = Data("user_message".utf8)
+
     static func codexRecord(file: URL, mtime: Date) -> AgentSessionRecord? {
-        // id + cwd come from the existing session_meta readers, which handle
-        // two things a head-limited re-parse would regress on: the legacy
-        // `session_id` key fallback, and a meta line larger than any fixed
-        // head cap (they read newline-bounded, up to 4MB).
-        guard let conversationId = CodexUsageMonitor.sessionMetaConversationId(atPath: file.path),
-              let cwd = CodexUsageMonitor.sessionMetaCwd(atPath: file.path)
+        let lines = headLines(of: file)
+        // The meta usually parses straight from the in-head first line — one
+        // read for the whole record. Only a session_meta line LARGER than the
+        // head cap (truncated -> parse fails) falls back to the monitor's
+        // newline-bounded 4MB reader; that reader also owns the legacy
+        // `session_id` key fallback, which the payload accessors preserve.
+        let meta: [String: Any]?
+        if let first = lines.first, let object = jsonObject(first),
+           object["type"] as? String == "session_meta" {
+            meta = object["payload"] as? [String: Any]
+        } else {
+            meta = CodexUsageMonitor.sessionMetaPayload(atPath: file.path)
+        }
+        guard let meta,
+              let conversationId = CodexUsageMonitor.conversationId(fromSessionMetaPayload: meta),
+              let cwd = CodexUsageMonitor.cwd(fromSessionMetaPayload: meta)
         else { return nil }
         var title: String?
-        for line in headLines(of: file) {
-            guard let object = jsonObject(line) else { continue }
+        for line in lines.dropFirst() {
+            // The head is dominated by the giant session_meta and injected
+            // developer/context lines; only `user_message` events can carry
+            // the title, so gate the JSON parse on their byte marker.
+            guard line.range(of: userMessageMarker) != nil, let object = jsonObject(line) else { continue }
             // `user_message` events carry exactly what the user typed —
             // unlike the first `response_item` user message, which is the
             // AGENTS.md / environment injection.
@@ -212,14 +336,14 @@ enum AgentSessionScanner {
     /// directly, so decoding ~256KB per file to `String` would be a wasted
     /// full pass. A line truncated at the boundary simply fails JSON parsing
     /// and is skipped.
-    private static func headLines(of file: URL) -> [Data] {
+    static func headLines(of file: URL) -> [Data] {
         guard let handle = try? FileHandle(forReadingFrom: file) else { return [] }
         defer { try? handle.close() }
         guard let data = try? handle.read(upToCount: headByteLimit), !data.isEmpty else { return [] }
         return data.split(separator: UInt8(ascii: "\n"))
     }
 
-    private static func jsonObject(_ line: Data) -> [String: Any]? {
+    static func jsonObject(_ line: Data) -> [String: Any]? {
         (try? JSONSerialization.jsonObject(with: line)) as? [String: Any]
     }
 
@@ -228,7 +352,7 @@ enum AgentSessionScanner {
     /// `<system-reminder>`, Codex XML wrappers) and the Claude hook caveat all
     /// lead with a recognizable prefix — reject those and let the caller try
     /// the next candidate line.
-    private static func displayableUserText(_ raw: String?) -> String? {
+    static func displayableUserText(_ raw: String?) -> String? {
         guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
               !trimmed.isEmpty,
               !trimmed.hasPrefix("<"),
@@ -241,7 +365,7 @@ enum AgentSessionScanner {
     /// lines; the record stores one bounded line (`singleLine` is the shared
     /// tooltip-safety rule — an interior newline must never survive into
     /// composed UI strings).
-    private static func cleanedTitle(_ raw: String) -> String {
+    static func cleanedTitle(_ raw: String) -> String {
         let flattened = singleLine(raw).trimmingCharacters(in: .whitespaces)
         return String(flattened.prefix(160))
     }
@@ -257,22 +381,7 @@ enum AgentSessionScanner {
 @Observable
 final class AgentSessionHistory {
     static let shared = AgentSessionHistory()
-    /// `internal` so tests can build isolated instances against fixture roots.
-    init(claudeProjectsRoot: URL? = nil, codexSessionsRoot: URL? = nil) {
-        self.claudeProjectsRoot = claudeProjectsRoot
-            ?? FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".claude/projects", isDirectory: true)
-        // Static default root only: the scan isn't tied to any live session,
-        // so there's no shell env to consult (`CodexUsageMonitor` needs one
-        // because a Dock-launched kooky lacks the user's CODEX_HOME; here the
-        // ProcessInfo fallback inside `defaultSessionsRoot` is the best
-        // available).
-        self.codexSessionsRoot = codexSessionsRoot
-            ?? CodexUsageMonitor.defaultSessionsRoot()
-    }
-
-    private let claudeProjectsRoot: URL
-    private let codexSessionsRoot: URL
+    init() {}
     /// Appear-triggered refreshes within this window reuse the last result —
     /// every panel remount (agents↔history flip, hidden↔full) fires one, and
     /// a full rescan is ~75MB of file-head I/O. The header's rescan button
@@ -280,6 +389,9 @@ final class AgentSessionHistory {
     private static let minSecondsBetweenScans: TimeInterval = 30
 
     private(set) var records: [AgentSessionRecord] = []
+    /// Agents present in `records`, cached at the write so the chips row
+    /// doesn't rebuild the set per keystroke.
+    private(set) var presentAgentIds: Set<String> = []
     /// True only until the FIRST scan lands — refreshes after that keep the
     /// stale list on screen instead of flashing a spinner over it.
     private(set) var isInitialLoad = true
@@ -296,16 +408,17 @@ final class AgentSessionHistory {
             return
         }
         isScanning = true
-        let claudeRoot = claudeProjectsRoot
-        let codexRoot = codexSessionsRoot
         Task {
             let result = await Task.detached(priority: .utility) {
-                AgentSessionScanner.scan(claudeProjectsRoot: claudeRoot, codexSessionsRoot: codexRoot)
+                AgentSessionScanner.scanDefaultRoots()
             }.value
             // Equality gate: most rescans find nothing new, and an
             // `@Observable` write re-renders every window's History pane
             // regardless of change.
-            if records != result { records = result }
+            if records != result {
+                records = result
+                presentAgentIds = Set(result.map(\.agentId))
+            }
             if isInitialLoad { isInitialLoad = false }
             lastScanCompleted = Date()
             isScanning = false
@@ -343,12 +456,9 @@ private let monthDayFormatter: DateFormatter = {
 /// session list; a click resumes that conversation in a new tab of the
 /// active workspace.
 struct SessionHistoryView: View {
-    let store: WorkspaceStore
+    @Bindable var store: WorkspaceStore
     var history = AgentSessionHistory.shared
 
-    @State private var query = ""
-    /// nil = every agent; else a builtin `AgentTemplate` id.
-    @State private var agentFilter: String?
     /// Keeps the spinner up for a beat after a click: the scan usually
     /// finishes faster than the eye, and a spinner that never visibly
     /// appears reads as a dead button. The real in-flight fact is the
@@ -419,13 +529,13 @@ struct SessionHistoryView: View {
             // color modifiers and renders at the system placeholder
             // brightness, which reads glaring on dark chrome.
             ZStack(alignment: .leading) {
-                if query.isEmpty {
+                if store.historySearchQuery.isEmpty {
                     Text("search sessions")
                         .font(Theme.mono(11))
                         .foregroundStyle(Theme.chromeMuted.opacity(0.5))
                         .allowsHitTesting(false)
                 }
-                TextField("", text: $query)
+                TextField("", text: $store.historySearchQuery)
                     .textFieldStyle(.plain)
                     .font(Theme.mono(11))
                     .foregroundStyle(Theme.chromeForeground)
@@ -440,25 +550,29 @@ struct SessionHistoryView: View {
     }
 
     private var filterChips: some View {
-        HStack(spacing: 4) {
-            filterChip(nil, label: "all")
-            // Chips for the stores the scanner ACTUALLY reads, not for
-            // whatever happens to be in the current result set — a filter
-            // that disappears because its list is momentarily empty would
-            // drop the user back to `all` mid-browse.
-            ForEach(AgentSessionScanner.supportedAgentIds, id: \.self) { agentId in
-                filterChip(agentId, label: AgentTemplate.builtin(id: agentId)?.title.lowercased() ?? agentId)
+        // With nine scanned stores the full roster can't fit a 230pt panel —
+        // chips show only the agents PRESENT in the results (in roster
+        // order), which on any one machine is a handful. The active filter's
+        // chip stays even when its store scans empty, so a rescan can't
+        // silently bounce the user back to `all`; the horizontal scroll is
+        // the everything-installed fallback.
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 4) {
+                filterChip(nil, label: "all")
+                let present = history.presentAgentIds
+                ForEach(AgentSessionScanner.supportedAgentIds.filter { present.contains($0) || $0 == store.historyFilterAgentId }, id: \.self) { agentId in
+                    filterChip(agentId, label: AgentTemplate.builtin(id: agentId)?.title.lowercased() ?? agentId)
+                }
             }
-            Spacer(minLength: 0)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
     }
 
     private func filterChip(_ agentId: String?, label: String) -> some View {
-        let isActive = agentFilter == agentId
+        let isActive = store.historyFilterAgentId == agentId
         return Button {
-            agentFilter = agentId
+            store.historyFilterAgentId = agentId
         } label: {
             Text(label)
                 .font(Theme.mono(10, weight: isActive ? .semibold : .regular))
@@ -473,7 +587,9 @@ struct SessionHistoryView: View {
     }
 
     private var filteredRecords: [AgentSessionRecord] {
-        history.records.filter { record in
+        let query = store.historySearchQuery
+        let agentFilter = store.historyFilterAgentId
+        return history.records.filter { record in
             if let agentFilter, record.agentId != agentFilter { return false }
             guard !query.isEmpty else { return true }
             return record.title.localizedCaseInsensitiveContains(query)

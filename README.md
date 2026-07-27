@@ -32,19 +32,19 @@ A minimal modern terminal built for AI coding. Sidebar workspaces; horizontal / 
 | --- | --- | :---: | :---: | :---: |
 | Claude Code | `claude` | ✓ | ✓ | ✓ |
 | Codex | `codex` | ✓ | ✗ | ✓ |
-| Gemini CLI | `gemini` | ✓ | ✗ | ✗ |
-| OpenCode | `opencode` | ✓ | ✗ | ✗ |
+| Gemini CLI | `gemini` | ✓ | ✗ | ✓ |
+| OpenCode | `opencode` | ✓ | ✗ | ✓ |
 | Amp | `amp` | ✓ | ✗ | ✗ |
-| Cursor CLI | `cursor-agent` | ✓ | ✗ | ✗ |
-| Copilot CLI | `copilot` | ✓ | ✗ | ✗ |
-| Grok Build | `grok` | ✗ | ✗ | ✗ |
+| Cursor CLI | `cursor-agent` | ✓ | ✗ | ✓ |
+| Copilot CLI | `copilot` | ✓ | ✗ | ✓ |
+| Grok Build | `grok` | ✗ | ✗ | ✓ |
 | Antigravity CLI | `agy` | ✓ | ✗ | ✗ |
-| Kimi Code | `kimi` | ✓ | ✗ | ✗ |
-| Pi | `pi` | ✓ | ✓ | ✗ |
-| Oh My Pi (new) | `omp` | ✓ | ✓ | ✗ |
-| Reasonix (new) | `reasonix` | ✓ | ✓ | ✗ |
-| Kiro CLI | `kiro-cli` | ✗ | ✗ | ✗ |
-| Droid | `droid` | ✓ | ✗ | ✗ |
+| Kimi Code | `kimi` | ✓ | ✗ | ✓ |
+| Pi | `pi` | ✓ | ✓ | ✓ |
+| Oh My Pi (new) | `omp` | ✓ | ✓ | ✓ |
+| Reasonix (new) | `reasonix` | ✓ | ✓ | ✓ |
+| Kiro CLI | `kiro-cli` | ✗ | ✗ | ✓ |
+| Droid | `droid` | ✓ | ✗ | ✓ |
 
 **Waiting dot** turns amber the moment the agent stops and needs an answer, including a pending tool approval; Grok Build and Kiro CLI expose no such signal, so their dot only reports running and finished. **Tool pill** shows the tool running right now in the pane status bar. **Session history** marks the agents whose past conversations can be browsed and resumed from the agent panel's history page — see below. Hide any agent you don't use under Settings → Agents.
 
@@ -80,7 +80,7 @@ A minimal modern terminal built for AI coding. Sidebar workspaces; horizontal / 
 
 **Agent panel.** A right-side sidebar — toggle in the top bar, three collapse states like the left one — lists every agent across all your windows at once, sorted by who needs you first: waiting on you, then failed, then running, then idle. Click any row to jump straight to that tab; compact mode shrinks it to a rail of status-tinted icons.
 
-**Session history.** Flip the agent panel to its second page — the clock at the bottom — to browse every Claude Code and Codex conversation on your Mac, newest first, including ones started outside kooky. Search by title or project, filter by agent, and click a row to pick that conversation back up: a new tab opens in the conversation's own folder and resumes it with the agent's exact session ID.
+**Session history.** Flip the agent panel to its second page — the clock at the bottom — to browse past conversations from most of the built-in agents (see the table above), newest first, including ones started outside kooky. Search by title or project, filter by agent, and click a row to pick that conversation back up: a new tab opens in the conversation's own folder and resumes it with the agent's exact session ID.
 
 ![Search and resume any past Claude Code or Codex conversation](img/screenshot-5.webp)
 

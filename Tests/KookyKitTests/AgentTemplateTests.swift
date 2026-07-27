@@ -237,7 +237,7 @@ final class AgentTemplateTests: XCTestCase {
             (.opencode, "opencode --session abc-123"),
             (.amp, "amp threads continue abc-123"),
             (.cursor, "cursor-agent --resume=abc-123"),
-            (.copilot, "copilot --session-id abc-123"),
+            (.copilot, "copilot --resume=abc-123"),
             (.grok, "grok --resume abc-123"),
             (.antigravity, "agy --conversation=abc-123"),
             (.kimi, "kimi --session abc-123"),

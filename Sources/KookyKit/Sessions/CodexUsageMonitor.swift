@@ -410,14 +410,21 @@ final class CodexUsageMonitor {
     /// any fixed size — and a truncated chunk is invalid JSON that would never
     /// match, silently disabling the gauge for that session.
     nonisolated static func sessionMetaCwd(atPath path: String) -> String? {
-        sessionMetaPayload(atPath: path)?["cwd"] as? String
+        sessionMetaPayload(atPath: path).flatMap(cwd(fromSessionMetaPayload:))
+    }
+
+    nonisolated static func cwd(fromSessionMetaPayload payload: [String: Any]) -> String? {
+        payload["cwd"] as? String
     }
 
     /// Codex writes both `id` and (on current builds) `session_id` in the
     /// first session_meta payload. Prefer the documented/session-facing `id`
     /// but retain the older key as a compatibility fallback.
     nonisolated static func sessionMetaConversationId(atPath path: String) -> String? {
-        guard let payload = sessionMetaPayload(atPath: path) else { return nil }
+        sessionMetaPayload(atPath: path).flatMap(conversationId(fromSessionMetaPayload:))
+    }
+
+    nonisolated static func conversationId(fromSessionMetaPayload payload: [String: Any]) -> String? {
         for key in ["id", "session_id"] {
             guard let raw = payload[key] as? String else { continue }
             let id = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -426,7 +433,10 @@ final class CodexUsageMonitor {
         return nil
     }
 
-    private nonisolated static func sessionMetaPayload(atPath path: String) -> [String: Any]? {
+    /// `internal` (not private): the session-history scanner reads id + cwd
+    /// from ONE payload parse instead of paying the newline-bounded read
+    /// twice per rollout.
+    nonisolated static func sessionMetaPayload(atPath path: String) -> [String: Any]? {
         guard let fh = FileHandle(forReadingAtPath: path) else { return nil }
         defer { try? fh.close() }
         var data = Data()

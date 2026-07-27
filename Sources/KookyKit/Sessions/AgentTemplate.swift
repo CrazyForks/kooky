@@ -482,7 +482,11 @@ extension AgentTemplate {
         tintHex: "6E40C9",
         initialCommand: "copilot",
         promptLaunchFlag: "-p",
-        resumeStrategy: .arguments(["--session-id"])
+        // Upstream shipped resume-by-id as an extension of `--resume`
+        // (github/copilot-cli#167); the CLI rejects `--session-id` outright.
+        // The equals form is load-bearing: `--resume` takes an OPTIONAL value,
+        // so the space form would read the id as a positional prompt.
+        resumeStrategy: .optionEquals("--resume")
     )
 
     static let grok = AgentTemplate(
