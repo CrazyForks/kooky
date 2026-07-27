@@ -121,11 +121,11 @@ final class KookySettingsModel {
     /// Persisted under `appearance.showSearchPill` (only when non-default).
     /// The legacy `general.showSearchPill` key is still read during migration.
     var showSearchPill: Bool = true
-    /// Shows an app-level menu-bar item with the live agent count. Clicking it
-    /// lists the same cross-window sessions as the right agent panel and jumps
-    /// to the selected tab. Persisted under
-    /// `appearance.showAgentMenuBarItem`, only when non-default.
-    var showAgentMenuBarItem: Bool = true
+    /// Shows Kooky in the system menu bar, including the live agent count and
+    /// quick app actions. Persisted under `general.showInMenuBar`, only when
+    /// non-default. The old `appearance.showAgentMenuBarItem` key is read once
+    /// for migration.
+    var showInMenuBar: Bool = true
 
     /// Whether the agent panel repeats each session's workspace tag as a stripe
     /// (and a `#name` hover line). Persisted under
@@ -259,7 +259,10 @@ final class KookySettingsModel {
         sshRemoteAgentDetection = (ssh["remoteAgentDetection"] as? Bool) ?? false
 
         let general = parsed["general"] as? [String: Any] ?? [:]
-        showAgentMenuBarItem = Self.resolvedShowAgentMenuBarItem(appearance: appearance)
+        showInMenuBar = Self.resolvedShowInMenuBar(
+            general: general,
+            legacyAppearance: appearance
+        )
         showAgentPanelTag = (appearance["showAgentPanelTag"] as? Bool) ?? true
         showSearchPill = Self.resolvedShowSearchPill(
             appearance: appearance,
@@ -471,9 +474,10 @@ final class KookySettingsModel {
         }
 
         var general = parsed["general"] as? [String: Any] ?? [:]
-        // One-way compatibility migration: read the old General key above,
-        // but only write the new Appearance key from now on.
+        // One-way compatibility migrations: consume the old homes above, but
+        // only write each setting's current namespace from now on.
         general.removeValue(forKey: "showSearchPill")
+        general["showInMenuBar"] = showInMenuBar ? nil : false
         general["awakeMode"] = awakeMode == .auto ? nil : awakeMode.rawValue
         if general.isEmpty {
             parsed.removeValue(forKey: "general")
@@ -502,7 +506,7 @@ final class KookySettingsModel {
                 : darkTheme
         }
         appearance["showSearchPill"] = showSearchPill ? nil : false
-        appearance["showAgentMenuBarItem"] = showAgentMenuBarItem ? nil : false
+        appearance.removeValue(forKey: "showAgentMenuBarItem")
         appearance["showAgentPanelTag"] = showAgentPanelTag ? nil : false
         if appearance.isEmpty {
             parsed.removeValue(forKey: "appearance")
@@ -627,8 +631,13 @@ final class KookySettingsModel {
             ?? true
     }
 
-    static func resolvedShowAgentMenuBarItem(appearance: [String: Any]) -> Bool {
-        (appearance["showAgentMenuBarItem"] as? Bool) ?? true
+    static func resolvedShowInMenuBar(
+        general: [String: Any],
+        legacyAppearance: [String: Any]
+    ) -> Bool {
+        (general["showInMenuBar"] as? Bool)
+            ?? (legacyAppearance["showAgentMenuBarItem"] as? Bool)
+            ?? true
     }
 
     var selectedTerminalTheme: KookyTerminalTheme? {
@@ -924,7 +933,7 @@ struct KookySettingsView: View {
             .onChange(of: model.resumeConversations) { _, _ in model.scheduleSave() }
             .onChange(of: model.sshRemoteAgentDetection) { _, _ in model.scheduleSave() }
             .onChange(of: model.showSearchPill) { _, _ in model.scheduleSave() }
-            .onChange(of: model.showAgentMenuBarItem) { _, _ in model.scheduleSave() }
+            .onChange(of: model.showInMenuBar) { _, _ in model.scheduleSave() }
             .onChange(of: model.showAgentPanelTag) { _, _ in model.scheduleSave() }
             .onChange(of: model.terminalPresets) { _, _ in model.scheduleSave() }
             .onChange(of: model.hiddenPresets) { _, _ in model.scheduleSave() }
@@ -1119,12 +1128,6 @@ struct KookySettingsView: View {
                         .toggleStyle(.switch)
                 }
                 SettingsHairline()
-                SettingsRow(label: "show-agent-menu-bar-item") {
-                    Toggle("", isOn: $model.showAgentMenuBarItem)
-                        .labelsHidden()
-                        .toggleStyle(.switch)
-                }
-                SettingsHairline()
                 SettingsRow(label: "show-agent-panel-tag") {
                     Toggle("", isOn: $model.showAgentPanelTag)
                         .labelsHidden()
@@ -1151,6 +1154,15 @@ struct KookySettingsView: View {
                     .frame(minWidth: 180, alignment: .trailing)
                 }
             }
+
+            SettingsSection(title: "Menu Bar") {
+                SettingsRow(label: "show-in-menu-bar") {
+                    Toggle("", isOn: $model.showInMenuBar)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                }
+            }
+            .padding(.top, 22)
 
             SettingsSection(title: "System") {
                 // One dial, three notches of sleep protection (see AwakeMode).

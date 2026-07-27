@@ -31,13 +31,34 @@ final class KookySettingsModelTests: XCTestCase {
     }
 
     func testAgentMenuBarItemDefaultsToVisible() {
-        XCTAssertTrue(KookySettingsModel.resolvedShowAgentMenuBarItem(appearance: [:]))
+        XCTAssertTrue(
+            KookySettingsModel.resolvedShowInMenuBar(
+                general: [:],
+                legacyAppearance: [:]
+            )
+        )
     }
 
-    func testAgentMenuBarItemReadsAppearanceSetting() {
+    func testAgentMenuBarItemReadsGeneralSetting() {
         XCTAssertFalse(
-            KookySettingsModel.resolvedShowAgentMenuBarItem(
-                appearance: ["showAgentMenuBarItem": false]
+            KookySettingsModel.resolvedShowInMenuBar(
+                general: ["showInMenuBar": false],
+                legacyAppearance: [:]
+            )
+        )
+    }
+
+    func testAgentMenuBarItemMigratesAppearanceSetting() {
+        XCTAssertFalse(
+            KookySettingsModel.resolvedShowInMenuBar(
+                general: [:],
+                legacyAppearance: ["showAgentMenuBarItem": false]
+            )
+        )
+        XCTAssertTrue(
+            KookySettingsModel.resolvedShowInMenuBar(
+                general: ["showInMenuBar": true],
+                legacyAppearance: ["showAgentMenuBarItem": false]
             )
         )
     }
@@ -57,6 +78,33 @@ final class KookySettingsModelTests: XCTestCase {
         XCTAssertEqual(AgentMenuBarController.countTitle(0), "")
         XCTAssertEqual(AgentMenuBarController.countTitle(1), "1")
         XCTAssertEqual(AgentMenuBarController.countTitle(12), "12")
+    }
+
+    func testAgentMenuBarAppActionsAndAwakeModesFollowAgentList() throws {
+        let monitor = AgentMonitor()
+        let model = KookySettingsModel()
+        model.awakeMode = .auto
+        let controller = AgentMenuBarController(
+            monitor: monitor,
+            settings: model,
+            onOpenKooky: {},
+            onOpenSettings: {}
+        )
+        let menu = NSMenu()
+
+        controller.menuNeedsUpdate(menu)
+
+        XCTAssertEqual(menu.items.count, 6)
+        XCTAssertEqual(menu.items[0].title, "No agents running")
+        XCTAssertTrue(menu.items[1].isSeparatorItem)
+        XCTAssertEqual(menu.items[2].title, "Open Kooky")
+        XCTAssertEqual(menu.items[3].title, "Settings…")
+        XCTAssertEqual(menu.items[4].title, "Keep Awake")
+        XCTAssertEqual(menu.items[5].title, "Quit Kooky")
+
+        let awakeItems = try XCTUnwrap(menu.items[4].submenu).items
+        XCTAssertEqual(awakeItems.map(\.title), ["Off", "Auto", "Always"])
+        XCTAssertEqual(awakeItems.map(\.state), [.off, .on, .off])
     }
 
     func testKookyMenuBarIconIsAnEighteenPointColourImage() {

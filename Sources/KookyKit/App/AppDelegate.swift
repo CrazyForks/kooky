@@ -140,7 +140,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         }
         let agentMenuBarController = AgentMenuBarController(
             monitor: .shared,
-            settings: settings
+            settings: settings,
+            onOpenKooky: { [weak self] in self?.openKookyFromMenuBar() },
+            onOpenSettings: { [weak self] in self?.handleOpenSettings() }
         )
         self.agentMenuBarController = agentMenuBarController
         agentMenuBarController.start()
@@ -1140,6 +1142,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         // singleton that outlives any one window; a captured store would
         // dangle once its window closed.
         KookySettingsWindowController.show(storeProvider: { [weak self] in self?.activeStore })
+    }
+
+    private func openKookyFromMenuBar() {
+        NSApp.activate(ignoringOtherApps: true)
+        guard let window = activeController?.window else { return }
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        window.makeKeyAndOrderFront(nil)
     }
 
     @objc private func handleCenterWindow() {

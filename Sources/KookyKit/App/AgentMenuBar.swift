@@ -8,16 +8,22 @@ import Observation
 final class AgentMenuBarController: NSObject, NSMenuDelegate {
     private let monitor: AgentMonitor
     private let settings: KookySettingsModel
+    private let onOpenKooky: () -> Void
+    private let onOpenSettings: () -> Void
     private let menu = NSMenu()
     private var statusItem: NSStatusItem?
     private var observing = false
 
     init(
         monitor: AgentMonitor = .shared,
-        settings: KookySettingsModel = .shared
+        settings: KookySettingsModel = .shared,
+        onOpenKooky: @escaping () -> Void,
+        onOpenSettings: @escaping () -> Void
     ) {
         self.monitor = monitor
         self.settings = settings
+        self.onOpenKooky = onOpenKooky
+        self.onOpenSettings = onOpenSettings
         super.init()
         menu.delegate = self
         menu.autoenablesItems = false
@@ -50,7 +56,7 @@ final class AgentMenuBarController: NSObject, NSMenuDelegate {
     }
 
     private func refresh() {
-        guard settings.showAgentMenuBarItem else {
+        guard settings.showInMenuBar else {
             removeStatusItem()
             return
         }
@@ -89,15 +95,50 @@ final class AgentMenuBarController: NSObject, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         let entries = monitor.entries
-        guard !entries.isEmpty else {
+        if entries.isEmpty {
             let empty = NSMenuItem(title: "No agents running", action: nil, keyEquivalent: "")
             empty.isEnabled = false
             menu.addItem(empty)
-            return
+        } else {
+            for entry in entries {
+                menu.addItem(menuItem(for: entry))
+            }
         }
-        for entry in entries {
-            menu.addItem(menuItem(for: entry))
+        menu.addItem(.separator())
+        menu.addItem(actionItem(title: "Open Kooky", action: #selector(openKooky)))
+        menu.addItem(actionItem(title: "Settings…", action: #selector(openSettings)))
+
+        let keepAwake = NSMenuItem(title: "Keep Awake", action: nil, keyEquivalent: "")
+        keepAwake.submenu = keepAwakeMenu()
+        keepAwake.isEnabled = true
+        menu.addItem(keepAwake)
+
+        menu.addItem(actionItem(title: "Quit Kooky", action: #selector(quitKooky)))
+    }
+
+    private func actionItem(title: String, action: Selector) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self
+        item.isEnabled = true
+        return item
+    }
+
+    private func keepAwakeMenu() -> NSMenu {
+        let submenu = NSMenu(title: "Keep Awake")
+        submenu.autoenablesItems = false
+        for mode in AwakeMode.allCases {
+            let item = NSMenuItem(
+                title: Self.awakeModeTitle(mode),
+                action: #selector(setAwakeMode(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = mode.rawValue
+            item.state = settings.awakeMode == mode ? .on : .off
+            item.isEnabled = true
+            submenu.addItem(item)
         }
+        return submenu
     }
 
     private func menuItem(for entry: AgentMonitor.Entry) -> NSMenuItem {
@@ -128,6 +169,32 @@ final class AgentMenuBarController: NSObject, NSMenuDelegate {
     @objc private func activateAgent(_ sender: NSMenuItem) {
         guard let sessionId = sender.representedObject as? UUID else { return }
         monitor.onActivate(sessionId)
+    }
+
+    @objc private func openKooky() {
+        onOpenKooky()
+    }
+
+    @objc private func openSettings() {
+        onOpenSettings()
+    }
+
+    @objc private func setAwakeMode(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let mode = AwakeMode(rawValue: rawValue) else { return }
+        settings.applyAwakeMode(mode)
+    }
+
+    @objc private func quitKooky() {
+        NSApp.terminate(nil)
+    }
+
+    static func awakeModeTitle(_ mode: AwakeMode) -> String {
+        switch mode {
+        case .off: return "Off"
+        case .auto: return "Auto"
+        case .always: return "Always"
+        }
     }
 
     static func countTitle(_ count: Int) -> String {
