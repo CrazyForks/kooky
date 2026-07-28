@@ -55,14 +55,26 @@ final class AgentMenuBarController: NSObject, NSMenuDelegate {
         }
     }
 
+    /// Last count actually written to the button. Every title / cwd change
+    /// used to rewrite all four NSStatusItem fields (relayout + an
+    /// accessibility post each) even though the rendered text was identical.
+    private var lastRenderedCount: Int?
+
     private func refresh() {
         guard settings.showInMenuBar else {
             removeStatusItem()
             return
         }
-        let count = monitor.entries.count
+        // `activeAgentCount`, not `entries`: the count-only walk keeps
+        // titles/paths OUT of the observation set, so OSC title churn from a
+        // busy agent no longer re-runs this at all.
+        let count = monitor.activeAgentCount
+        // nil lastRenderedCount (fresh item, or just removed) never equals
+        // a real count, so the first render always writes.
+        if count == lastRenderedCount { return }
         let item = ensureStatusItem()
         guard let button = item.button else { return }
+        lastRenderedCount = count
         button.title = Self.countTitle(count)
         button.imagePosition = count == 0 ? .imageOnly : .imageLeading
         button.toolTip = count == 0 ? "No agents running" : "\(count) agent\(count == 1 ? "" : "s") active"
@@ -88,6 +100,7 @@ final class AgentMenuBarController: NSObject, NSMenuDelegate {
         statusItem.menu = nil
         NSStatusBar.system.removeStatusItem(statusItem)
         self.statusItem = nil
+        lastRenderedCount = nil
     }
 
     // Rebuild at open time so titles, paths, states, ordering, and the session

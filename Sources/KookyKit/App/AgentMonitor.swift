@@ -115,25 +115,18 @@ final class AgentMonitor {
     /// `Session` reverts to `.terminal` (a shell) when its agent ends, so an
     /// ended agent naturally drops off — this is "agents alive right now".
     var entries: [Entry] {
-        _ = windowGeneration   // re-aggregate when the window set changes
-        return storesProvider().flatMap { store in
-            store.workspaces.flatMap { workspace in
-                workspace.root.allPanes.flatMap { pane in
-                    pane.tabs.compactMap { session -> Entry? in
-                        let agent = session.displayAgent
-                        guard !agent.isShell else { return nil }
-                        return Entry(
-                            id: session.id,
-                            agent: agent,
-                            state: Self.state(of: session),
-                            tabTitle: session.title,
-                            directory: workspace.diskPath,
-                            remoteHost: session.sshWorkspaceHost ?? session.remoteHost,
-                            tag: workspace.tag
-                        )
-                    }
-                }
-            }
+        sessionsWithWorkspace.compactMap { item -> Entry? in
+            let agent = item.session.displayAgent
+            guard !agent.isShell else { return nil }
+            return Entry(
+                id: item.session.id,
+                agent: agent,
+                state: Self.state(of: item.session),
+                tabTitle: item.session.title,
+                directory: item.workspace.diskPath,
+                remoteHost: item.session.sshWorkspaceHost ?? item.session.remoteHost,
+                tag: item.workspace.tag
+            )
         }
         .sorted { $0.state < $1.state }
     }
@@ -152,17 +145,41 @@ final class AgentMonitor {
     /// `entries`: entries allocates, sorts, and reads every session's
     /// `title` (cwd-derived), which would both waste work and re-fire
     /// observers on every cd / OSC title update.
-    var hasActiveWork: Bool {
+    /// The one four-level walk under `entries` / `activeAgentCount` /
+    /// `hasActiveWork`. Lazy, so `contains` still short-circuits and each
+    /// consumer's closure alone decides which session fields enter its
+    /// observation set; the `windowGeneration` dependency registers here
+    /// once for all three.
+    private var sessionsWithWorkspace: some Sequence<(session: Session, workspace: Workspace)> {
         _ = windowGeneration   // re-walk when the window set changes
-        return storesProvider().contains { store in
-            store.workspaces.contains { workspace in
-                workspace.root.allPanes.contains { pane in
-                    pane.tabs.contains { session in
-                        session.remoteHost != nil
-                            || (!session.displayAgent.isShell && session.activityState == .running)
-                    }
+        return storesProvider().lazy.flatMap { store in
+            store.workspaces.lazy.flatMap { workspace in
+                workspace.root.allPanes.lazy.flatMap { pane in
+                    pane.tabs.lazy.map { (session: $0, workspace: workspace) }
                 }
             }
+        }
+    }
+
+    /// Count-only companion to `entries` for the menu bar. Reads ONLY the
+    /// membership field (`displayAgent`), so a title / cwd / state change on
+    /// a session doesn't re-fire the menu bar's observation the way the full
+    /// `entries` read would (same reasoning as `hasActiveWork`).
+    var activeAgentCount: Int {
+        sessionsWithWorkspace.count { !$0.session.displayAgent.isShell }
+    }
+
+    /// True when any session is actively working — an agent running, or a
+    /// live SSH conversation (`remoteHost`: set by the login marker, cleared
+    /// by the wrapper's logout marker, so it spans the whole connection).
+    /// SleepGuard's busy input. A short-circuiting walk on purpose, NOT
+    /// `entries`: entries allocates, sorts, and reads every session's
+    /// `title` (cwd-derived), which would both waste work and re-fire
+    /// observers on every cd / OSC title update.
+    var hasActiveWork: Bool {
+        return sessionsWithWorkspace.contains { item in
+            item.session.remoteHost != nil
+                || (!item.session.displayAgent.isShell && item.session.activityState == .running)
         }
     }
 }

@@ -62,6 +62,11 @@ enum KookyShellIntegration {
     /// Resolve pasteboard contents into a terminal-safe text payload —
     /// what Cmd+V and the right-click "Paste" entry should inject.
     ///
+    /// NOTE: at the three live paste sites this is reached through
+    /// `paste(from:host:deliver:)`, whose image tier intercepts raw images
+    /// first — tier 2 below survives as the fallback for direct callers
+    /// (and keeps its tests meaningful as the synchronous reference).
+    ///
     /// Precedence:
     /// 1. **File URLs** (Finder Copy on a file — including images) →
     ///    `backslashEscape($0.path)` joined by spaces. Without this,
@@ -128,6 +133,73 @@ enum KookyShellIntegration {
         return true
     }
 
+    /// Serial transcode lane shared by local AND remote image pastes:
+    /// back-to-back pastes deliver in order, and the decode/encode buffers
+    /// of tens-of-MB screenshot TIFFs never run concurrently. (The captured
+    /// raw `Data` snapshots DO coexist while queued — the serialization
+    /// bounds working-set peaks, not the queued inputs.)
+    private static let pasteTranscodeQueue = DispatchQueue(label: "kooky.paste-transcode", qos: .userInitiated)
+
+    /// THE paste entry for every site (surface ⌘V, right-click Paste,
+    /// composer): owns all three tiers AND each tier's sync/async decision,
+    /// so no caller can re-derive the precedence or get the ordering wrong.
+    /// Remote upload (SSH workspace) wins, then a clipboard image transcodes
+    /// off-main, then files/plain text deliver synchronously (cheap, and an
+    /// async hop would reorder them against subsequent keystrokes for no
+    /// benefit). `includePlainText: false` is the composer's variant: plain
+    /// text falls through to NSTextView's native paste (undo coalescing),
+    /// while file paths still deliver escaped. Returns false when nothing
+    /// was handled — the caller falls back (or ignores the chord).
+    @MainActor
+    static func paste(
+        from pb: NSPasteboard,
+        host: String?,
+        includePlainText: Bool = true,
+        deliver: @escaping @MainActor (String) -> Void
+    ) -> Bool {
+        if pasteViaRemoteUpload(from: pb, host: host, deliver: deliver) { return true }
+        if pasteImageAsync(from: pb, deliver: deliver) { return true }
+        guard let text = readTerminalPasteText(from: pb), !text.isEmpty else { return false }
+        if !includePlainText, pasteboardFileURLs(pb) == nil { return false }
+        deliver(text)
+        return true
+    }
+
+    /// Image tier of `paste(from:host:deliver:)`: a clipboard IMAGE needs a
+    /// TIFF decode + PNG encode + disk write that froze the main thread for
+    /// its whole duration — hundreds of ms for a Retina screenshot. The raw
+    /// bytes are snapshotted HERE (the pasteboard can change under the hop);
+    /// that snapshot is itself a size-proportional pasteboard-server copy
+    /// still paid on the main thread — accepted, the decode+encode is the
+    /// dominant cost. A keystroke typed mid-transcode reaches the PTY first
+    /// — the same accepted window the remote-upload path has, far smaller.
+    /// Returns false when the pasteboard has no raw image (or has real file
+    /// URLs, which outrank the image tier).
+    private static func pasteImageAsync(from pb: NSPasteboard, deliver: @escaping @MainActor (String) -> Void) -> Bool {
+        guard pasteboardFileURLs(pb) == nil, let raw = pasteboardRawImage(pb) else { return false }
+        // Snapshot the plain-text representation NOW (Codex review): the old
+        // synchronous path fell through to the string tier when the image
+        // couldn't be transcoded — a corrupt TIFF, unwritable cache, or full
+        // disk must deliver that text (browser image copies usually carry
+        // one), not drop pastable content with a beep. Delivered even for
+        // the composer's includePlainText:false — on the failure path,
+        // content beats undo-coalescing purity.
+        let fallbackText = pb.string(forType: .string)
+        pasteTranscodeQueue.async {
+            let path = writePasteImageToCache(raw)?.path
+            DispatchQueue.main.async {
+                if let path {
+                    deliver(backslashEscape(path))
+                } else if let fallbackText, !fallbackText.isEmpty {
+                    deliver(fallbackText)
+                } else {
+                    NSSound.beep()
+                }
+            }
+        }
+        return true
+    }
+
     /// SSH-workspace paste: pasted files / clipboard images must land on the
     /// REMOTE before a path gets injected — an agent over ssh can't open
     /// `/Users/...`. Returns nil when the pasteboard has no file or image
@@ -145,7 +217,12 @@ enum KookyShellIntegration {
             work = { performRemotePasteUpload(files, to: host, remoteDir: remoteDir) }
         } else if let raw = pasteboardRawImage(pb) {
             work = {
-                guard let cached = writePasteImageToCache(raw) else { return nil }
+                // Transcode rides the same serial lane as local pastes —
+                // without it a burst of SSH screenshot pastes decodes
+                // concurrently while local ones queue. The scp stays on the
+                // caller's GCD thread (it blocks on waitUntilExit).
+                guard let cached = pasteTranscodeQueue.sync(execute: { writePasteImageToCache(raw) })
+                else { return nil }
                 let files = remotePasteDestinations(for: [cached], remoteDir: remoteDir)
                 return performRemotePasteUpload(files, to: host, remoteDir: remoteDir)
             }
@@ -530,6 +607,21 @@ enum KookyShellIntegration {
         guard fm.fileExists(atPath: bundled) else { return bundled }
         // `kookyBinDirectory` is the App Support `kooky/bin` dir (already created).
         let dest = (kookyBinDirectory as NSString).appendingPathComponent("KookyHook")
+        // Stat gate on the pre-first-frame path: `copyItem` preserves the
+        // source's mtime, so equal size+mtime means the installed copy IS
+        // this build's helper — no need to read ~245KB of binaries just to
+        // decide "don't copy". A rebuilt helper always changes its mtime,
+        // so supersede-on-upgrade still triggers. The exec bit is
+        // re-asserted even on the fast path: an externally stripped +x
+        // (backup restore, security tooling) must heal, or every hook goes
+        // silently dead.
+        if let destAttrs = try? fm.attributesOfItem(atPath: dest),
+           let srcAttrs = try? fm.attributesOfItem(atPath: bundled),
+           (destAttrs[.size] as? NSNumber) == (srcAttrs[.size] as? NSNumber),
+           (destAttrs[.modificationDate] as? Date) == (srcAttrs[.modificationDate] as? Date) {
+            try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dest)
+            return dest
+        }
         do {
             try? fm.removeItem(atPath: dest)  // throws when absent — copyItem just needs a clear dest
             try fm.copyItem(atPath: bundled, toPath: dest)
@@ -978,7 +1070,8 @@ enum KookyShellIntegration {
             .appendingPathComponent(".kimi-code", isDirectory: true)
         guard FileManager.default.fileExists(atPath: home.path) else { return }
         let existing = (try? String(contentsOfFile: kimiConfigPath, encoding: .utf8)) ?? ""
-        guard let merged = kimiConfigWithManagedHooks(existing: existing, hookCmd: hookCmd) else { return }
+        guard let merged = kimiConfigWithManagedHooks(existing: existing, hookCmd: hookCmd),
+              merged != existing else { return }
         try? merged.write(toFile: kimiConfigPath, atomically: true, encoding: .utf8)
     }
 
@@ -1301,7 +1394,11 @@ enum KookyShellIntegration {
     private static func writeJSON(at path: String, object: [String: Any]) {
         guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
         else { return }
-        try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
+        let url = URL(fileURLWithPath: path)
+        // .sortedKeys makes serialization byte-stable, so equal bytes on
+        // disk mean nothing changed — skip the atomic replace.
+        if let existing = try? Data(contentsOf: url), existing == data { return }
+        try? data.write(to: url, options: .atomic)
     }
 
     /// Writes a file in user-config space (e.g. OpenCode plugin) only when
@@ -1310,9 +1407,9 @@ enum KookyShellIntegration {
     /// feature than nuke their plugin.
     private static func writeManagedFile(at path: String, contents: String) {
         let url = URL(fileURLWithPath: path)
-        if let existing = try? String(contentsOf: url, encoding: .utf8),
-           !existing.contains(managedFileMarker) {
-            return
+        if let existing = try? String(contentsOf: url, encoding: .utf8) {
+            if !existing.contains(managedFileMarker) { return }
+            if existing == contents { return }
         }
         try? contents.write(to: url, atomically: true, encoding: .utf8)
     }
@@ -1337,8 +1434,7 @@ enum KookyShellIntegration {
 
     private static func writeWrapper(name: String, script: String) {
         let path = (kookyBinDirectory as NSString).appendingPathComponent(name)
-        try? script.write(toFile: path, atomically: true, encoding: .utf8)
-        chmod(path, 0o755)
+        writeFile(at: path, contents: script, executable: true)
     }
 
     private static func removeManagedWrapper(name: String, markers: [String]) {
@@ -2365,8 +2461,15 @@ enum KookyShellIntegration {
         add-zsh-hook preexec __kooky_133_preexec
         """#
 
+    /// Skips the write when the on-disk content already matches — the launch
+    /// path rewrites ~30 managed files unconditionally, so a steady-state
+    /// launch now pays cheap reads instead of ~30 atomic replaces (temp-file
+    /// + rename each) on the pre-first-frame path. Per-spawn temp rc files
+    /// always miss (fresh paths) and just pay one failed read.
     private static func writeFile(at path: String, contents: String, executable: Bool = false) {
-        try? contents.write(toFile: path, atomically: true, encoding: .utf8)
+        if (try? String(contentsOfFile: path, encoding: .utf8)) != contents {
+            try? contents.write(toFile: path, atomically: true, encoding: .utf8)
+        }
         if executable { chmod(path, 0o755) }
     }
 }

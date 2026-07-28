@@ -2,6 +2,14 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.45.4 — 2026-07-28
+
+Performance round 2 — paste, file tree, and launch-path waste.
+
+- Fixed: pasting a large screenshot froze the terminal for up to a second while it transcoded. The conversion now runs off the main thread and the path pastes when ready — ⌘V, right-click Paste, and the composer all covered, with a fallback to the clipboard's text when the image can't be converted.
+- Faster: expanding a huge directory (10k+ entries) in the sidebar file tree no longer stalls the UI — the row opens instantly and its contents appear the moment the listing lands (measured: a 10k-entry folder used to block for ~235ms).
+- Faster: resuming Codex tabs no longer re-walks the entire session history on every retry, so launch cost stops growing with months of Codex usage; steady-state launches skip rewriting ~30 unchanged config files; and the menu-bar agent counter stops re-rendering on every terminal title change.
+
 ## v0.45.3 — 2026-07-28
 
 Performance round — a deep audit plus adversarial review, no new features.

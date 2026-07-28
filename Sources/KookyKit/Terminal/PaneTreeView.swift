@@ -1052,21 +1052,13 @@ private struct PaneContextMenu: View {
             }
             KookyMenuRow(title: "Paste", shortcut: "⌘V", isDisabled: !pasteAvailable) {
                 isPresented = false
-                // SSH workspace tab pasting a file/image: upload, then paste
-                // the remote path once it lands (mirrors ⌘V in the surface).
+                // Same tier ladder as ⌘V in the surface — one shared entry.
                 let engine = session.engine
-                if KookyShellIntegration.pasteViaRemoteUpload(
+                _ = KookyShellIntegration.paste(
                     from: .general,
                     host: session.sshWorkspaceHost,
                     deliver: { engine.paste($0) }
-                ) {
-                    return
-                }
-                if let text = KookyShellIntegration.readTerminalPasteText(from: .general),
-                   !text.isEmpty
-                {
-                    session.engine.paste(text)
-                }
+                )
             }
             Divider()
             KookyMenuRow(title: "Select All", shortcut: "⌘A") {
@@ -1360,19 +1352,18 @@ private final class ComposerNSTextView: NSTextView {
         let pb = NSPasteboard.general
         // SSH workspace tab: the composed prompt runs on the remote, so a
         // pasted file/image must be uploaded and referenced by remote path.
-        if KookyShellIntegration.pasteViaRemoteUpload(
+        // Shared tier ladder; `includePlainText: false` keeps plain text on
+        // NSTextView's native paste (undo coalescing) while files and
+        // images still deliver escaped paths — async ones insert at
+        // wherever the caret is when they land.
+        if KookyShellIntegration.paste(
             from: pb,
             host: remotePasteHost,
+            includePlainText: false,
             deliver: { [weak self] text in
                 self?.insertText(text, replacementRange: self?.selectedRange() ?? NSRange())
             }
         ) {
-            return
-        }
-        if pb.availableType(from: [.fileURL, .png, .tiff]) != nil,
-           let text = KookyShellIntegration.readTerminalPasteText(from: pb),
-           !text.isEmpty {
-            insertText(text, replacementRange: selectedRange())
             return
         }
         super.paste(sender)

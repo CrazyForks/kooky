@@ -815,20 +815,14 @@ final class GhosttySurfaceView: NSView {
         // path, not bare filename) and raw image data (screenshots →
         // spilled to a cache PNG so agents can open it as a path).
         if cmdOnly, event.charactersIgnoringModifiers?.lowercased() == "v" {
-            // SSH workspace tab pasting a file/image: upload to the remote
-            // and paste the REMOTE path when it lands (a local path is
-            // unreadable there). Local pastes fall through.
-            if KookyShellIntegration.pasteViaRemoteUpload(
+            // One entry owns the whole tier ladder: remote upload for SSH
+            // workspaces, off-main transcode for clipboard images, and
+            // synchronous delivery for files/plain text.
+            if KookyShellIntegration.paste(
                 from: .general,
                 host: pasteUploadHostProvider?(),
                 deliver: { [weak self] in self?.paste($0) }
             ) {
-                return
-            }
-            if let pasted = KookyShellIntegration.readTerminalPasteText(from: .general),
-               !pasted.isEmpty
-            {
-                paste(pasted)
                 return
             }
         }

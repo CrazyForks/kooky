@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 // MARK: - Values + listing (nonisolated so tests reach them without the main actor)
 
@@ -74,6 +75,33 @@ enum FileTreeLister {
             if lhs.isDirectory != rhs.isDirectory { return lhs.isDirectory }
             return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
         }
+    }
+
+    /// Result of an off-main expand cascade, merged back on the main actor.
+    struct SubtreeListing: Sendable {
+        var listed: [String: [FileNode]] = [:]
+        var failed: Set<String> = []
+    }
+
+    /// Off-main cascade for a newly expanded directory: lists `start`, then
+    /// every previously-expanded directory that just became visible beneath
+    /// it (outermost first — each level's listing feeds the walk). Pure; the
+    /// model merges the result on the main actor and drops it if superseded.
+    static func listSubtree(start: URL, expanded: Set<String>) -> SubtreeListing {
+        var result = SubtreeListing()
+        var stack: [URL] = [start]
+        while let dir = stack.popLast() {
+            do {
+                let children = try children(of: dir)
+                result.listed[dir.path] = children
+                for child in children where child.isDirectory && expanded.contains(child.url.path) {
+                    stack.append(child.url)
+                }
+            } catch {
+                result.failed.insert(dir.path)
+            }
+        }
+        return result
     }
 
     /// Flattens the expanded tree into the visible-row array. Recursing views
@@ -170,6 +198,46 @@ final class FileTreeModel {
     private var isActive = false
     /// Bumped by every `activate`; lets a stale `deactivate` be ignored.
     private var activationToken = 0
+    /// Root identity epoch — bumped by `resetState`, snapshotted by every
+    /// expand cascade, so a listing launched under the previous root can
+    /// never merge into the new root's caches.
+    private var rootEpoch = 0
+    /// Cross-thread mirror of `rootEpoch` (Codex review): the MainActor
+    /// epoch guard alone only stops the MERGE — a queued cascade would
+    /// still walk the old root's 10k/50k directories to completion on the
+    /// shared serial queue, delaying every newer expansion behind dead
+    /// work. The runner's work closure reads this before walking and bails
+    /// when the root already moved.
+    private let liveRootEpoch = OSAllocatedUnfairLock(initialState: 0)
+    /// Per-directory listing versions: every SYNCHRONOUS listing of a dir
+    /// (`listDirectory` — the refresh / activate / setRoot paths) bumps its
+    /// entry. An async cascade snapshots the map at launch and merges only
+    /// directories untouched since. PER-DIRECTORY on purpose: a global
+    /// token let expanding B drop A's still-flying listing (A stuck
+    /// "expanded but empty"), and the watcher the expansion itself arms
+    /// could fire on any tick and cancel its own cascade.
+    private var dirListVersions: [String: Int] = [:]
+
+    /// Serial background lane for expand cascades. Serial keeps a rapid
+    /// burst of expands from stacking N concurrent large-directory walks on
+    /// the cooperative pool (results still apply per-directory, so order
+    /// doesn't matter); the main-thread hop is the win — a first expansion
+    /// lists a directory of UNKNOWN size, and the 10k-entry case measures
+    /// 235ms (see the file-tree bench).
+    private static let listingQueue = DispatchQueue(label: "kooky.file-tree-listing", qos: .userInitiated)
+
+    /// How the expand cascade executes. Production runs it on
+    /// `listingQueue`; tests swap in a synchronous runner so toggle
+    /// assertions stay deterministic.
+    var expandListingRunner: (
+        _ work: @escaping @Sendable () -> FileTreeLister.SubtreeListing,
+        _ apply: @escaping @MainActor (FileTreeLister.SubtreeListing) -> Void
+    ) -> Void = { work, apply in
+        listingQueue.async {
+            let result = work()
+            DispatchQueue.main.async { apply(result) }
+        }
+    }
 
     /// Roots must resolve symlinks: shells report the *logical* cwd over
     /// OSC 7, but `contentsOfDirectory(at:)` refuses to traverse a URL whose
@@ -256,16 +324,64 @@ final class FileTreeModel {
         if expandedDirs.contains(path) {
             expandedDirs.remove(path)
             expansionOrder.removeAll { $0 == path }
-        } else {
-            // Not in `expandedDirs` ⟹ not in `expansionOrder` — the two are
-            // kept in lockstep — so a plain append suffices.
-            expandedDirs.insert(path)
-            expansionOrder.append(path)
-            // List this directory and any previously-expanded descendants
-            // that just became visible again — their caches may be stale.
-            relistVisibleSubtree(from: path)
-            pruneUnreachable()
+            rebuildRows()
+            return
         }
+        // Not in `expandedDirs` ⟹ not in `expansionOrder` — the two are
+        // kept in lockstep — so a plain append suffices.
+        expandedDirs.insert(path)
+        expansionOrder.append(path)
+        // The listing cascade (this dir + any previously-expanded
+        // descendants whose caches may be stale) runs off-main: expansion
+        // lists a directory of UNKNOWN size. The row expands immediately;
+        // children appear when the listing lands. The other listing paths
+        // (activate / setRoot / refresh) stay synchronous for now — the
+        // bench numbers (10k = 235ms) make them candidates for the same
+        // treatment in a later round.
+        let epoch = rootEpoch
+        let versionsAtLaunch = dirListVersions
+        let expandedSnapshot = expandedDirs
+        let start = node.url
+        let liveEpoch = liveRootEpoch
+        expandListingRunner({
+            // Bail BEFORE the walk when the root already moved — the empty
+            // result is then dropped by applyListing's epoch guard.
+            guard liveEpoch.withLock({ $0 }) == epoch else { return FileTreeLister.SubtreeListing() }
+            return FileTreeLister.listSubtree(start: start, expanded: expandedSnapshot)
+        }, { [weak self] listing in
+            self?.applyListing(listing, epoch: epoch, versionsAtLaunch: versionsAtLaunch)
+        })
+        rebuildRows()
+    }
+
+    private func applyListing(
+        _ listing: FileTreeLister.SubtreeListing,
+        epoch: Int,
+        versionsAtLaunch: [String: Int]
+    ) {
+        guard epoch == rootEpoch, isActive else { return }
+        var changed = false
+        for (path, children) in listing.listed {
+            // Merge per directory, skipping any a synchronous listing
+            // touched while this cascade flew — that listing is newer.
+            guard (dirListVersions[path] ?? 0) == (versionsAtLaunch[path] ?? 0) else { continue }
+            if childrenByDir[path] != children {
+                childrenByDir[path] = children
+                changed = true
+            }
+            if failedDirs.remove(path) != nil { changed = true }
+        }
+        for path in listing.failed {
+            guard (dirListVersions[path] ?? 0) == (versionsAtLaunch[path] ?? 0) else { continue }
+            if childrenByDir.removeValue(forKey: path) != nil { changed = true }
+            if failedDirs.insert(path).inserted { changed = true }
+        }
+        // Re-expanding a cached directory usually lands an identical
+        // listing — skip the prune walk, row rebuild, and watcher re-sync
+        // entirely then (the first rebuildRows at toggle time already
+        // rendered the cached children).
+        guard changed else { return }
+        pruneUnreachable()
         rebuildRows()
     }
 
@@ -322,6 +438,10 @@ final class FileTreeModel {
     // MARK: Internals
 
     private func resetState(to url: URL?) {
+        rootEpoch += 1
+        let epoch = rootEpoch
+        liveRootEpoch.withLock { $0 = epoch }
+        dirListVersions.removeAll()
         rootURL = url
         rootError = false
         selectedId = nil
@@ -339,6 +459,9 @@ final class FileTreeModel {
     /// unreachability prune on purely additive changes.
     @discardableResult
     private func listDirectory(_ path: String) -> Bool {
+        // Synchronous listings are the fresher truth: bumping the version
+        // makes any in-flight cascade skip THIS directory when it lands.
+        dirListVersions[path, default: 0] += 1
         let previous = childrenByDir[path]
         do {
             let children = try FileTreeLister.children(of: URL(fileURLWithPath: path))
@@ -359,14 +482,15 @@ final class FileTreeModel {
         }
     }
 
-    /// Re-lists `from` (default: the root) plus every expanded directory
-    /// visible beneath it, outermost first so each level's listing feeds the
-    /// walk into the next.
-    private func relistVisibleSubtree(from start: String? = nil) {
+    /// Re-lists the root plus every expanded directory visible beneath it,
+    /// outermost first so each level's listing feeds the walk into the next.
+    /// Same shape as `FileTreeLister.listSubtree` — this one stays a model
+    /// method because `listDirectory` also routes root failures to
+    /// `rootError` and bumps the per-dir versions.
+    private func relistVisibleSubtree() {
         guard let rootPath = rootURL?.path else { return }
-        let startPath = start ?? rootPath
-        listDirectory(startPath)
-        var stack: [String] = [startPath]
+        listDirectory(rootPath)
+        var stack: [String] = [rootPath]
         while let dir = stack.popLast() {
             for child in childrenByDir[dir] ?? [] where child.isDirectory {
                 let path = child.url.path

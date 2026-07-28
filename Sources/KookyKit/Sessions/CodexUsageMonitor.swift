@@ -128,13 +128,16 @@ final class CodexUsageMonitor {
         // of codex's ~10–15s session_meta write). Reused across retries and the
         // later `running`-triggered start so this session's own file is never
         // accidentally captured into the exclusion set.
-        if preexisting[sessionId] == nil {
-            preexisting[sessionId] = Self.recentRolloutPaths(under: sessionsRoot)
-        }
         if let id = resumingConversationId?
             .trimmingCharacters(in: .whitespacesAndNewlines),
            !id.isEmpty {
             resumedConversationIds[sessionId] = id
+        }
+        // The exclusion snapshot only serves the fresh-session cwd probe;
+        // a resume resolves by globally-unique conversation id and never
+        // consults it — skip the directory enumeration entirely there.
+        if preexisting[sessionId] == nil, resumedConversationIds[sessionId] == nil {
+            preexisting[sessionId] = Self.recentRolloutPaths(under: sessionsRoot)
         }
         let exclude = preexisting[sessionId] ?? []
         let resumedConversationId = resumedConversationIds[sessionId]
@@ -142,7 +145,14 @@ final class CodexUsageMonitor {
         generation[sessionId] = token
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let active = if let resumedConversationId {
-                Self.resolveRollout(conversationId: resumedConversationId, sessionsRoot: sessionsRoot)
+                // Retries narrow to the last two day-directories —
+                // re-walking the whole tree 30 times was the
+                // accumulation-dependent launch cost.
+                Self.resolveRollout(
+                    conversationId: resumedConversationId,
+                    sessionsRoot: sessionsRoot,
+                    scope: attempt > 0 ? .recent(days: 2) : .full
+                )
             } else {
                 Self.resolveRollout(forCwd: cwd, sessionsRoot: sessionsRoot, excluding: exclude)
             }
@@ -347,24 +357,56 @@ final class CodexUsageMonitor {
         return nil
     }
 
+    /// Where a by-id rollout lookup is allowed to search.
+    enum RolloutSearchScope: Equatable, Sendable {
+        /// 30-day shallow probe, then the full recursive walk — first
+        /// attempts, where the conversation may be months old.
+        case full
+        /// Only the last N day-directories, no deep fallback — the retry
+        /// loop's increment-only mode: the first attempt covered history,
+        /// and a file APPEARING between retries can only land in today's
+        /// (or, at midnight, yesterday's) partition.
+        case recent(days: Int)
+    }
+
     /// A resumed Codex appends the rollout that already existed before this
     /// Kooky process launched. Match that file by its globally unique session
     /// id instead of applying the fresh-launch exclusion snapshot.
+    /// Lookup is layered: most resumes target a recent conversation, so probe
+    /// recent day-directories with shallow filename-only listings first, and
+    /// only a months-old conversation pays the full recursive walk.
     nonisolated static func resolveRollout(
         conversationId: String,
-        sessionsRoot: URL = CodexUsageMonitor.defaultSessionsRoot()
+        sessionsRoot: URL = CodexUsageMonitor.defaultSessionsRoot(),
+        scope: RolloutSearchScope = .full
     ) -> URL? {
         let target = conversationId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !target.isEmpty else { return nil }
-        // Unlike a fresh launch, a resumed conversation may be months old.
-        // Codex includes the session UUID at the end of every rollout filename,
-        // so walk the date hierarchy but parse only the single suffix match.
-        guard let enumerator = FileManager.default.enumerator(
+        // Codex includes the session UUID at the end of every rollout
+        // filename, so directory listings match on the name alone and only
+        // the single suffix match pays a file read.
+        let suffix = "-\(target).jsonl"
+        let fm = FileManager.default
+        let probeDays: Int
+        switch scope {
+        case .full: probeDays = 30
+        case .recent(let days): probeDays = days
+        }
+        for dir in recentDayDirectories(under: sessionsRoot, days: probeDays) {
+            guard let files = try? fm.contentsOfDirectory(
+                at: dir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+            ) else { continue }
+            for url in files
+            where url.lastPathComponent.hasPrefix("rollout-") && url.lastPathComponent.hasSuffix(suffix) {
+                if sessionMetaConversationId(atPath: url.path) == target { return url }
+            }
+        }
+        guard scope == .full else { return nil }
+        guard let enumerator = fm.enumerator(
             at: sessionsRoot,
             includingPropertiesForKeys: nil,
             options: [.skipsHiddenFiles, .skipsPackageDescendants]
         ) else { return nil }
-        let suffix = "-\(target).jsonl"
         while let url = enumerator.nextObject() as? URL {
             guard url.lastPathComponent.hasPrefix("rollout-"),
                   url.lastPathComponent.hasSuffix(suffix),

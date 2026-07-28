@@ -39,6 +39,30 @@ final class PerformanceBenchmarks: XCTestCase {
         return samples.sorted()[1]
     }
 
+    /// `FileTreeLister.children` on flat directories at three scales. The
+    /// file tree lists on the main actor today, so these numbers ARE the UI
+    /// stall for expanding a directory of that size (performance round 2's
+    /// "measure before moving it off-main"). Content is irrelevant — the
+    /// cost is directory enumeration + per-entry resourceValues + the
+    /// localized natural sort.
+    func testFileTreeListingScales() throws {
+        let fm = FileManager.default
+        for count in [1_000, 10_000, 50_000] {
+            let dir = tempDir.appendingPathComponent("flat-\(count)")
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            for i in 0..<count {
+                fm.createFile(
+                    atPath: dir.appendingPathComponent("file-\(String(format: "%06d", i)).txt").path,
+                    contents: nil
+                )
+            }
+            let seconds = medianSeconds {
+                _ = try? FileTreeLister.children(of: dir)
+            }
+            print("BENCH file-tree-list-\(count): \(Int(seconds * 1000)) ms")
+        }
+    }
+
     /// The session-history scan under a fixed synthetic load shaped like the
     /// real cost drivers: Claude and pi-style files whose heads are dominated
     /// by large message lines (the byte-marker-gate paths), Codex rollouts

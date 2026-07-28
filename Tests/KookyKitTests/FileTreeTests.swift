@@ -152,6 +152,9 @@ final class FileTreeModelTests: XCTestCase {
         FileManager.default.createFile(atPath: src.appendingPathComponent("main.swift").path, contents: Data())
         FileManager.default.createFile(atPath: root.appendingPathComponent("readme.md").path, contents: Data())
         let model = FileTreeModel()
+        // Synchronous expand cascade — production hops it off-main, but the
+        // tests assert rows immediately after toggleExpanded.
+        model.expandListingRunner = { work, apply in apply(work()) }
         addTeardownBlock {
             await model.cancel()
             try? FileManager.default.removeItem(at: root)
@@ -219,6 +222,58 @@ final class FileTreeModelTests: XCTestCase {
         model.toggleExpanded(srcNode)
         XCTAssertEqual(model.rows.map(\.depth), [0, 0])
         XCTAssertFalse(model.rows[0].isExpanded)
+    }
+
+    /// The expand cascade runs off-main in production; a listing that lands
+    /// AFTER a superseding mutation must be dropped, not merged — else a
+    /// slow first expansion overwrites whatever a fresher refresh saw.
+    func testStaleExpandListingCannotOverwriteAFresherRefresh() throws {
+        let (root, src, model) = try makeFixture()
+        model.activate(root: root)
+        // Capture the cascade instead of applying inline: `work()` runs NOW
+        // (listing src before the extra file exists), the apply is parked.
+        var pendingApply: (() -> Void)?
+        model.expandListingRunner = { work, apply in
+            let result = work()
+            pendingApply = { apply(result) }
+        }
+        let srcNode = try entryNode(id: src.path, in: model)
+        model.toggleExpanded(srcNode)
+
+        let extraId = src.appendingPathComponent("extra.swift").path
+        FileManager.default.createFile(atPath: extraId, contents: Data())
+        model.refresh(dirPath: src.path)
+        XCTAssertTrue(model.rows.contains { $0.id == extraId })
+
+        pendingApply?()   // the pre-refresh listing lands late
+        XCTAssertTrue(model.rows.contains { $0.id == extraId },
+                      "a superseded cascade must not overwrite the fresher refresh")
+    }
+
+    /// Cancellation is PER-DIRECTORY: expanding B while A's listing is
+    /// still in flight must not drop A's result — a global token left A
+    /// stuck "expanded but empty" until an unrelated event relisted it.
+    func testConcurrentExpandsBothLand() throws {
+        let (root, src, model) = try makeFixture()
+        let docs = root.appendingPathComponent("docs", isDirectory: true)
+        try FileManager.default.createDirectory(at: docs, withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: docs.appendingPathComponent("guide.md").path, contents: Data())
+        model.activate(root: root)
+
+        var pending: [() -> Void] = []
+        model.expandListingRunner = { work, apply in
+            let result = work()
+            pending.append { apply(result) }
+        }
+        let srcNode = try entryNode(id: src.path, in: model)
+        let docsNode = try entryNode(id: docs.path, in: model)
+        model.toggleExpanded(srcNode)
+        model.toggleExpanded(docsNode)   // second expand while the first is in flight
+        pending.forEach { $0() }
+
+        XCTAssertTrue(model.rows.contains { $0.id == src.appendingPathComponent("main.swift").path },
+                      "expanding docs must not drop src's in-flight listing")
+        XCTAssertTrue(model.rows.contains { $0.id == docs.appendingPathComponent("guide.md").path })
     }
 
     func testRefreshPicksUpExternalCreateAndDelete() throws {
