@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.45.5 — 2026-07-28
+
+- Fixed: clicking a split pane now focuses it. Clicking anywhere in a pane — terminal content, its tab bar, or its status bar — moves keyboard focus there. Previously focus only moved via ⌘[/⌘] or tab switches, and with Liquid Glass enabled, clicks on the original pane after a split were swallowed entirely by the glass layer. Clicks that land in the search bar or the prompt composer keep their caret where you clicked.
+
 ## v0.45.4 — 2026-07-28
 
 Performance round 2 — paste, file tree, and launch-path waste.

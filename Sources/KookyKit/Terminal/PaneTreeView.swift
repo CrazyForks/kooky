@@ -101,6 +101,26 @@ private struct PaneView: View {
             }
         }
         .opacity(paneOpacity)
+        // Clicking ANY part of a pane — tab bar, status bar, the gaps —
+        // means "work with this pane": promote it AND hand its terminal
+        // the keyboard focus. `.simultaneousGesture` so tab switches,
+        // status-bar pills, and every other button keep firing normally;
+        // the terminal content area does the same via `mouseDown` in
+        // `GhosttySurfaceView` (an AppKit sibling this gesture can't see).
+        // Both are idempotent, so any overlap is harmless.
+        .simultaneousGesture(TapGesture().onEnded {
+            guard let active = pane.activeTab else { return }
+            store.activateTab(active, in: workspace)
+            let view = active.engine.view
+            guard let window = view.window else { return }
+            // Same click may have just landed in a text control (the search
+            // bar's field editor, the composer's NSTextView — both are
+            // NSTextView by the time this mouse-up fires): the caret must
+            // stay there, pane activation alone is enough (Codex P2). The
+            // terminal surface itself is a plain NSView, never matched.
+            if window.firstResponder is NSTextView { return }
+            window.makeFirstResponder(view)
+        })
         .animation(Theme.chromeTransition, value: isFocused)
         .onChange(of: pane.activeTab.map { paneStatusBarHasData(session: $0) } ?? false) { _, _ in
             // Status-bar height transition. The bar is always present now (it

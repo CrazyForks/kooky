@@ -1145,6 +1145,16 @@ final class GhosttySurfaceView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        // Clicking an unfocused pane must focus it. AppKit does NOT move
+        // first responder to a plain NSView on click — only controls do
+        // that themselves (ghostty.app's SurfaceView does the same) — so
+        // without this a split sibling could never be focused by mouse:
+        // the click forwarded to libghostty but keyboard focus stayed put.
+        // Masked for years because a single pane grabs focus at mount and
+        // never competes; ⌘[/⌘] and the tab bar were the only real paths.
+        if window?.firstResponder !== self {
+            window?.makeFirstResponder(self)
+        }
         forwardMouseEvent(event, button: (.PRESS, .LEFT))
     }
 

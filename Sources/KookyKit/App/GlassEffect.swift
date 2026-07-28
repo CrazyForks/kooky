@@ -12,6 +12,21 @@ import SwiftUI
 /// shipping a poor imitation.
 
 #if compiler(>=6.2)
+/// `NSGlassEffectView` that never participates in hit-testing. The glass is
+/// pure decoration, but SwiftUI does NOT keep platform NSViews' AppKit
+/// z-order aligned with the conceptual layer order after structural changes:
+/// after a pane split, the ORIGINAL pane's terminal NSView sat BELOW this
+/// glass while the new pane's sat above — so every click on the old pane
+/// (terminal content AND its tab bar) landed on the glass and died, making
+/// click-to-focus a split sibling impossible while glass was on. A visual
+/// backdrop must swallow no events regardless of where the z-order shuffle
+/// puts it; returning nil skips this whole subtree (the internal
+/// ContentHolderView included) in one place.
+@available(macOS 26.0, *)
+private final class PassthroughGlassView: NSGlassEffectView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 /// One real `NSGlassEffectView` bridged into SwiftUI as a background layer.
 /// Content-less — an empty glass view renders the effect tinted toward
 /// `tint`, which is exactly how ghostty uses it at the window level.
@@ -21,7 +36,7 @@ private struct GlassEffectLayer: NSViewRepresentable {
     let tint: NSColor
 
     func makeNSView(context: Context) -> NSGlassEffectView {
-        let view = NSGlassEffectView()
+        let view = PassthroughGlassView()
         configure(view)
         return view
     }
