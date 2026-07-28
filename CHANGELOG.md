@@ -2,6 +2,11 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.45.2 — 2026-07-28
+
+- Fixed: select-to-copy now works for everyone. kooky inherits your Ghostty config, so a `copy-on-select = false` there silently disabled it — text highlighted on selection but never reached the clipboard. (#32)
+- New: Settings → General → Clipboard gains a `copy-on-select` toggle for turning it off deliberately.
+
 ## v0.45.1 — 2026-07-27
 
 - New: Session history now covers thirteen agents — Pi, Oh My Pi, Kimi Code, OpenCode, Grok Build, Cursor CLI, Copilot CLI, Kiro CLI, Gemini CLI, Droid, and Reasonix join Claude Code and Codex. Each store is read in its agent's own on-disk format, and conversations started outside kooky appear too. Amp stores threads server-side and can't join; Antigravity is pending format verification.
@@ -9,21 +14,15 @@ Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 - Fixed: the History pane keeps its agent filter and search text when the panel is collapsed or its mode is cycled — they no longer reset to "all".
 - Faster: history scans read all stores in parallel and each Codex rollout once — a full scan of ~200 real conversations dropped from roughly half a second to ~0.15s, always off the main thread.
 
-**SHA-256:** `f1f90fa356a4ada671d92af990f4dc14e63ee1cc7cf4848861f599d8e0839af6`
-
 ## v0.45.0 — 2026-07-27
 
 - New: **Session history** — flip the agent panel to its second page (the clock at the bottom) to browse every Claude Code and Codex conversation on your Mac, newest first, including ones started outside kooky. Search by title or project, filter by agent, and click a row to pick the conversation back up: a new tab opens in the conversation's own folder and resumes it with the agent's exact session ID.
 - Polish: the agent panel's top-bar toggle now uses the right-sidebar icon, mirroring the left sidebar's button.
 
-**SHA-256:** `8422af40c864785405ac202da6386886e148e0d73675daf65da0b11aa2b82fcc`
-
 ## v0.44.0 — 2026-07-27
 
 - New: an optional Kooky item in the macOS menu bar mirrors the live agent list across every window. The count appears only while agents are present; open the menu to see each tab title and project path on two lines, then pick one to jump straight to it.
 - Convenience: the same menu provides Open Kooky, Settings, Keep Awake (Off / Auto / Always), and Quit. Turn the item on or off under Settings → General → `show-in-menu-bar`.
-
-**SHA-256:** `5d8facec7eb87a51453d352c83fc4fbe543e38eea27108e4885da4dab4a20bb9`
 
 ## v0.43.1 — 2026-07-27
 

@@ -192,13 +192,24 @@ enum KookySettings {
         return config
     }
 
+    /// Kooky's explicit ghostty overrides. Applied AFTER
+    /// `ghostty_config_load_default_files` so they win over the user's own
+    /// ghostty config, but BEFORE the settings.json `terminal.*` pass so each
+    /// key can still be overridden from ~/.kooky/settings.json.
+    /// - cursor-click-to-move: click anywhere on the current zsh / bash prompt
+    ///   to jump the shell cursor there (the shell wrapper emits the OSC 133
+    ///   `cl=line` markers libghostty needs).
+    /// - copy-on-select: ghostty's macOS default (`true`) already reaches the
+    ///   system clipboard in kooky (no selection-clipboard support declared →
+    ///   libghostty degrades the write to the standard clipboard), but an
+    ///   inherited `copy-on-select = false` from the user's ghostty config
+    ///   silently killed select-to-copy on those machines (issue #32).
+    ///   Declaring it here makes kooky's default hold for everyone.
+    static let baselineConfig = "cursor-click-to-move = true\ncopy-on-select = true\n"
+
     private static func applyBaseline(to config: ghostty_config_t?) {
         guard let config else { return }
-        // Click anywhere on the current zsh / bash prompt to jump the shell
-        // cursor there. The shell wrapper emits OSC 133 prompt markers with
-        // the `cl=line` metadata libghostty needs to recognise it.
-        let baseline = "cursor-click-to-move = true\n"
-        baseline.withCString { cstr in
+        baselineConfig.withCString { cstr in
             "kooky-baseline".withCString { source in
                 ghostty_config_load_string(config, cstr, UInt(strlen(cstr)), source)
             }

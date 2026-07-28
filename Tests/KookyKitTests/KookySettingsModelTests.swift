@@ -220,4 +220,61 @@ final class KookySettingsModelTests: XCTestCase {
         XCTAssertEqual(parsed.map(\.id), ["custom-1"])
         XCTAssertEqual(parsed.first?.title, "first")
     }
+
+    /// Each baseline key is a promised default that must survive the user's
+    /// own ghostty config (see `KookySettings.baselineConfig`); losing a line
+    /// is a user-visible regression, not a cleanup.
+    func testBaselineConfigPinsPromisedDefaults() {
+        for line in ["copy-on-select = true", "cursor-click-to-move = true"] {
+            XCTAssertTrue(
+                KookySettings.baselineConfig.contains(line + "\n"),
+                "baseline lost `\(line)`"
+            )
+        }
+    }
+
+    /// Only a spelling ghostty itself accepts as off reads as off. `0` is
+    /// invalid to ghostty's enum parser — the emitted line is rejected, the
+    /// baseline `true` stays live, so the toggle must report on. An imported
+    /// repeated-line array resolves last-write-wins like ghostty does.
+    func testResolvedCopyOnSelectReadsEveryHandWrittenForm() {
+        XCTAssertTrue(KookySettingsModel.resolvedCopyOnSelect(nil))
+        XCTAssertTrue(KookySettingsModel.resolvedCopyOnSelect(true))
+        XCTAssertTrue(KookySettingsModel.resolvedCopyOnSelect("true"))
+        XCTAssertTrue(KookySettingsModel.resolvedCopyOnSelect("clipboard"))
+        XCTAssertTrue(KookySettingsModel.resolvedCopyOnSelect(0))
+        XCTAssertFalse(KookySettingsModel.resolvedCopyOnSelect(false))
+        XCTAssertFalse(KookySettingsModel.resolvedCopyOnSelect("false"))
+        XCTAssertFalse(KookySettingsModel.resolvedCopyOnSelect(["true", false]))
+        XCTAssertTrue(KookySettingsModel.resolvedCopyOnSelect([false, "clipboard"]))
+    }
+
+    /// Off writes the explicit `false` that overrides kooky's baseline; on
+    /// drops the key. Sole survivor: a user-authored `"clipboard"` (see
+    /// `copyOnSelectSavedValue` — the background-blur silent-drop lesson);
+    /// redundant spellings of the default are normalized away.
+    func testCopyOnSelectSavedValue() {
+        XCTAssertEqual(
+            KookySettingsModel.copyOnSelectSavedValue(existing: nil, enabled: false) as? Bool,
+            false
+        )
+        XCTAssertEqual(
+            KookySettingsModel.copyOnSelectSavedValue(existing: "clipboard", enabled: false) as? Bool,
+            false
+        )
+        XCTAssertNil(KookySettingsModel.copyOnSelectSavedValue(existing: nil, enabled: true))
+        XCTAssertNil(KookySettingsModel.copyOnSelectSavedValue(existing: false, enabled: true))
+        XCTAssertNil(KookySettingsModel.copyOnSelectSavedValue(existing: "false", enabled: true))
+        XCTAssertNil(KookySettingsModel.copyOnSelectSavedValue(existing: "true", enabled: true))
+        XCTAssertEqual(
+            KookySettingsModel.copyOnSelectSavedValue(existing: "clipboard", enabled: true) as? String,
+            "clipboard"
+        )
+        // An imported array collapses to its effective (last) element.
+        XCTAssertEqual(
+            KookySettingsModel.copyOnSelectSavedValue(existing: ["true", "clipboard"], enabled: true) as? String,
+            "clipboard"
+        )
+        XCTAssertNil(KookySettingsModel.copyOnSelectSavedValue(existing: [true, false], enabled: true))
+    }
 }

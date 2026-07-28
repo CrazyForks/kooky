@@ -121,6 +121,12 @@ final class KookySettingsModel {
     /// Persisted under `appearance.showSearchPill` (only when non-default).
     /// The legacy `general.showSearchPill` key is still read during migration.
     var showSearchPill: Bool = true
+    /// Select-to-copy: selected terminal text lands on the system clipboard
+    /// the moment the mouse releases. On by default via kooky's baseline even
+    /// when an inherited ghostty config disables it (issue #32, see
+    /// `KookySettings.baselineConfig`). Persisted under
+    /// `terminal.copy-on-select` (only when off).
+    var copyOnSelect: Bool = true
     /// Shows Kooky in the system menu bar, including the live agent count and
     /// quick app actions. Persisted under `general.showInMenuBar`, only when
     /// non-default. The old `appearance.showAgentMenuBarItem` key is read once
@@ -223,6 +229,7 @@ final class KookySettingsModel {
             fontSize = Int(d)
         }
         cursorStyle = (terminal["cursor-style"] as? String) ?? "block"
+        copyOnSelect = Self.resolvedCopyOnSelect(terminal["copy-on-select"])
         // Tolerate a JSON bool / numeric `background-blur` so a hand-edited
         // `false` isn't read as "unset" and then deleted on the next save.
         backgroundBlur = KookySettings.blurString(from: terminal["background-blur"])
@@ -432,6 +439,10 @@ final class KookySettingsModel {
         terminal["font-family"] = fontFamily.isEmpty ? nil : fontFamily
         terminal["font-size"] = fontSize
         terminal["cursor-style"] = cursorStyle == "block" ? nil : cursorStyle
+        terminal["copy-on-select"] = Self.copyOnSelectSavedValue(
+            existing: terminal["copy-on-select"],
+            enabled: copyOnSelect
+        )
         terminal["background-blur"] = backgroundBlur
         terminal["background-opacity"] = backgroundOpacity
         // Explicit legacy themes can migrate losslessly to their matching
@@ -629,6 +640,38 @@ final class KookySettingsModel {
         (appearance["showSearchPill"] as? Bool)
             ?? (legacyGeneral["showSearchPill"] as? Bool)
             ?? true
+    }
+
+    /// The importer stores repeated ghostty config lines as a JSON array and
+    /// `formatGhosttyLines` re-emits them in order, so — per ghostty's
+    /// last-write-wins — the LAST element is the effective value.
+    private static func lastGhosttyValue(_ raw: Any?) -> Any? {
+        (raw as? [Any])?.last ?? raw
+    }
+
+    /// ghostty's `copy-on-select` is an enum (`false` / `true` / `clipboard`)
+    /// a user can hand-write in any JSON form — bool, string, or a
+    /// repeated-line array. Only a spelling ghostty itself accepts as off
+    /// (`false`) reads as off: an invalid value like `0` is REJECTED by
+    /// ghostty's parser, so kooky's baseline `true` stays live and the toggle
+    /// must report on, not echo the user's intent (Codex P2).
+    static func resolvedCopyOnSelect(_ raw: Any?) -> Bool {
+        KookySettings.blurString(from: lastGhosttyValue(raw)) != "false"
+    }
+
+    /// What `save()` stores for `terminal.copy-on-select`. Off is an explicit
+    /// `false` (it must override kooky's baseline `true`); on drops the key.
+    /// The one survivor is a hand-written `"clipboard"` (an array collapses to
+    /// its effective element): inside kooky it behaves exactly like `true` (no
+    /// selection clipboard declared), but it's user-authored config this
+    /// toggle didn't change — deleting it on an unrelated save is the
+    /// background-blur silent-drop class. NB: that makes this the 2nd
+    /// hand-rolled round-trip tolerance for a `terminal.*` key (`blurString`
+    /// is the 1st); a 3rd should instead generalize `save()` to
+    /// write-only-on-change across the terminal passthrough.
+    static func copyOnSelectSavedValue(existing: Any?, enabled: Bool) -> Any? {
+        guard enabled else { return false }
+        return (lastGhosttyValue(existing) as? String) == "clipboard" ? "clipboard" : nil
     }
 
     static func resolvedShowInMenuBar(
@@ -933,6 +976,7 @@ struct KookySettingsView: View {
             .onChange(of: model.resumeConversations) { _, _ in model.scheduleSave() }
             .onChange(of: model.sshRemoteAgentDetection) { _, _ in model.scheduleSave() }
             .onChange(of: model.showSearchPill) { _, _ in model.scheduleSave() }
+            .onChange(of: model.copyOnSelect) { _, _ in model.scheduleSave() }
             .onChange(of: model.showInMenuBar) { _, _ in model.scheduleSave() }
             .onChange(of: model.showAgentPanelTag) { _, _ in model.scheduleSave() }
             .onChange(of: model.terminalPresets) { _, _ in model.scheduleSave() }
@@ -1111,12 +1155,7 @@ struct KookySettingsView: View {
                     .pickerStyle(.menu)
                     .frame(minWidth: 180, alignment: .trailing)
                 }
-                Text("Requires macOS 26 or later.")
-                    .font(Theme.mono(11))
-                    .foregroundStyle(Theme.chromeMuted)
-                    .padding(.horizontal, 28)
-                    .padding(.top, 6)
-                    .padding(.bottom, 10)
+                SettingsCaption("Requires macOS 26 or later.")
                 terminalRestartCallout
             }
             .padding(.top, 22)
@@ -1155,6 +1194,16 @@ struct KookySettingsView: View {
                 }
             }
 
+            SettingsSection(title: "Clipboard") {
+                SettingsRow(label: "copy-on-select") {
+                    Toggle("", isOn: $model.copyOnSelect)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                }
+                SettingsCaption("Selecting text copies it to the clipboard immediately.")
+            }
+            .padding(.top, 22)
+
             SettingsSection(title: "Menu Bar") {
                 SettingsRow(label: "show-in-menu-bar") {
                     Toggle("", isOn: $model.showInMenuBar)
@@ -1185,12 +1234,7 @@ struct KookySettingsView: View {
                     // every other trailing control.
                     .fixedSize()
                 }
-                Text("Auto: stay awake while agents or SSH work even lid closed.\nAlways: always stay awake.")
-                    .font(Theme.mono(11))
-                    .foregroundStyle(Theme.chromeMuted)
-                    .padding(.horizontal, 28)
-                    .padding(.top, 6)
-                    .padding(.bottom, 10)
+                SettingsCaption("Auto: stay awake while agents or SSH work even lid closed.\nAlways: always stay awake.")
                 SettingsHairline()
                 // SSH remote agent detection lives here now (it was its own
                 // one-toggle category before). The settings.json key stays
@@ -1400,6 +1444,24 @@ private struct SettingsHairline: View {
             .fill(Theme.chromeHairline.opacity(0.55))
             .frame(height: 1)
             .padding(.horizontal, 28)
+    }
+}
+
+/// Muted footer note under a section's rows. This is the row-inset caption
+/// variant only — the file's other muted texts use different paddings on
+/// purpose (Advanced's JSON note, inline button labels).
+private struct SettingsCaption: View {
+    let text: String
+
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text)
+            .font(Theme.mono(11))
+            .foregroundStyle(Theme.chromeMuted)
+            .padding(.horizontal, 28)
+            .padding(.top, 6)
+            .padding(.bottom, 10)
     }
 }
 
