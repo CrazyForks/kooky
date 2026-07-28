@@ -614,11 +614,20 @@ final class GhosttySurfaceView: NSView {
 
         let workingDir = config.workingDirectory ?? NSHomeDirectory()
         currentDirectory = URL(fileURLWithPath: workingDir)
+        // This is the moment the process is actually born — a restored tab's
+        // config may have been built days ago (issue #45 Codex P2: a bash
+        // launcher path cached in `pendingConfig` outlives the $TMPDIR
+        // cleanup). Rewrite every shell's bridge so the cached paths are live.
+        KookyShellIntegration.ensureSpawnBridges()
         // Merge our wrapper ZDOTDIR into the caller's env dict. AgentTemplate
         // populates KOOKY_AGENT here so the wrapper .zshrc auto-launches the
-        // selected CLI before the user ever sees a shell prompt.
+        // selected CLI before the user ever sees a shell prompt. nil = the
+        // bridge rc couldn't be (re)written; skip the injection so zsh loads
+        // the user's real rc chain instead of a dead ZDOTDIR (issue #45).
         var envDict = config.environment
-        envDict[KookyShellIntegration.zdotdirKey] = KookyShellIntegration.zshDirectory
+        if let zshDirectory = KookyShellIntegration.zshDirectory {
+            envDict[KookyShellIntegration.zdotdirKey] = zshDirectory
+        }
         // Dynamic count of env entries — strdup each, free after surface_new.
         // libghostty copies the strings during init, so the lifetime only needs
         // to span the call below.

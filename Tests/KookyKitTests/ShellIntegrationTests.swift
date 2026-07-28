@@ -1025,4 +1025,52 @@ final class ShellIntegrationTests: XCTestCase {
         imagePb.setData(Self.oneByOnePNG, forType: .png)
         XCTAssertTrue(KookyShellIntegration.pasteboardHasTerminalPasteContent(imagePb))
     }
+
+    // MARK: - $TMPDIR bridge self-heal (issue #45)
+    //
+    // macOS's periodic cleanup deletes $TMPDIR files not accessed for 3 days;
+    // the bridge rcs are only read when a terminal spawns, so a long-lived
+    // kooky loses them and every new tab got a bare shell. These pin the
+    // rebuild-on-access fix. Safe against the running kooky instance: the
+    // paths carry getpid(), which here is the xctest runner's pid.
+
+    func testZshBridgeRebuildsAfterTmpdirCleanup() throws {
+        let fm = FileManager.default
+        let dir = try XCTUnwrap(KookyShellIntegration.zshDirectory)
+        let rcPath = (dir as NSString).appendingPathComponent(".zshrc")
+        XCTAssertTrue(fm.fileExists(atPath: rcPath))
+        let original = try String(contentsOfFile: rcPath, encoding: .utf8)
+
+        // The issue's second-scale repro: delete just the rc.
+        try fm.removeItem(atPath: rcPath)
+        let dirAgain = try XCTUnwrap(KookyShellIntegration.zshDirectory)
+        XCTAssertEqual(dirAgain, dir)
+        XCTAssertEqual(try String(contentsOfFile: rcPath, encoding: .utf8), original)
+
+        // Cleanup also prunes emptied directories — heal from that too.
+        try fm.removeItem(atPath: dir)
+        _ = try XCTUnwrap(KookyShellIntegration.zshDirectory)
+        XCTAssertEqual(try String(contentsOfFile: rcPath, encoding: .utf8), original)
+    }
+
+    func testBashLauncherRebuildsAfterTmpdirCleanup() throws {
+        let fm = FileManager.default
+        let launcher = try XCTUnwrap(KookyShellIntegration.bashLauncherPath)
+        // Pins the kooky-bashrc-<pid> naming alongside the launcher's: both
+        // are what `cleanup()`'s glob sweeps and what the issue-#45 repro
+        // command targets — a rename should trip this line.
+        let rcfile = NSTemporaryDirectory().appending("kooky-bashrc-\(getpid())")
+        XCTAssertTrue(fm.fileExists(atPath: launcher))
+        XCTAssertTrue(fm.fileExists(atPath: rcfile))
+        let originalLauncher = try String(contentsOfFile: launcher, encoding: .utf8)
+        let originalRc = try String(contentsOfFile: rcfile, encoding: .utf8)
+
+        try fm.removeItem(atPath: launcher)
+        try fm.removeItem(atPath: rcfile)
+        let launcherAgain = try XCTUnwrap(KookyShellIntegration.bashLauncherPath)
+        XCTAssertEqual(launcherAgain, launcher)
+        XCTAssertEqual(try String(contentsOfFile: launcher, encoding: .utf8), originalLauncher)
+        XCTAssertEqual(try String(contentsOfFile: rcfile, encoding: .utf8), originalRc)
+        XCTAssertTrue(fm.isExecutableFile(atPath: launcher))
+    }
 }

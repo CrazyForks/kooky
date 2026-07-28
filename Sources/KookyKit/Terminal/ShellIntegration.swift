@@ -2035,18 +2035,13 @@ enum KookyShellIntegration {
         return .other
     }
 
-    /// Path to a tiny launcher script that re-execs bash as an interactive,
-    /// non-login shell with our `--rcfile`. Required because libghostty starts
-    /// every `command` as a login shell (`argv[0]` prefixed with `-`), and
-    /// login bash ignores `--rcfile` entirely (it reads `~/.bash_profile`
-    /// instead). The launcher is a degenerate `bash` itself, so it gets the
-    /// login prefix; it then `exec`s a fresh bash without the prefix.
-    static let bashLauncherPath: String = {
-        let dir = NSTemporaryDirectory()
-        let launcherPath = dir.appending("kooky-bash-launch-\(getpid()).sh")
-        let rcfilePath = dir.appending("kooky-bashrc-\(getpid())")
+    private static let bashLauncherFilePath: String =
+        NSTemporaryDirectory().appending("kooky-bash-launch-\(getpid()).sh")
 
-        let bashrc = """
+    private static let bashRcfilePath: String =
+        NSTemporaryDirectory().appending("kooky-bashrc-\(getpid())")
+
+    private static let kookyBashrc: String = """
         # Default word-jump bindings; readline doesn't bind Ctrl/Alt+arrow on
         # macOS by default. See the matching block in zshDirectory.
         bind '"\\e[1;5D": backward-word'     # Ctrl+Left
@@ -2096,26 +2091,40 @@ enum KookyShellIntegration {
 
         \(agentLaunchBlock)
         """
-        writeFile(at: rcfilePath, contents: bashrc)
 
-        let launcher = """
+    private static let bashLauncherScript: String = """
         #!/bin/bash
-        exec \(bashPath) --rcfile "\(rcfilePath)" -i
+        exec \(bashPath) --rcfile "\(bashRcfilePath)" -i
 
         """
-        writeFile(at: launcherPath, contents: launcher, executable: true)
-        return launcherPath
-    }()
 
-    /// Path to a per-process directory containing our wrapper `.zshrc`. Pass
-    /// this as `ZDOTDIR` when spawning zsh so it loads the wrapper instead of
-    /// `~/.zshrc` directly.
-    static let zshDirectory: String = {
-        let dir = NSTemporaryDirectory().appending("kooky-zsh-\(getpid())")
-        try? FileManager.default.createDirectory(
-            at: URL(fileURLWithPath: dir), withIntermediateDirectories: true
+    /// Path to a tiny launcher script that re-execs bash as an interactive,
+    /// non-login shell with our `--rcfile`. Required because libghostty starts
+    /// every `command` as a login shell (`argv[0]` prefixed with `-`), and
+    /// login bash ignores `--rcfile` entirely (it reads `~/.bash_profile`
+    /// instead). The launcher is a degenerate `bash` itself, so it gets the
+    /// login prefix; it then `exec`s a fresh bash without the prefix.
+    ///
+    /// Computed, not `static let`: macOS's periodic $TMPDIR cleanup deletes
+    /// files not accessed for 3 days, and these are only read when a terminal
+    /// spawns — a long-lived kooky that goes days without a new bash tab loses
+    /// them (issue #45). Re-ensure on every access; `writeFile`'s content gate
+    /// makes the healthy path a cheap read. nil = couldn't (re)create — the
+    /// caller falls back to a plain login bash so the user's own config still
+    /// loads, just without kooky integration.
+    static var bashLauncherPath: String? {
+        let rcOk = ensureBridgeFile(at: bashRcfilePath, contents: kookyBashrc, label: "bash bridge rc")
+        let launcherOk = ensureBridgeFile(
+            at: bashLauncherFilePath, contents: bashLauncherScript,
+            executable: true, label: "bash launcher"
         )
-        let zshrc = """
+        return (rcOk && launcherOk) ? bashLauncherFilePath : nil
+    }
+
+    private static let zshDirectoryPath: String =
+        NSTemporaryDirectory().appending("kooky-zsh-\(getpid())")
+
+    private static let kookyZshrc: String = """
         # Default word-jump bindings. zsh ZLE only binds Alt+B/F by default;
         # most other terminals (iTerm2, ghostty, Apple Terminal) remap the
         # Ctrl/Alt+arrow sequences to ESC+B/F so users don't notice. kooky
@@ -2180,9 +2189,45 @@ enum KookyShellIntegration {
 
         \(agentLaunchBlock)
         """
-        writeFile(at: (dir as NSString).appendingPathComponent(".zshrc"), contents: zshrc)
-        return dir
-    }()
+
+    /// Re-ensures every shell's bridge right before a surface actually spawns
+    /// (`createSurfaceIfReady`) — the moment the files MUST exist. The ensure
+    /// inside `makeSessionConfig` only covers config-construction time: a
+    /// restored tab keeps its config in `pendingConfig` until its view first
+    /// mounts, which can sit past the 3-day $TMPDIR cleanup — its cached
+    /// `config.command` would then point at a deleted bash launcher (Codex
+    /// review on issue #45). The launcher path is per-pid-fixed, so rewriting
+    /// the files here revives the cached path. zsh gets the same guarantee
+    /// from the ZDOTDIR injection at the same call site (it accesses
+    /// `zshDirectory`); fish's vendor conf lives in App Support (outside the
+    /// cleanup's reach) and is re-written here anyway so all three shells
+    /// share one spawn-time guarantee. Content-gated writes — the healthy
+    /// path costs a few small reads per surface creation.
+    static func ensureSpawnBridges() {
+        _ = bashLauncherPath
+        installFishVendorConf()
+    }
+
+    /// Path to a per-process directory containing our wrapper `.zshrc`. Pass
+    /// this as `ZDOTDIR` when spawning zsh so it loads the wrapper instead of
+    /// `~/.zshrc` directly.
+    ///
+    /// Computed, not `static let` — same $TMPDIR-cleanup self-heal as
+    /// `bashLauncherPath` (issue #45): with the wrapper rc deleted, ZDOTDIR
+    /// would point zsh at an empty dir and it would load NO user rc at all (a
+    /// bare shell). nil = couldn't (re)create — the caller skips the ZDOTDIR
+    /// injection so zsh reads the user's real rc chain, just without kooky
+    /// integration.
+    static var zshDirectory: String? {
+        try? FileManager.default.createDirectory(
+            at: URL(fileURLWithPath: zshDirectoryPath), withIntermediateDirectories: true
+        )
+        let rcPath = (zshDirectoryPath as NSString).appendingPathComponent(".zshrc")
+        guard ensureBridgeFile(at: rcPath, contents: kookyZshrc, label: "zsh bridge rc") else {
+            return nil
+        }
+        return zshDirectoryPath
+    }
 
     /// fish integration, auto-loaded from a kooky-owned `vendor_conf.d/kooky.fish`
     /// that fish discovers via the `XDG_DATA_DIRS` we set for fish sessions
@@ -2471,5 +2516,27 @@ enum KookyShellIntegration {
             try? contents.write(toFile: path, atomically: true, encoding: .utf8)
         }
         if executable { chmod(path, 0o755) }
+    }
+
+    /// `writeFile` + existence post-check for the $TMPDIR shell-bridge files
+    /// (issue #45). `writeFile` swallows write errors (`try?`), so the
+    /// post-check is what turns "disk refused the write" into a false the
+    /// caller can act on instead of handing zsh/bash a dead path. Logged both
+    /// ways: the absent→written line is the forensic trace that TMPDIR cleanup
+    /// struck (it also fires once per launch — first creation — which is cheap
+    /// to tell apart by timestamp).
+    private static func ensureBridgeFile(
+        at path: String, contents: String, executable: Bool = false, label: String
+    ) -> Bool {
+        let existed = FileManager.default.fileExists(atPath: path)
+        writeFile(at: path, contents: contents, executable: executable)
+        guard FileManager.default.fileExists(atPath: path) else {
+            NSLog("kooky: could not write \(label) at \(path) — spawning without shell integration")
+            return false
+        }
+        if !existed {
+            NSLog("kooky: \(label) was absent — wrote \(path) (first launch, or rebuilt after TMPDIR cleanup)")
+        }
+        return true
     }
 }

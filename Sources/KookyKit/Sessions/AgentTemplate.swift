@@ -257,7 +257,13 @@ struct AgentTemplate: Identifiable, Hashable {
         var config: TerminalSessionConfig
         switch (KookyShellIntegration.detectedUserShell, needsLaunch) {
         case (.bash, _):
-            config = .bashShell(launcher: KookyShellIntegration.bashLauncherPath)
+            // nil = launcher couldn't be (re)written (issue #45); fall back to
+            // a plain login bash so the user's own config still loads.
+            if let launcher = KookyShellIntegration.bashLauncherPath {
+                config = .bashShell(launcher: launcher)
+            } else {
+                config = .defaultShell()
+            }
         case (.zsh, _):
             config = .zshShell()
         case (.fish, _):

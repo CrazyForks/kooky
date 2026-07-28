@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.45.6 — 2026-07-29
+
+- Fixed: new tabs opening as a bare shell — no aliases, no PATH, no prompt theme — after kooky ran for a few days. macOS periodically deletes temp files it considers stale, taking kooky's zsh/bash shell-integration bridge with it, and kooky never rebuilt it until the app was restarted. The bridge is now recreated on the spot whenever a terminal spawns; if that ever fails, new shells load your own config directly instead of pointing at a dead path. (#45)
+
 ## v0.45.5 — 2026-07-28
 
 - Fixed: clicking a split pane now focuses it. Clicking anywhere in a pane — terminal content, its tab bar, or its status bar — moves keyboard focus there. Previously focus only moved via ⌘[/⌘] or tab switches, and with Liquid Glass enabled, clicks on the original pane after a split were swallowed entirely by the glass layer. Clicks that land in the search bar or the prompt composer keep their caret where you clicked.
