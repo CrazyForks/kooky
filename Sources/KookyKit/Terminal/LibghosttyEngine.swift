@@ -42,22 +42,36 @@ final class LibghosttyApp {
         if self.app == nil {
             NSLog("kooky: ghostty_app_new failed")
         }
+        currentConfig = config
     }
+
+    /// The config currently applied to the app. libghostty's embedded API
+    /// clones on app-new and update-config, but freeing the config RIGHT
+    /// AFTER `ghostty_app_new` makes the next `ghostty_surface_new` fail
+    /// (verified empirically — some part of the clone still references the
+    /// original's memory, a path upstream never exercises because
+    /// Ghostty.app keeps each config alive until the next reload replaces
+    /// it). Mirror that lifecycle: exactly ONE config is ever alive, each
+    /// freed when its successor is applied, so reloads no longer accumulate
+    /// leaked configs (the old code freed nothing, ever).
+    private var currentConfig: ghostty_config_t?
 
     func reloadConfig() {
         guard let app else { return }
-        // Parse settings.json + load ghostty defaults once for the entire
-        // reload — `makeGhosttyConfig` is called once per ghostty receiver
-        // (app + each surface) but they all need an identical config, so
-        // share the parsed kooky-side dict to avoid N+1 disk reads + JSON
-        // parses for a window with many panes.
-        let parsed = KookySettings.loadParsed()
-        guard let config = KookySettings.makeGhosttyConfig(parsed: parsed) else {
+        guard let config = KookySettings.makeGhosttyConfig() else {
             NSLog("kooky: ghostty_config_new failed during reload")
             return
         }
+        // One app-level update IS the whole reload: upstream App.updateConfig
+        // fans the config out to every surface itself (change_config message)
+        // and each surface ends its own updateConfig with queueRender — a
+        // second per-surface pass would rebuild + reapply the same config N
+        // times per reload (and leak N more copies).
         ghostty_app_update_config(app, config)
-        GhosttySurfaceRegistry.updateAll(parsed: parsed)
+        // The fan-out is synchronous and deep-copies what it keeps, so the
+        // PREVIOUS config is unreferenced once update returns.
+        if let previous = currentConfig { ghostty_config_free(previous) }
+        currentConfig = config
     }
 
     func tick() {
@@ -331,24 +345,6 @@ final class LibghosttyEngine: TerminalEngine {
     }
 }
 
-@MainActor
-private enum GhosttySurfaceRegistry {
-    // `NSHashTable.weakObjects()` handles weak storage + compaction
-    // internally — every `register` is O(1), and dead refs disappear on
-    // their own (no manual `filter`).
-    private static let views: NSHashTable<GhosttySurfaceView> = .weakObjects()
-
-    static func register(_ view: GhosttySurfaceView) {
-        views.add(view)
-    }
-
-    static func updateAll(parsed: [String: Any]?) {
-        for view in views.allObjects {
-            view.updateConfigFromSettings(parsed: parsed)
-        }
-    }
-}
-
 // MARK: - GhosttySurfaceView
 
 /// AppKit host view that libghostty renders into directly. The view's pointer
@@ -453,7 +449,6 @@ final class GhosttySurfaceView: NSView {
         ScrollIndicator.install(scrollIndicator, in: self)
         updateTrackingAreas()
         wireScrollDrag()
-        GhosttySurfaceRegistry.register(self)
         // Accept Finder-style file drops — the user drags a file or folder
         // onto the terminal pane and we inject its backslash-escaped
         // absolute path (or paths, space-separated) as if it were pasted.
@@ -663,17 +658,6 @@ final class GhosttySurfaceView: NSView {
         surface = new
         pendingConfig = nil
         ghostty_surface_refresh(new)
-    }
-
-    func updateConfigFromSettings(parsed: [String: Any]?) {
-        guard let surface else { return }
-        guard let config = KookySettings.makeGhosttyConfig(parsed: parsed) else {
-            NSLog("kooky: ghostty_config_new failed during surface reload")
-            return
-        }
-        ghostty_surface_update_config(surface, config)
-        ghostty_surface_refresh(surface)
-        setNeedsRender()
     }
 
     private func startRenderLink() {

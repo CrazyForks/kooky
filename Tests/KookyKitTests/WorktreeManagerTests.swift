@@ -192,4 +192,38 @@ final class WorktreeManagerTests: XCTestCase {
                        "stderr should carry git's message")
         XCTAssertNotEqual(err.exitCode, 0)
     }
+
+    // MARK: - runGit pipe drain
+
+    // Regression (Codex review, same class as GitStatusFetcher's): runGit
+    // used to read both pipes only AFTER exit — git blocks writing once
+    // either stream passes the ~64KB pipe buffer, never exits, and the
+    // timeout misreported "git timed out". A `!`-alias makes git itself
+    // produce the oversized stream, so no fixture repo is needed.
+
+    func testRunGitDrainsStdoutLargerThanPipeBuffer() throws {
+        let result = WorktreeManager.runGit(
+            ["-c", "alias.spew=!yes stdout-filler-line | head -c 150000", "spew"],
+            timeout: 10
+        )
+        guard case .success(let output) = result else {
+            XCTFail("expected success, got \(result)")
+            return
+        }
+        XCTAssertGreaterThan(output.utf8.count, 100_000)
+    }
+
+    func testRunGitDrainsStderrLargerThanPipeBuffer() throws {
+        let result = WorktreeManager.runGit(
+            ["-c", "alias.spew=!yes stderr-filler-line | head -c 150000 1>&2; exit 3", "spew"],
+            timeout: 10
+        )
+        guard case .failure(let err) = result else {
+            XCTFail("expected failure, got \(result)")
+            return
+        }
+        XCTAssertEqual(err.exitCode, 3)
+        XCTAssertGreaterThan(err.stderr.utf8.count, 100_000,
+                             "the full oversized stderr must reach the caller")
+    }
 }

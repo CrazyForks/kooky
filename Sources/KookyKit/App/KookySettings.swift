@@ -178,16 +178,16 @@ enum KookySettings {
     /// Builds the full libghostty configuration used at app start and for
     /// runtime reloads. Keep this as the single source for precedence:
     /// ghostty defaults -> kooky baselines -> ~/.kooky/settings.json.
-    /// Pass `parsed` when the caller already loaded settings.json (e.g.
-    /// `LibghosttyApp.reloadConfig` building one config per surface) to
-    /// avoid re-reading the file N times.
+    /// Ownership: the caller owns the returned config and must keep it
+    /// alive until the NEXT config replaces it, then free it — see
+    /// `LibghosttyApp.currentConfig` for why freeing sooner is unsafe.
     @MainActor
-    static func makeGhosttyConfig(parsed: [String: Any]? = nil) -> ghostty_config_t? {
+    static func makeGhosttyConfig() -> ghostty_config_t? {
         let config = ghostty_config_new()
         guard config != nil else { return nil }
         ghostty_config_load_default_files(config)
         applyBaseline(to: config)
-        apply(parsed: parsed ?? loadParsed(), to: config)
+        apply(parsed: loadParsed(), to: config)
         ghostty_config_finalize(config)
         return config
     }

@@ -2505,3 +2505,78 @@ private extension PersistedPaneNode {
         }
     }
 }
+
+// MARK: - Git watcher hub
+
+extension WorkspaceStoreTests {
+    /// Real `git init` fixture — the hub keys on the RESOLVED gitdir, so a
+    /// plain directory can't exercise subscribe/unsubscribe at all.
+    private func makeGitRepo() throws -> URL {
+        let repo = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kooky-hub-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        try XCTSkipUnless(
+            GitStatusFetcher.runGit(["-C", repo.path, "init", "-q"], timeout: 10) != nil,
+            "git unavailable"
+        )
+        return repo
+    }
+
+    /// Baselines are relative: the seed workspace (home cwd) may or may not
+    /// resolve to a repo on the machine running the tests.
+    func testSameRepoTabsShareOneGitWatcher() throws {
+        let repo = try makeGitRepo()
+        defer { try? FileManager.default.removeItem(at: repo) }
+        let store = makeStore()
+        let base = store.gitWatchHubStats
+
+        let ws = store.addWorkspace(workingDirectory: repo)
+        store.addTab(in: ws)
+        store.addTab(in: ws)
+        XCTAssertEqual(store.gitWatchHubStats.watchers, base.watchers + 1,
+                       "three same-repo tabs must share ONE kqueue watcher")
+        XCTAssertEqual(store.gitWatchHubStats.subscriptions, base.subscriptions + 3)
+
+        let pane = firstPane(ws)
+        store.closeTab(pane.tabs[0], in: ws)
+        XCTAssertEqual(store.gitWatchHubStats.watchers, base.watchers + 1,
+                       "the shared watcher survives while any subscriber remains")
+        XCTAssertEqual(store.gitWatchHubStats.subscriptions, base.subscriptions + 2)
+    }
+
+    func testCdAcrossRepoBoundaryMovesTheSubscription() throws {
+        let repo = try makeGitRepo()
+        defer { try? FileManager.default.removeItem(at: repo) }
+        let store = makeStore()
+        let base = store.gitWatchHubStats
+
+        let ws = store.addWorkspace(workingDirectory: repo)
+        guard let session = ws.activeSession else { return XCTFail("no session") }
+        XCTAssertEqual(store.gitWatchHubStats.watchers, base.watchers + 1)
+
+        engine(session).emitPwd(projectB.path)
+        XCTAssertEqual(store.gitWatchHubStats.watchers, base.watchers,
+                       "last subscriber cd'd out of the repo — the shared watcher must tear down")
+
+        engine(session).emitPwd(repo.path)
+        XCTAssertEqual(store.gitWatchHubStats.watchers, base.watchers + 1,
+                       "cd back in re-subscribes and re-creates the watcher")
+    }
+
+    func testDistinctReposGetDistinctWatchers() throws {
+        let repoA = try makeGitRepo()
+        let repoB = try makeGitRepo()
+        defer {
+            try? FileManager.default.removeItem(at: repoA)
+            try? FileManager.default.removeItem(at: repoB)
+        }
+        let store = makeStore()
+        let base = store.gitWatchHubStats
+
+        store.addWorkspace(workingDirectory: repoA)
+        store.addWorkspace(workingDirectory: repoB)
+        XCTAssertEqual(store.gitWatchHubStats.watchers, base.watchers + 2,
+                       "different gitdirs never share a watcher")
+        XCTAssertEqual(store.gitWatchHubStats.subscriptions, base.subscriptions + 2)
+    }
+}

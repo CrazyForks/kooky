@@ -149,7 +149,9 @@ enum WorktreeManager {
 
     // MARK: - Subprocess
 
-    private static func runGit(_ args: [String], timeout: TimeInterval) -> Result<String, GitError> {
+    /// Internal (not private) purely as the test seam for the pipe-drain
+    /// and timeout-escalation behavior; production callers stay in this file.
+    static func runGit(_ args: [String], timeout: TimeInterval) -> Result<String, GitError> {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         task.arguments = ["git"] + args
@@ -160,8 +162,8 @@ enum WorktreeManager {
         let stderr = Pipe()
         task.standardOutput = stdout
         task.standardError = stderr
-        let semaphore = DispatchSemaphore(value: 0)
-        task.terminationHandler = { _ in semaphore.signal() }
+        let exited = DispatchSemaphore(value: 0)
+        task.terminationHandler = { _ in exited.signal() }
         do {
             try task.run()
         } catch {
@@ -170,15 +172,42 @@ enum WorktreeManager {
                 exitCode: -1
             ))
         }
-        if semaphore.wait(timeout: .now() + timeout) == .timedOut {
+        // Drain both pipes CONCURRENTLY with the exit wait — reading only
+        // after termination deadlocks once either stream passes the ~64KB
+        // pipe buffer (git blocks writing, never exits, the timeout fires
+        // and misreports). `worktree add` progress on a big repo and
+        // `worktree list --porcelain` on worktree-heavy repos both produce
+        // enough output to hit this; stderr must be drained too because
+        // failed worktree commands surface it to the user.
+        let outDrain = PipeDrain.draining(stdout)
+        let errDrain = PipeDrain.draining(stderr)
+        if exited.wait(timeout: .now() + timeout) == .timedOut {
+            // Escalate until the process is CONFIRMED dead before returning.
+            // These are write commands — reporting failure while git still
+            // runs would let it keep mutating the worktree behind the
+            // caller's back. After SIGKILL the process cannot execute
+            // another instruction, so the bounded wait only covers reaping.
             task.terminate()
-            _ = semaphore.wait(timeout: .now() + 0.1)
+            if exited.wait(timeout: .now() + 2) == .timedOut {
+                kill(task.processIdentifier, SIGKILL)
+                _ = exited.wait(timeout: .now() + 5)
+            }
             return .failure(GitError(stderr: "git timed out after \(Int(timeout))s", exitCode: -1))
         }
-        let stdoutData = stdout.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = stderr.fileHandleForReading.readDataToEndOfFile()
-        let stdoutString = String(data: stdoutData, encoding: .utf8) ?? ""
-        let stderrString = String(data: stderrData, encoding: .utf8) ?? ""
+        // Exit closes git's pipe ends so EOF is imminent; one shared
+        // absolute deadline (the drains run concurrently) guards against a
+        // leaked write end — a git hook can background a child that
+        // inherits our pipes and outlives git itself. On timeout the drain
+        // thread may still be WRITING `data`, so reading it would be a
+        // data race (the semaphore is the only happens-before edge) —
+        // treat that stream as unavailable instead; the exit status is
+        // still accurate and GitError falls back to "git exited with
+        // status N" when stderr comes up empty.
+        let drainDeadline = DispatchTime.now() + 5
+        let outDrained = outDrain.done.wait(timeout: drainDeadline) == .success
+        let errDrained = errDrain.done.wait(timeout: drainDeadline) == .success
+        let stdoutString = outDrained ? (String(data: outDrain.data, encoding: .utf8) ?? "") : ""
+        let stderrString = errDrained ? (String(data: errDrain.data, encoding: .utf8) ?? "") : ""
         if task.terminationStatus == 0 {
             return .success(stdoutString)
         }

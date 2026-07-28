@@ -20,6 +20,11 @@ final class GitWatcher {
     private let onChange: () -> Void
     private var pendingRefresh: DispatchWorkItem?
 
+    /// False when the watcher holds no live kqueue fds (never attached, or
+    /// the gitdir vanished and the rebuild failed). The store's per-prompt
+    /// hub check uses this to re-arm a shared watcher with a fresh cwd.
+    var isAttached: Bool { !watches.isEmpty }
+
     init(onChange: @escaping () -> Void) {
         self.onChange = onChange
     }
@@ -33,9 +38,17 @@ final class GitWatcher {
     /// intentionally falls through because `watches` is empty there.
     func watch(cwd: URL) {
         if watchedCwd == cwd && !watches.isEmpty { return }
+        watch(cwd: cwd, resolvedGitDir: Self.findGitDir(near: cwd))
+    }
+
+    /// Hub entry: the caller already resolved the gitdir (it IS the hub's
+    /// key), so don't walk the directory tree a second time. `watch(cwd:)`
+    /// stays for the internal delete/rename rebuild, which must re-resolve.
+    func watch(cwd: URL, resolvedGitDir: URL?) {
+        if watchedCwd == cwd && !watches.isEmpty { return }
         tearDownSources()
         watchedCwd = cwd
-        guard let gitDir = Self.findGitDir(near: cwd) else { return }
+        guard let gitDir = resolvedGitDir else { return }
         attach(path: gitDir.appendingPathComponent("HEAD").path)
         attach(path: gitDir.appendingPathComponent("index").path)
     }

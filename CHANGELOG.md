@@ -2,6 +2,14 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.45.3 — 2026-07-28
+
+Performance round — a deep audit plus adversarial review, no new features.
+
+- Fixed: a native memory leak in the terminal engine — every settings change and each system light/dark switch permanently leaked engine configuration memory, so long-lived instances grew forever. Settings changes also no longer run a redundant second per-pane update pass.
+- Faster: tabs open in the same repository now share one git watcher — a commit refreshes all of them with a single git call instead of a burst of dozens of subprocesses, and fish users no longer pay a doubled git refresh on every prompt.
+- Fixed: creating or removing a worktree could freeze the UI for seconds on slow filesystems and stall on very large git output; both now run fully off the main thread with reliable output handling.
+
 ## v0.45.2 — 2026-07-28
 
 - Fixed: select-to-copy now works for everyone. kooky inherits your Ghostty config, so a `copy-on-select = false` there silently disabled it — text highlighted on selection but never reached the clipboard. (#32)

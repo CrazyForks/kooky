@@ -277,11 +277,30 @@ final class WorkspaceStore {
     /// terminal, file-level git ops). The OSC 7 / OSC 133 paths only see
     /// the outer shell, so an agent running its own subprocess shell never
     /// trips them; the filesystem layer catches everyone.
-    private var gitWatchers: [UUID: GitWatcher] = [:]
+    ///
+    /// One watcher per RESOLVED gitdir, shared by every session whose cwd
+    /// lives in that repo. `findGitDir` resolves a worktree's `.git` pointer
+    /// file to its own `.git/worktrees/<name>/`, so two worktrees of one
+    /// repo never share an entry — their HEAD/index events can't cross-
+    /// pollinate. Replaces per-session watchers: ten same-repo tabs used to
+    /// mean ten fd pairs and, on one commit, ten independent debounces each
+    /// forking its own git pair (fork storm + GCD worker pileup).
+    /// Reference type on purpose: subscriber mutation is in-place, and the
+    /// watcher + subscriber set live and die together under one key.
+    private final class GitWatch {
+        let watcher: GitWatcher
+        var subscribers: Set<UUID> = []
+        init(watcher: GitWatcher) { self.watcher = watcher }
+    }
+    private var gitWatches: [String: GitWatch] = [:]
+    /// Per-session (cwd → resolved gitdir) cache so the per-prompt hub call
+    /// skips the findGitDir directory walk while the cwd is unchanged.
+    private var sessionGitWatch: [UUID: (cwdPath: String, gitDir: String?)] = [:]
     /// Watches each Codex session's rollout file and republishes its latest
     /// rate-limit usage to `Session.codexUsage` for the status-bar gauge.
     /// Codex blocks the shell while running, so the file is the only live
-    /// signal — torn down alongside `gitWatchers` at every close site.
+    /// signal — torn down alongside the git-watch subscription at every
+    /// close site.
     private let codexUsageMonitor = CodexUsageMonitor()
     /// Reads Kiro's per-surface ACP recording and captures the exact id
     /// returned by `session/new`, including in the current non-hookable TUI.
@@ -421,14 +440,21 @@ final class WorkspaceStore {
     ) async -> CreateWorktreeSheet.CreateOutcome {
         switch request.kind {
         case .create(let mode, let path, let branchForDisplay):
-            guard let repoPath = WorktreeManager.repoRoot(near: source.workingDirectory) else {
-                return .failure("not inside a git repository")
-            }
-            let result = await Task.detached(priority: .userInitiated) {
-                WorktreeManager.add(repoPath: repoPath, path: path, mode: mode)
+            // repoRoot runs inside the detached task too — it is a git
+            // subprocess with a 2s timeout, and on the main actor it froze
+            // the UI for that long on slow/network filesystems.
+            let sourceDir = source.workingDirectory
+            let failureMessage: String? = await Task.detached(priority: .userInitiated) {
+                guard let repoPath = WorktreeManager.repoRoot(near: sourceDir) else {
+                    return "not inside a git repository"
+                }
+                if case .failure(let err) = WorktreeManager.add(repoPath: repoPath, path: path, mode: mode) {
+                    return err.description
+                }
+                return nil
             }.value
-            if case .failure(let err) = result {
-                return .failure(err.description)
+            if let failureMessage {
+                return .failure(failureMessage)
             }
             addWorkspace(
                 workingDirectory: path,
@@ -647,21 +673,23 @@ final class WorkspaceStore {
             return "workspace is not a worktree"
         }
         let path = workspace.diskPath
-        let parent = workspace.worktreeParentId.flatMap { parentId in
+        let parentDir = workspace.worktreeParentId.flatMap { parentId in
             workspaces.first(where: { $0.id == parentId })
-        }
-        let repoPath = parent
-            .flatMap { WorktreeManager.repoRoot(near: $0.workingDirectory) }
-            ?? WorktreeManager.repoRoot(near: path)
-            ?? (isDirectory(path) ? path : nil)
-        guard let repoPath else {
-            // Parent and worktree directory are already gone. Let the caller
-            // close the stranded sidebar row; there is no disk left to delete.
-            pruneRecentlyClosed(under: workspace)
-            return nil
-        }
+        }?.workingDirectory
         let normalizedPath = path.standardizedFileURL.path
-        let result = await Task.detached(priority: .userInitiated) {
+        // nil = removed cleanly, or nothing on disk left to delete (repo
+        // root unresolvable — parent and worktree directory already gone).
+        // Same shape as createWorktree: the task hands back only the
+        // failure message the sheet needs.
+        let failureMessage: String? = await Task.detached(priority: .userInitiated) {
+            // The repoRoot probes run in here too: each is a git subprocess
+            // with a 2s timeout, and this chain can run two of them — on the
+            // main actor that was a worst-case 4s UI freeze right after the
+            // user confirmed the remove sheet.
+            let repoPath = parentDir.flatMap { WorktreeManager.repoRoot(near: $0) }
+                ?? WorktreeManager.repoRoot(near: path)
+                ?? (isDirectory(path) ? path : nil)
+            guard let repoPath else { return nil }
             // Resolve the worktree's real current branch from `git
             // worktree list` before removing — the user may have
             // `git switch`-ed inside the worktree since kooky last
@@ -676,7 +704,9 @@ final class WorkspaceStore {
                 else { return nil }
                 return match.branch
             }()
-            let removed = WorktreeManager.remove(repoPath: repoPath, path: path, force: true)
+            if case .failure(let err) = WorktreeManager.remove(repoPath: repoPath, path: path, force: true) {
+                return err.description
+            }
             // Safe-delete the branch (only if merged) after the worktree
             // dir is gone — `git branch -d` would otherwise refuse with
             // "currently checked out at <path>". Failure on unmerged
@@ -684,13 +714,13 @@ final class WorkspaceStore {
             // Create Worktree on the same name surfaces "branch exists
             // locally" then. No data-loss risk because git refuses to
             // drop unmerged commits without the upper-case `-D`.
-            if case .success = removed, let realBranch, !realBranch.isEmpty {
+            if let realBranch, !realBranch.isEmpty {
                 _ = WorktreeManager.deleteBranchIfMerged(repoPath: repoPath, branch: realBranch)
             }
-            return removed
+            return nil
         }.value
-        if case .failure(let err) = result {
-            return err.description
+        if let failureMessage {
+            return failureMessage
         }
         pruneRecentlyClosed(under: workspace)
         return nil
@@ -713,10 +743,7 @@ final class WorkspaceStore {
     func closeWorkspace(_ workspace: Workspace) {
         for pane in workspace.root.allPanes {
             for tab in pane.tabs {
-                gitWatchers.removeValue(forKey: tab.id)?.cancel()
-                codexUsageMonitor.stop(sessionId: tab.id)
-                kiroConversationMonitor.stop(sessionId: tab.id, removeRecord: true)
-                tab.engine.terminate()
+                teardownSessionMonitors(tab)
             }
         }
         guard let idx = workspaces.firstIndex(where: { $0.id == workspace.id }) else { return }
@@ -1036,9 +1063,7 @@ final class WorkspaceStore {
         // — and the destination store's `dropDestination` defer clears only
         // its own. Clear ours so this window's drop indicators reset.
         draggingTabId = nil
-        gitWatchers.removeValue(forKey: id)?.cancel()
-        codexUsageMonitor.stop(sessionId: id)
-        kiroConversationMonitor.stop(sessionId: id)
+        teardownSessionMonitors(session, keepForTransfer: true)
         detachSession(session, from: pane, at: idx, in: workspace)
         return session
     }
@@ -1093,10 +1118,7 @@ final class WorkspaceStore {
         if recordHistory {
             recordClosedTab(session, pane: pane, workspace: workspace)
         }
-        gitWatchers.removeValue(forKey: session.id)?.cancel()
-        codexUsageMonitor.stop(sessionId: session.id)
-        kiroConversationMonitor.stop(sessionId: session.id, removeRecord: true)
-        session.engine.terminate()
+        teardownSessionMonitors(session)
         detachSession(session, from: pane, at: idx, in: workspace)
     }
 
@@ -1275,10 +1297,7 @@ final class WorkspaceStore {
         // closed pane's git + Codex/Kiro watchers (DispatchSource fds) leak.
         // Idempotent: the root path re-stops via closeWorkspace (no-op).
         for tab in pane.tabs {
-            gitWatchers.removeValue(forKey: tab.id)?.cancel()
-            codexUsageMonitor.stop(sessionId: tab.id)
-            kiroConversationMonitor.stop(sessionId: tab.id, removeRecord: true)
-            tab.engine.terminate()
+            teardownSessionMonitors(tab)
         }
         // Object identity, not id equality. After `splitPane`, the workspace
         // root keeps its original id but its content becomes a `.split`, while
@@ -1493,8 +1512,9 @@ final class WorkspaceStore {
                 }
             }
         }
-        for watcher in gitWatchers.values { watcher.cancel() }
-        gitWatchers.removeAll()
+        for entry in gitWatches.values { entry.watcher.cancel() }
+        gitWatches.removeAll()
+        sessionGitWatch.removeAll()
         codexUsageMonitor.stopAll()
         kiroConversationMonitor.stopAll(removeRecords: true)
         fileTree.cancel()
@@ -1700,7 +1720,7 @@ final class WorkspaceStore {
         // results for non-applicable cwds, so the calls are harmless.
         refreshGitStatus(for: session)
         refreshEnvironment(for: session)
-        installGitWatcher(for: session)
+        updateGitWatch(for: session)
         startCodexUsageIfNeeded(
             for: session,
             resumingConversationId: codexRolloutId
@@ -1733,19 +1753,19 @@ final class WorkspaceStore {
                 workspace.workingDirectory = url
                 workspaceCwdChanged = true
             }
-            // Git status AND the filesystem watcher refresh on EVERY prompt, even
-            // an unchanged cwd — neither is safe to gate on cwdChanged:
+            // Git status AND the watcher hub refresh on EVERY prompt, even an
+            // unchanged cwd — neither is safe to gate on cwdChanged:
             //  • refreshGitStatus: an external editor can change the working
             //    tree's uncommitted-file count without touching .git, which the
             //    watcher's fs source never sees; this per-prompt fetch (which
             //    result-dedups) is the only catch.
-            //  • watch(): GitWatcher.watch self-dedups for an already-watched
-            //    repo, but when the cwd had no .git at install time it re-runs
-            //    findGitDir on every call — so this is what finally attaches the
-            //    watcher when a repo is created in place (`git init` / `clone .`)
-            //    with no cd. Gating it would strand that case (issue #29 review).
+            //  • updateGitWatch: its per-prompt re-probe is what finally
+            //    attaches a watcher when a repo is created in place
+            //    (`git init` / `clone .`) with no cd. Gating it would strand
+            //    that case (issue #29 review). Unchanged-cwd prompts inside a
+            //    repo cost two dictionary hits, no filesystem walk.
             self?.refreshGitStatus(for: session)
-            self?.gitWatchers[session.id]?.watch(cwd: session.currentDirectory)
+            self?.updateGitWatch(for: session)
             // Environment + persistence DO only move with the cwd. venv / node
             // changes are pushed by the separate `_kooky_env_status` precmd IPC
             // (which updates shellEnvironment → refreshEnvironment), and the only
@@ -1898,25 +1918,33 @@ final class WorkspaceStore {
     }
 
     private func refreshGitStatus(for session: Session) {
-        gitStatusFetcher.fetch(sessionId: session.id, cwd: session.currentDirectory) { [weak session] status in
+        gitStatusFetcher.fetch(id: session.id.uuidString, cwd: session.currentDirectory) { [weak session] status in
             guard let session, session.gitStatus != status else { return }
             session.gitStatus = status
         }
         // Piggyback the file tree's per-file diff on the SAME triggers that
         // refresh the status bar (spawn / every prompt / command finished /
         // GitWatcher) — single chokepoint, so the tree's +/− badges and the
-        // status bar's totals can never drift. Cheap mounted-check first;
-        // the O(panes) walk only runs while the tree is actually showing.
-        if fileTree.isShowing, active?.root.pane(containingSessionId: session.id) != nil {
-            refreshFileTreeGitDiff()
-        }
+        // status bar's totals can never drift.
+        refreshFileTreeGitDiff(ifVisibleFor: [session.id])
     }
 
     /// Stable dedup key for the tree's diff fetch: the tree is a per-store
     /// singleton, so a NEWER fetch must invalidate ANY older in-flight one —
     /// keying by workspace id would let a slow pre-switch fetch land after
     /// the new workspace's fresh result and blank its badges for a beat.
-    private let fileTreeDiffFetchId = UUID()
+    private let fileTreeDiffFetchKey = "file-tree"
+
+    /// Piggyback gate shared by every status-refresh path: refresh the
+    /// tree's diff only while it is showing AND one of the event's sessions
+    /// can be on screen (in the active workspace's pane tree).
+    /// `refreshFileTreeGitDiff()` stays callable directly for the tree's
+    /// own mount/root-change hooks.
+    private func refreshFileTreeGitDiff(ifVisibleFor ids: some Sequence<UUID>) {
+        guard fileTree.isShowing, let activeRoot = active?.root,
+              ids.contains(where: { activeRoot.pane(containingSessionId: $0) != nil }) else { return }
+        refreshFileTreeGitDiff()
+    }
 
     /// Fetches per-file `+/−` counts for the file tree's current root and
     /// pushes them into the model. Also called by `FileTreeView` on mount
@@ -1925,7 +1953,7 @@ final class WorkspaceStore {
     /// on screen (workspaces mode, compact, hidden sidebar).
     func refreshFileTreeGitDiff() {
         guard fileTree.isShowing, let root = fileTree.rootURL else { return }
-        gitStatusFetcher.fetchFileDiffs(id: fileTreeDiffFetchId, cwd: root) { [weak self] diffs in
+        gitStatusFetcher.fetchFileDiffs(id: fileTreeDiffFetchKey, cwd: root) { [weak self] diffs in
             self?.fileTree.applyGitDiff(diffs)
         }
     }
@@ -1949,15 +1977,21 @@ final class WorkspaceStore {
         refreshed.insertions = diff.insertions
         refreshed.deletions = diff.deletions
         if refreshed != session.gitStatus {
-            gitStatusFetcher.invalidateInFlight(id: session.id)
+            gitStatusFetcher.invalidateInFlight(id: session.id.uuidString)
+            // The shared-gitdir broadcast fetch is a second in-flight lane
+            // that could also overwrite this fresher click-time result.
+            if let gitDir = sessionGitWatch[session.id]?.gitDir {
+                gitStatusFetcher.invalidateInFlight(id: gitDir)
+            }
             session.gitStatus = refreshed
         }
         // Outside the totals gate: the file-level distribution can change
         // while totals stay equal (revert a line here, add one there) — the
-        // tree's badges must follow the popover's rows regardless.
-        if fileTree.isShowing, active?.root.pane(containingSessionId: session.id) != nil {
-            refreshFileTreeGitDiff()
-        }
+        // tree's badges must follow the popover's rows regardless. The
+        // invalidate lifts the tree lane's 50ms coalescing window so this
+        // edge-triggered refresh can never be stood in for by an older poll.
+        gitStatusFetcher.invalidateInFlight(id: fileTreeDiffFetchKey)
+        refreshFileTreeGitDiff(ifVisibleFor: [session.id])
     }
 
     /// Starts (or re-points) the Codex usage watcher for a Codex session.
@@ -1991,13 +2025,133 @@ final class WorkspaceStore {
         }
     }
 
-    private func installGitWatcher(for session: Session) {
-        let watcher = GitWatcher { [weak self, weak session] in
-            guard let self, let session else { return }
-            self.refreshGitStatus(for: session)
+    // MARK: - Git watcher hub
+
+    /// (Re)subscribes a session to the shared watcher for its cwd's gitdir.
+    /// Runs on every prompt — that per-prompt retry is what attaches a
+    /// watcher once a repo appears in place — but the common unchanged-cwd
+    /// prompt costs two dictionary hits and no filesystem walk.
+    private func updateGitWatch(for session: Session) {
+        let cwdPath = session.currentDirectory.path
+        let cached = sessionGitWatch[session.id]
+        if let cached, cached.cwdPath == cwdPath, let gitDir = cached.gitDir {
+            // Same repo as last prompt: just confirm the shared watcher
+            // still holds live kqueue fds (gitdir deleted then recreated) —
+            // the per-prompt retry the old per-session watch() provided. A
+            // cached "not a repo" falls through and re-probes instead: the
+            // git-init-in-place attach path.
+            if let watcher = gitWatches[gitDir]?.watcher, !watcher.isAttached {
+                watcher.watch(cwd: session.currentDirectory)
+            }
+            return
         }
-        watcher.watch(cwd: session.currentDirectory)
-        gitWatchers[session.id] = watcher
+        let resolved = GitWatcher.findGitDir(near: session.currentDirectory)
+        let gitDir = resolved?.path
+        sessionGitWatch[session.id] = (cwdPath, gitDir)
+        // A cd WITHIN the same repo keeps the subscription (and the fds) —
+        // the old per-session watcher tore down + reopened both fds here.
+        guard cached?.gitDir != gitDir else { return }
+        if let previous = cached?.gitDir {
+            unsubscribeGitWatch(sessionId: session.id, from: previous)
+        }
+        if let gitDir, let resolved {
+            subscribeGitWatch(session: session, to: gitDir, resolvedGitDir: resolved)
+        }
+    }
+
+    private func subscribeGitWatch(session: Session, to gitDir: String, resolvedGitDir: URL) {
+        let entry: GitWatch
+        if let existing = gitWatches[gitDir] {
+            entry = existing
+        } else {
+            let watcher = GitWatcher { [weak self] in
+                self?.gitDirChanged(gitDir)
+            }
+            watcher.watch(cwd: session.currentDirectory, resolvedGitDir: resolvedGitDir)
+            entry = GitWatch(watcher: watcher)
+            gitWatches[gitDir] = entry
+        }
+        entry.subscribers.insert(session.id)
+    }
+
+    private func unsubscribeGitWatch(sessionId: UUID, from gitDir: String) {
+        guard let entry = gitWatches[gitDir] else { return }
+        entry.subscribers.remove(sessionId)
+        if entry.subscribers.isEmpty {
+            gitWatches.removeValue(forKey: gitDir)?.watcher.cancel()
+        }
+    }
+
+    /// Test-only probe: the shared-watcher invariants (one watcher per
+    /// gitdir, subscriber counting) have no UI-observable surface.
+    var gitWatchHubStats: (watchers: Int, subscriptions: Int) {
+        (gitWatches.count, gitWatches.values.reduce(0) { $0 + $1.subscribers.count })
+    }
+
+    /// Close-site teardown: drops the session's subscription, and the shared
+    /// watcher with it when this was the last subscriber.
+    private func removeGitWatch(sessionId: UUID) {
+        guard let gitDir = sessionGitWatch.removeValue(forKey: sessionId)?.gitDir else { return }
+        unsubscribeGitWatch(sessionId: sessionId, from: gitDir)
+    }
+
+    /// Every monitor a live session holds, torn down in one place — the
+    /// close paths used to hand-copy this block, and a missed line leaked
+    /// kqueue fds with no UI surface. `keepForTransfer` is the cross-window
+    /// surrender variant: the destination store re-wires the session, so
+    /// the engine stays alive and agent records survive.
+    private func teardownSessionMonitors(_ session: Session, keepForTransfer: Bool = false) {
+        removeGitWatch(sessionId: session.id)
+        codexUsageMonitor.stop(sessionId: session.id)
+        kiroConversationMonitor.stop(sessionId: session.id, removeRecord: !keepForTransfer)
+        if !keepForTransfer { session.engine.terminate() }
+    }
+
+    /// Shared-watcher fan-out. ONE git run per repo event, its result
+    /// broadcast to every subscribed session — same gitdir means same HEAD
+    /// and same working tree, so their statuses are identical by
+    /// construction. This is what turns "ten tabs on one repo, one commit"
+    /// from ten fetches (twenty forks) into one fetch. The gitdir path
+    /// doubles as the fetch lane key. Coalescing note: back-to-back events
+    /// on one gitdir arrive ≥200ms apart (GitWatcher's debounce), so the
+    /// fetcher's 50ms poll window can never swallow a distinct disk state.
+    private func gitDirChanged(_ gitDir: String) {
+        guard let entry = gitWatches[gitDir] else { return }
+        var anchor: Session?
+        for id in entry.subscribers {
+            guard let session = findSession(id: id) else { continue }
+            // Skip sessions whose cwd was deleted under them (shell still
+            // parked there): `git -C <gone>` fails and would broadcast an
+            // EMPTY status over every healthy tab. Their own prompt fetch
+            // reports the empty state where it belongs (Codex review P2).
+            if isDirectory(session.currentDirectory) { anchor = session; break }
+        }
+        guard let anchor else { return }
+        // Snapshot each subscriber's own fetch lane at dispatch: a session
+        // that fetched for itself while this shared run was in flight read
+        // a NEWER disk state, and the shared (older) result must not
+        // overwrite it — the lanes don't invalidate each other.
+        let laneStamps = entry.subscribers.map { id in
+            (id, gitStatusFetcher.currentToken(id: id.uuidString))
+        }
+        gitStatusFetcher.fetch(id: gitDir, cwd: anchor.currentDirectory) { [weak self] status in
+            // Re-read the subscriber set at completion (sessions that closed
+            // mid-fetch drop out), then broadcast in ONE pane-tree pass
+            // instead of a per-id tree search.
+            guard let self, let ids = self.gitWatches[gitDir]?.subscribers else { return }
+            let fresh = Set(laneStamps.lazy
+                .filter { self.gitStatusFetcher.currentToken(id: $0.0.uuidString) == $0.1 }
+                .map(\.0))
+            for workspace in self.workspaces {
+                for pane in workspace.root.allPanes {
+                    for tab in pane.tabs
+                    where ids.contains(tab.id) && fresh.contains(tab.id) && tab.gitStatus != status {
+                        tab.gitStatus = status
+                    }
+                }
+            }
+        }
+        refreshFileTreeGitDiff(ifVisibleFor: entry.subscribers)
     }
 
     private func refreshEnvironment(for session: Session) {

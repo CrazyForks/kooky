@@ -180,16 +180,8 @@ enum ClosedLidSleep {
         p.standardOutput = pipe
         p.standardError = FileHandle.nullDevice
         do { try p.run() } catch { return nil }
-        // Read concurrently with the exit wait (pipe-deadlock rule). The
-        // box is @unchecked Sendable — the semaphore provides happens-before
-        // (same justification as GitStatusFetcher.PipeDrain).
-        final class Box: @unchecked Sendable { var data = Data() }
-        let box = Box()
-        let readSema = DispatchSemaphore(value: 0)
-        DispatchQueue.global(qos: .utility).async {
-            box.data = pipe.fileHandleForReading.readDataToEndOfFile()
-            readSema.signal()
-        }
+        // Read concurrently with the exit wait (pipe-deadlock rule).
+        let drain = PipeDrain.draining(pipe)
         let deadline = DispatchTime.now() + timeout
         let exitSema = DispatchSemaphore(value: 0)
         p.terminationHandler = { _ in exitSema.signal() }
@@ -197,7 +189,7 @@ enum ClosedLidSleep {
             p.terminate()
             return nil
         }
-        readSema.wait()
-        return String(data: box.data, encoding: .utf8)
+        drain.done.wait()
+        return String(data: drain.data, encoding: .utf8)
     }
 }

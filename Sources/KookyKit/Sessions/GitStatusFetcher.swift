@@ -54,21 +54,66 @@ struct GitDiffSnapshot: Equatable, Sendable {
 /// A monotonic per-session generation token drops stale results: if the user
 /// `cd`s rapidly, several fetches may be in flight, but only the latest one's
 /// result lands on the session.
+/// Accumulates a pipe's contents on a background thread so the owner can
+/// wait for process exit without deadlocking on a full pipe buffer.
+/// `@unchecked Sendable` is sound because `data` is written only by the
+/// reader thread before `done.signal()`, and read only after `done.wait()`
+/// — the semaphore provides the happens-before edge. Shared by
+/// `GitStatusFetcher.runGit`, `WorktreeManager.runGit`, and
+/// `ClosedLidSleep` (same deadlock class).
+final class PipeDrain: @unchecked Sendable {
+    var data = Data()
+    let done = DispatchSemaphore(value: 0)
+
+    /// Starts draining `pipe` to EOF on a background thread.
+    static func draining(_ pipe: Pipe) -> PipeDrain {
+        let drain = PipeDrain()
+        DispatchQueue.global(qos: .utility).async {
+            drain.data = pipe.fileHandleForReading.readDataToEndOfFile()
+            drain.done.signal()
+        }
+        return drain
+    }
+}
+
 @MainActor
 final class GitStatusFetcher {
-    private var generation: [UUID: Int] = [:]
+    /// Keys are caller-chosen strings from three disjoint shapes — session
+    /// UUID strings, absolute gitdir paths (leading `/`), and the
+    /// `"file-tree"` constant — so the lanes cannot collide.
+    private var generation: [String: Int] = [:]
+
+    /// Coalesces same-target refires: fish fires OSC 7 and OSC 133;D
+    /// microseconds apart on every prompt, and zsh/bash double-fire on any
+    /// prompt that follows a `cd` — the second dispatch's subprocesses were
+    /// pure waste because the token bump constructively dropped the first
+    /// dispatch's result. Within the window the in-flight run's result
+    /// stands in for the dropped call (same cwd, same disk state).
+    private var lastDispatch: [String: (cwdPath: String, at: DispatchTime)] = [:]
+
+    /// Bounded git worker pool. `runGit` blocks its thread on the exit
+    /// semaphore (plus one drain block per call), so dispatching every fetch
+    /// onto the unbounded global queue let a same-repo fan-out pin a dozen
+    /// GCD workers at once. Three keeps prompt + watcher + file-tree fetches
+    /// concurrent without thread pileup; the rest queue for milliseconds.
+    private static let gitQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.maxConcurrentOperationCount = 3
+        queue.qualityOfService = .utility
+        return queue
+    }()
 
     /// Schedules a fetch for `cwd`. `completion` fires on main with the
     /// freshest result; older in-flight results are silently dropped.
-    func fetch(sessionId: UUID, cwd: URL, completion: @MainActor @escaping (GitStatus) -> Void) {
-        fetchTokened(id: sessionId, cwd: cwd, work: Self.run, completion: completion)
+    func fetch(id: String, cwd: URL, completion: @MainActor @escaping (GitStatus) -> Void) {
+        fetchTokened(id: id, cwd: cwd, work: Self.run, completion: completion)
     }
 
     /// Per-file companion to `fetch`: `git diff --numstat HEAD` is the same
     /// diff `--shortstat HEAD` summarizes, so the per-file numbers sum to
     /// exactly what the status bar shows. Keys are absolute standardized
     /// paths (repo-root-joined), matching the file tree's row ids.
-    func fetchFileDiffs(id: UUID, cwd: URL, completion: @MainActor @escaping ([String: GitFileDiff]) -> Void) {
+    func fetchFileDiffs(id: String, cwd: URL, completion: @MainActor @escaping ([String: GitFileDiff]) -> Void) {
         fetchTokened(id: id, cwd: cwd, work: Self.runFileDiffs, completion: completion)
     }
 
@@ -76,25 +121,44 @@ final class GitStatusFetcher {
     /// when it lands. For results that arrive from OUTSIDE the fetch pipeline
     /// (the diff pill's click-time numstat): applying one without bumping the
     /// token would let a slower, older prompt-driven fetch overwrite it.
-    func invalidateInFlight(id: UUID) {
+    /// Also clears the coalescing stamp: the invalidated run no longer
+    /// stands in for anything, so the next fetch must dispatch for real.
+    /// This is the CONTRACT for edge-triggered callers — a result produced
+    /// outside the fetch pipeline invalidates every lane it supersedes, and
+    /// polling lanes accept the 50ms stand-in.
+    func invalidateInFlight(id: String) {
         generation[id] = (generation[id] ?? 0) + 1
+        lastDispatch.removeValue(forKey: id)
     }
 
+    /// Current generation token for a lane. The shared-gitdir broadcast
+    /// snapshots each subscriber's own session lane at dispatch and skips
+    /// sessions whose lane moved while the shared run was in flight — their
+    /// own fetch read a NEWER disk state, and the two lanes don't invalidate
+    /// each other (Codex review P2).
+    func currentToken(id: String) -> Int { generation[id] ?? 0 }
+
     /// Shared dispatch shape for both fetches: bump the caller's generation
-    /// token, run `work` on a utility queue, drop the result on main unless
-    /// a newer fetch superseded it. One `generation` dict serves both —
-    /// callers key by session id vs a store-stable UUID, so the keyspaces
-    /// can't collide.
+    /// token, run `work` on the bounded git queue, drop the result on main
+    /// unless a newer fetch superseded it.
     private func fetchTokened<T: Sendable>(
-        id: UUID,
+        id: String,
         cwd: URL,
         work: @escaping @Sendable (String) -> T,
         completion: @MainActor @escaping (T) -> Void
     ) {
+        let path = cwd.path
+        // Dropping the call (not just its result) is safe because callers
+        // only ever write the fetched value into observable state — the
+        // in-flight twin delivers the same bytes moments later.
+        if let last = lastDispatch[id], last.cwdPath == path,
+           DispatchTime.now().uptimeNanoseconds - last.at.uptimeNanoseconds < 50_000_000 {
+            return
+        }
+        lastDispatch[id] = (path, .now())
         let token = (generation[id] ?? 0) + 1
         generation[id] = token
-        let path = cwd.path
-        DispatchQueue.global(qos: .utility).async { [weak self] in
+        Self.gitQueue.addOperation { [weak self] in
             let result = work(path)
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -199,15 +263,6 @@ final class GitStatusFetcher {
         return GitStatus(branch: branch, repoRoot: repoRoot, filesChanged: files, insertions: ins, deletions: del)
     }
 
-    /// Accumulates a pipe's contents on a background thread. `@unchecked
-    /// Sendable` is sound because `data` is written only by the reader
-    /// thread before `done.signal()`, and read only after `done.wait()` —
-    /// the semaphore provides the happens-before edge.
-    private final class PipeDrain: @unchecked Sendable {
-        var data = Data()
-        let done = DispatchSemaphore(value: 0)
-    }
-
     /// Runs `git <args>` with a 1-second timeout; returns trimmed stdout on
     /// exit 0, nil otherwise. Uses `/usr/bin/env` so the spawned subprocess
     /// resolves git via PATH (covers Apple's /usr/bin/git stub + Homebrew).
@@ -237,11 +292,7 @@ final class GitStatusFetcher {
             return nil
         }
 
-        let drain = PipeDrain()
-        DispatchQueue.global(qos: .utility).async {
-            drain.data = stdout.fileHandleForReading.readDataToEndOfFile()
-            drain.done.signal()
-        }
+        let drain = PipeDrain.draining(stdout)
 
         if exited.wait(timeout: .now() + timeout) == .timedOut {
             task.terminate()
