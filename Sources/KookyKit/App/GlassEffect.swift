@@ -1,4 +1,5 @@
 import AppKit
+import GhosttyKit
 import SwiftUI
 
 /// macOS 26 Liquid Glass, opt-in via ghostty's `background-blur = macos-glass-*`.
@@ -99,23 +100,73 @@ private struct GlassWindowBacking: View {
                     }
                 }
         } else {
-            fallback
+            translucentFallback
         }
         #else
-        fallback
+        translucentFallback
         #endif
+    }
+
+    /// The non-glass window backing follows `background-opacity` ONLY when a
+    /// numeric `background-blur` provides the frosting (bare opacity stays
+    /// opaque — see `applyGlassBacking`). Reads the settings.json values via
+    /// the model so SwiftUI observes live edits; values set only in an
+    /// inherited ghostty config apply at the window layer but keep this
+    /// backing opaque — a recorded settings.json-first boundary.
+    private var translucentFallback: some View {
+        let model = KookySettingsModel.shared
+        let frosted = model.backgroundBlur.map {
+            !KookySettings.isBlurExplicitlyOff($0) && !KookySettings.isGlassBlur($0)
+        } ?? false
+        return fallback.opacity(frosted ? (model.backgroundOpacity ?? 1) : 1)
     }
 }
 
 extension NSWindow {
-    /// Match the window's backing to the current glass state — non-opaque +
-    /// clear so the `NSGlassEffectView` can sample the desktop behind it,
-    /// opaque otherwise. Call at window creation and from
-    /// `refreshThemeAppearances` so live toggles flip every window in step.
+    /// Match the window's backing to the current glass + opacity state —
+    /// non-opaque + clear when the glass layer needs to sample the desktop
+    /// OR `background-opacity < 1` wants it showing through (opacity works
+    /// WITHOUT glass, on every macOS — the core renders the surface with
+    /// alpha, the window just has to let it through). Call at window
+    /// creation and from `refreshThemeAppearances` so live edits flip every
+    /// window in step.
     @MainActor func applyGlassBacking() {
         let glass = Theme.glassEnabled
-        isOpaque = !glass
-        backgroundColor = glass ? .clear : nil
+        // Translucency needs a frosting layer under it — Liquid Glass or the
+        // core's window blur. BARE opacity stays opaque by design: kooky's
+        // layered chrome (inactive-pane dimming × surface alpha × sidebar ×
+        // top strip) multiplies to visibly different levels with nothing
+        // frosted underneath to absorb the difference.
+        let translucent = glass || LibghosttyApp.shared.hostConfig.windowBlurRadius > 0
+        isOpaque = !translucent
+        backgroundColor = translucent ? .clear : nil
+        // ghostty's own window blur (`background-blur = true` or a radius) —
+        // the traditional frosted look, works on every macOS. The call reads
+        // the config value itself; under glass we must CLEAR instead: the
+        // core call can't do it (it early-returns at opacity ≥ 1 and would
+        // pass the glass sentinel's negative cval as a radius), so a live
+        // numeric-blur → glass switch would leave the old CGS radius stacked
+        // under the glass until the window is rebuilt (Codex P2).
+        if !glass, let app = LibghosttyApp.shared.app {
+            ghostty_set_window_background_blur(app, Unmanaged.passUnretained(self).toOpaque())
+        } else if glass {
+            clearNativeWindowBlur()
+        }
+    }
+
+    /// Zeroes the CGS background-blur radius the core's
+    /// `ghostty_set_window_background_blur` may have installed earlier. Same
+    /// private CGS calls the core links (resolved at runtime; silently a
+    /// no-op if the symbols ever vanish). Idempotent — glass windows render
+    /// their blur via NSGlassEffectView, untouched by a zero CGS radius.
+    @MainActor private func clearNativeWindowBlur() {
+        typealias ConnectionFn = @convention(c) () -> UnsafeMutableRawPointer
+        typealias SetBlurFn = @convention(c) (UnsafeMutableRawPointer, Int, Int32) -> Int32
+        guard let connSym = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGSDefaultConnectionForThread"),
+              let setSym = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGSSetWindowBackgroundBlurRadius")
+        else { return }
+        let connection = unsafeBitCast(connSym, to: ConnectionFn.self)()
+        _ = unsafeBitCast(setSym, to: SetBlurFn.self)(connection, windowNumber, 0)
     }
 
     /// The glass-titlebar recipe shared by kooky's titled auxiliary windows

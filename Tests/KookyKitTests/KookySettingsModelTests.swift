@@ -229,6 +229,7 @@ final class KookySettingsModelTests: XCTestCase {
             "copy-on-select = true",
             "cursor-click-to-move = true",
             "macos-option-as-alt = false",
+            "confirm-close-surface = false",
         ] {
             XCTAssertTrue(
                 KookySettings.baselineConfig.contains(line + "\n"),

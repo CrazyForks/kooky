@@ -70,44 +70,40 @@ enum ClipboardConfirmPresenter {
             onDecision(false)
             return
         }
-        let controller = ClipboardConfirmSheetController()
-        // weak: the view tree outlives the controller through the endSheet
-        // fade-out; a late button press must land on nil, not a freed object.
-        let root = ClipboardConfirmSheet(kind: kind, contents: contents) { [weak controller] allowed in
-            controller?.finish(allowed)
+        let controller = ConsentSheetController.present(
+            on: window,
+            onTeardown: { clearPending(for: $0) },
+            onDecision: onDecision
+        ) { decide in
+            ClipboardConfirmSheet(kind: kind, contents: contents, decide: decide)
         }
-        let host = NSHostingController(rootView: root)
-        // Load-bearing on titled hosts: a hidden titlebar otherwise insets
-        // the hosting view's fitting height by ~28pt (M5.www incident).
-        host.safeAreaRegions = []
-        let sheet = NSWindow(contentViewController: host)
-        // AppKit-level chrome (scrollers, frame) must follow kooky's theme,
-        // not the system appearance — every kooky-owned window sets this.
-        sheet.appearance = Theme.windowAppearance
-        controller.window = sheet
         pendingByWindow.setObject(controller, forKey: window)
-        controller.begin(on: window, onDecision: onDecision)
     }
 
-    fileprivate static func clearPending(for window: NSWindow) {
+    private static func clearPending(for window: NSWindow) {
         pendingByWindow.removeObject(forKey: window)
     }
 }
 
-/// Owns one presentation: the pending decision doubles as the single-shot
-/// guard (⌘W's dismiss and a button press can race — first wins, the request
+/// Owns one engine-level consent-sheet presentation (clipboard consent,
+/// close-tab confirm): the pending decision doubles as the single-shot guard
+/// (⌘W's dismiss and a button press can race — first wins, the request
 /// completes exactly once), and `keepAlive` is the strong self-reference that
 /// stands in for `NSWindow.windowController` being assign-only. No retain
-/// cycle: the view tree references the controller only weakly, so releasing
-/// `keepAlive` after the decision frees the window + the clipboard snapshot.
+/// cycle: the view tree must reference the controller only weakly, so
+/// releasing `keepAlive` after the decision frees the window + any snapshot
+/// the view holds.
 ///
 /// `DismissablePanel` is how `handleCloseTab`'s ⌘W dispatch (the v0.39.1
 /// issue-#38 seam) asks "how does this panel close" — for a consent sheet,
 /// closing means CANCEL, never silently allow.
-private final class ClipboardConfirmSheetController: NSWindowController, DismissablePanel {
+final class ConsentSheetController: NSWindowController, DismissablePanel {
     private var pending: (@MainActor (Bool) -> Void)?
-    private var keepAlive: ClipboardConfirmSheetController?
+    private var keepAlive: ConsentSheetController?
     private weak var parentWindow: NSWindow?
+    /// Presenter-specific bookkeeping run once at teardown, before the
+    /// decision (the clipboard presenter clears its per-window pending slot).
+    fileprivate var onTeardown: (@MainActor (NSWindow) -> Void)?
 
     func begin(on parent: NSWindow, onDecision: @escaping @MainActor (Bool) -> Void) {
         pending = onDecision
@@ -124,13 +120,43 @@ private final class ClipboardConfirmSheetController: NSWindowController, Dismiss
             if let sheet = window {
                 parent.endSheet(sheet)
             }
-            ClipboardConfirmPresenter.clearPending(for: parent)
+            onTeardown?(parent)
         }
         decide(allowed)
         keepAlive = nil
     }
 
     func dismiss() { finish(false) }
+}
+
+extension ConsentSheetController {
+    /// Builds the standard consent-sheet window — brutalist SwiftUI content,
+    /// kooky appearance (AppKit chrome must follow the theme, not the system),
+    /// and the `safeAreaRegions = []` workaround (a titled host's hidden
+    /// titlebar otherwise insets the fitting height by ~28pt, M5.www) — and
+    /// presents it on `parent`. `content` receives a ready-made `decide`
+    /// closure that already references the controller WEAKLY — the view tree
+    /// outlives the controller through the endSheet fade-out, and building
+    /// the weak hop here is what keeps a future sheet from getting it wrong.
+    @discardableResult
+    static func present(
+        on parent: NSWindow,
+        onTeardown: (@MainActor (NSWindow) -> Void)? = nil,
+        onDecision: @escaping @MainActor (Bool) -> Void,
+        content: (_ decide: @escaping (Bool) -> Void) -> some View
+    ) -> ConsentSheetController {
+        let controller = ConsentSheetController()
+        controller.onTeardown = onTeardown
+        let host = NSHostingController(
+            rootView: content({ [weak controller] allowed in controller?.finish(allowed) })
+        )
+        host.safeAreaRegions = []
+        let sheet = NSWindow(contentViewController: host)
+        sheet.appearance = Theme.windowAppearance
+        controller.window = sheet
+        controller.begin(on: parent, onDecision: onDecision)
+        return controller
+    }
 }
 
 private struct ClipboardConfirmSheet: View {

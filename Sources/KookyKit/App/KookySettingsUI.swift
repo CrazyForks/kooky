@@ -962,6 +962,7 @@ struct KookySettingsView: View {
         .onChange(of: model.lightTerminalThemeSelection) { _, _ in model.activatePairedThemeSchemaAndSave() }
         .onChange(of: model.darkTerminalThemeSelection) { _, _ in model.activatePairedThemeSchemaAndSave() }
         .onChange(of: model.backgroundBlur) { _, _ in model.flushSave() }
+        .onChange(of: model.backgroundOpacity) { _, _ in model.scheduleSave() }
         .onChange(of: model.agentOrder) { _, _ in model.scheduleSave() }
         .onChange(of: model.hiddenAgents) { _, _ in model.scheduleSave() }
         .onChange(of: model.agentOptions) { _, _ in model.scheduleSave() }
@@ -1156,6 +1157,19 @@ struct KookySettingsView: View {
                     .frame(minWidth: 180, alignment: .trailing)
                 }
                 SettingsCaption("Requires macOS 26 or later.")
+                SettingsHairline()
+                SettingsRow(label: "background-opacity") {
+                    HStack(spacing: 8) {
+                        Text(backgroundOpacityLabel)
+                            .font(Theme.mono(12))
+                            .foregroundStyle(Theme.chromeForeground)
+                            .monospacedDigit()
+                            .frame(width: 40, alignment: .trailing)
+                        Slider(value: backgroundOpacityBinding, in: 0.3...1.0, step: 0.01)
+                            .frame(width: 140)
+                    }
+                }
+                SettingsCaption("Window translucency — takes effect with liquid-glass or a numeric background-blur; opaque otherwise.")
                 terminalRestartCallout
             }
             .padding(.top, 22)
@@ -1387,6 +1401,46 @@ struct KookySettingsView: View {
             get: { model.fontSize ?? Self.defaultFontSize },
             set: { model.fontSize = $0 }
         )
+    }
+
+    /// nil = unset (fully opaque, the ghostty default). Snapping ≥0.995 back
+    /// to nil keeps the settings.json non-default-only: dragging to the right
+    /// edge removes the key instead of pinning `1.0`.
+    /// The MERGED opacity: kooky's own key, else the inherited ghostty-config
+    /// value from the live host config — the slider must show (and be able to
+    /// override) what the window actually renders at (Codex P2).
+    private var effectiveBackgroundOpacity: Double {
+        model.backgroundOpacity ?? LibghosttyApp.shared.hostConfig.backgroundOpacity
+    }
+
+    private var backgroundOpacityBinding: Binding<Double> {
+        Binding(
+            get: { effectiveBackgroundOpacity },
+            set: {
+                let rounded = ($0 * 100).rounded() / 100
+                let next: Double?
+                if rounded >= 0.995 {
+                    // 100% may only mean "unset" when nothing underneath is
+                    // translucent — with an inherited value below 1, removing
+                    // kooky's key would resurrect it, so full-right writes an
+                    // EXPLICIT 1.0 override instead.
+                    let inheritedClean = model.backgroundOpacity == nil
+                        && LibghosttyApp.shared.hostConfig.backgroundOpacity >= 0.995
+                    next = inheritedClean ? nil : 1.0
+                } else {
+                    next = rounded
+                }
+                // Equality-gate: @Observable setters invalidate dependents on
+                // every write, and a drag emits many ticks that round to the
+                // same 1% step — an ungated write re-renders every glass
+                // layer + the sidebar per tick for nothing.
+                if next != model.backgroundOpacity { model.backgroundOpacity = next }
+            }
+        )
+    }
+
+    private var backgroundOpacityLabel: String {
+        "\(Int((effectiveBackgroundOpacity * 100).rounded()))%"
     }
 
     /// The picker shows what's *in effect* (kooky's own value, else the ghostty

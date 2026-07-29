@@ -2,6 +2,12 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.45.10 — 2026-07-29
+
+- New: terminal programs get the right light/dark answer. kooky reports its active theme's appearance to the terminal (CSI ?996n queries, mode 2031 reports), so nvim/delta-style auto theming follows your kooky theme — and `theme = light:X,dark:Y` conditional themes in an inherited ghostty config resolve correctly.
+- New: window translucency without Liquid Glass. `background-opacity` takes effect when paired with a frosting layer — liquid-glass or a numeric `background-blur` (the traditional frosted look, works on any macOS). Bare opacity with no frosting stays opaque by design. Settings → appearance gains a background-opacity slider that shows and can override an inherited value.
+- New: `confirm-close-surface` — opt in and closing a tab with a running process (vim, a build, an agent) asks first, in kooky's own confirm sheet. Off by default: agent tabs are long-running by nature and shouldn't tax ⌘W.
+
 ## v0.45.9 — 2026-07-29
 
 - New: the terminal bell works. `\a` requests Dock attention by default; `bell-features` configures a system beep or a custom sound file (`bell-audio-path`, `bell-audio-volume`).

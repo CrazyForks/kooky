@@ -106,6 +106,9 @@ protocol TerminalEngine: AnyObject {
     /// OSC 777) — (title, body). The store routes it to the app-level
     /// notification pipeline (visibility suppression + UN banner).
     var onDesktopNotification: ((String, String) -> Void)? { get set }
+    /// Whether closing this surface deserves a confirmation — the core's
+    /// own judgment (`confirm-close-surface` config × a live child process).
+    var needsConfirmQuit: Bool { get }
     func start(config: TerminalSessionConfig)
     func terminate()
     /// True while ANY owner holds a size-propagation suspension. While set, AppKit

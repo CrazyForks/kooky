@@ -173,7 +173,7 @@ private struct DraggableTabRow: View {
             isActive: pane.activeTabId == tab.id,
             canCloseToRight: canCloseToRight,
             onActivate: { store.activateTab(tab, in: workspace) },
-            onClose: { store.closeTab(tab, in: workspace) },
+            onClose: { ConfirmCloseTab.request(tab, in: workspace, store: store) },
             onCloseOthers: { store.closeOtherTabs(keeping: tab, in: workspace) },
             onCloseToRight: { store.closeTabsToRight(of: tab, in: workspace) },
             onDuplicate: { store.duplicateTab(tab, in: workspace) },

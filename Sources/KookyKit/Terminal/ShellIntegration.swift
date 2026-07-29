@@ -2547,7 +2547,9 @@ enum KookyShellIntegration {
     /// launch now pays cheap reads instead of ~30 atomic replaces (temp-file
     /// + rename each) on the pre-first-frame path. Per-spawn temp rc files
     /// always miss (fresh paths) and just pay one failed read.
-    private static func writeFile(at path: String, contents: String, executable: Bool = false) {
+    /// Internal: also the content-gated writer for other subsystems' managed
+    /// files (KookySettings' sentinel themes) — same kookyAppSupport precedent.
+    static func writeFile(at path: String, contents: String, executable: Bool = false) {
         if (try? String(contentsOfFile: path, encoding: .utf8)) != contents {
             try? contents.write(toFile: path, atomically: true, encoding: .utf8)
         }

@@ -114,15 +114,13 @@ enum KookySettings {
         // glass to read through, while kooky's "off" (`false`) forces it fully
         // opaque — otherwise an inherited ghostty `background-opacity` would
         // leave the terminal see-through with the glass gone.
-        if terminal["background-opacity"] == nil {
-            switch blurString(from: terminal["background-blur"]) {
-            case let blur? where blur.hasPrefix("macos-glass"):
+        if terminal["background-opacity"] == nil, let blur = blurString(from: terminal["background-blur"]) {
+            if isGlassBlur(blur) {
                 lines.append("background-opacity = \(Theme.defaultGlassOpacity)")
-            case "false", "0":
+            } else if isBlurExplicitlyOff(blur) {
                 lines.append("background-opacity = 1")
-            default:
-                break  // unset, or a ghostty-native blur — leave opacity alone
             }
+            // A ghostty-native numeric blur — leave opacity alone.
         }
         let text = lines.joined(separator: "\n")
         guard !text.isEmpty else { return }
@@ -186,8 +184,9 @@ enum KookySettings {
         let config = ghostty_config_new()
         guard config != nil else { return nil }
         ghostty_config_load_default_files(config)
-        applyBaseline(to: config)
-        apply(parsed: loadParsed(), to: config)
+        let parsed = loadParsed()
+        applyBaseline(to: config, parsed: parsed)
+        apply(parsed: parsed, to: config)
         ghostty_config_finalize(config)
         return config
     }
@@ -210,17 +209,75 @@ enum KookySettings {
     ///   acting as Alt, ghostty.app's behavior). kooky's promised default is
     ///   macOS-native Option (special characters / IME), so pin `false`;
     ///   users opt into Alt via `terminal.macos-option-as-alt` (issue #46).
-    static let baselineConfig =
-        "cursor-click-to-move = true\ncopy-on-select = true\nmacos-option-as-alt = false\n"
+    /// - confirm-close-surface: ghostty defaults to true, but in kooky "a
+    ///   process is running" includes every working agent — confirming each
+    ///   ⌘W on an active Claude tab would tax kooky's core workflow. Pin
+    ///   false (today's behavior); users opt into the guard via
+    ///   `terminal.confirm-close-surface`.
+    static let baselineConfig = "cursor-click-to-move = true\ncopy-on-select = true\n"
+        + "macos-option-as-alt = false\nconfirm-close-surface = false\n"
 
-    private static func applyBaseline(to config: ghostty_config_t?) {
+    /// A `theme = light:…,dark:…` line pointing at two EMPTY sentinel theme
+    /// files. The core's color-scheme machinery (CSI ?996n query, mode 2031
+    /// reports, conditional resolution) only works when the config USES a
+    /// conditional key — `changeConditionalState` short-circuits to "nothing
+    /// to do" otherwise, and the termio-side scheme value (what 996 answers
+    /// with) is only ever written during that rebuild. Verified: without
+    /// this, `ghostty_surface_set_color_scheme` updates surface state that
+    /// no report ever reads, and every query answers "light" forever. The
+    /// sentinel files are deliberately empty (comments only): they change no
+    /// colors — kooky's own concrete color lines load after baseline and
+    /// stay the single source of the palette.
+    private static let conditionalThemeLine: String? = {
+        let dir = KookyShellIntegration.kookyAppSupport("themes", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let stub = """
+        # kooky sentinel theme — intentionally empty. Its presence switches
+        # ghostty's conditional-theme machinery on so color-scheme queries
+        # (CSI ?996n) and mode 2031 reports follow kooky's active theme.
+
+        """
+        let sentinel: (String) -> String? = { name in
+            let path = dir.appendingPathComponent(name).path
+            KookyShellIntegration.writeFile(at: path, contents: stub)
+            return FileManager.default.fileExists(atPath: path) ? path : nil
+        }
+        guard let light = sentinel("conditional-light"),
+              let dark = sentinel("conditional-dark") else { return nil }
+        return "theme = light:\(light),dark:\(dark)\n"
+    }()
+
+    @MainActor
+    private static func applyBaseline(to config: ghostty_config_t?, parsed: [String: Any]?) {
         guard let config else { return }
-        baselineConfig.withCString { cstr in
+        var text = baselineConfig
+        // The sentinel `theme` line must ONLY load when kooky itself emits the
+        // final colors afterwards (paired/bundled themes, or an explicit
+        // settings.json theme). In the legacy "inherit Ghostty" state
+        // (effectiveThemeValue == nil, kooky writes no theme at all) a later
+        // theme line REPLACES the user's own `~/.config/ghostty/config` theme
+        // at finalize — the sentinel would wipe their colors to defaults
+        // (Codex P1). Those users keep their theme and lose only the 996
+        // color-scheme report, same as before this feature.
+        if effectiveThemeValue(
+            parsed: parsed,
+            systemIsDark: KookySettingsModel.shared.systemAppearanceIsDark
+        ) != nil, let themeLine = conditionalThemeLine {
+            text += themeLine
+        }
+        text.withCString { cstr in
             "kooky-baseline".withCString { source in
                 ghostty_config_load_string(config, cstr, UInt(strlen(cstr)), source)
             }
         }
     }
+
+    /// The `background-blur` string vocabulary, in ONE place — two sites had
+    /// diverged on whether `"0"` counts as off.
+    static func isGlassBlur(_ raw: String) -> Bool { raw.hasPrefix("macos-glass") }
+    /// Explicit off (`"false"`/`"0"`) — nil/unset is deliberately NOT "off"
+    /// (an unset value must leave inherited ghostty config behavior alone).
+    static func isBlurExplicitlyOff(_ raw: String) -> Bool { raw == "false" || raw == "0" }
 
     /// Normalize a raw `background-blur` JSON value to its ghostty string form.
     /// Users can write it as a string (`"macos-glass-regular"`), a JSON bool

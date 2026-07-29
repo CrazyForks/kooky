@@ -44,6 +44,7 @@ final class LibghosttyApp {
         }
         currentConfig = config
         refreshHostConfig()
+        reportColorScheme()
 
         // Input-source switches (US → Pinyin → Dvorak…) must invalidate the
         // core's cached keymap — `ghostty_surface_key_translation_mods` and
@@ -92,6 +93,43 @@ final class LibghosttyApp {
         if let previous = currentConfig { ghostty_config_free(previous) }
         currentConfig = config
         refreshHostConfig()
+        reportColorScheme()
+    }
+
+    /// Tells the core whether kooky's ACTIVE THEME is dark — deliberately not
+    /// the system appearance: a program asking "is the background dark?"
+    /// (nvim `background` autodetect, delta, mode 2031 reports, the CSI ?996n
+    /// query) wants the terminal's colors, and kooky's theme can disagree
+    /// with the OS. BOTH levels, mirroring ghostty.app: the app call only
+    /// updates the App's own conditional state — it never touches a surface
+    /// — while the query/report/conditional-theme state lives PER SURFACE
+    /// (verified: app-only calls left every surface answering "light"
+    /// forever). Same-value calls short-circuit core-side at both levels, so
+    /// the reload → report loop can't cycle.
+    private func reportColorScheme() {
+        guard let app else { return }
+        let scheme = Self.currentColorScheme
+        ghostty_app_set_color_scheme(app, scheme)
+        for surface in GhosttySurfaceRegistry.allSurfaces() {
+            ghostty_surface_set_color_scheme(surface, scheme)
+        }
+    }
+
+    static var currentColorScheme: ghostty_color_scheme_e {
+        Theme.chromeColorScheme == .dark ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT
+    }
+
+    /// Coalesces the per-surface RELOAD_CONFIG fan-out (every surface answers
+    /// a color-scheme flip with its own action) into one rebuild on the next
+    /// runloop turn.
+    private var reloadPending = false
+    func reloadConfigCoalesced() {
+        guard !reloadPending else { return }
+        reloadPending = true
+        dispatchToMain {
+            self.reloadPending = false
+            self.reloadConfig()
+        }
     }
 
     /// Host-side config kooky itself acts on (the core only stores these —
@@ -113,6 +151,20 @@ final class LibghosttyApp {
         /// design (the core always emits SECURE_INPUT on password-prompt
         /// detection; the host decides whether to honor it).
         var autoSecureInput = true
+        /// `background-opacity` from the MERGED config — what the settings
+        /// slider shows/overrides when kooky's own key is unset but an
+        /// inherited ghostty config supplies a value (Codex P2: without the
+        /// merged truth the slider claimed 100% while the window rendered at
+        /// the inherited 0.6, and couldn't override it).
+        var backgroundOpacity: Double = 1
+        /// `background-blur` as a radius (`true`/a number; 0 = off, the
+        /// `macos-glass-*` forms are kooky's own glass path). A positive
+        /// radius is what licenses window translucency without glass —
+        /// bare opacity with NO frosting underneath leaks the desktop
+        /// through kooky's layered chrome at visibly different levels
+        /// (inactive-pane dimming, sidebar, top strip all multiply
+        /// differently), so it stays opaque by design.
+        var windowBlurRadius: Int = 0
     }
     private(set) var hostConfig = HostConfig()
 
@@ -144,6 +196,12 @@ final class LibghosttyApp {
         }
         var secure = true
         if get(config, "macos-auto-secure-input", &secure) { next.autoSecureInput = secure }
+        var opacity: Double = 1
+        if get(config, "background-opacity", &opacity) { next.backgroundOpacity = opacity }
+        var blur: Int16 = 0
+        if get(config, "background-blur", &blur), blur > 0 {
+            next.windowBlurRadius = Int(blur)
+        }
         if next.bellAudioPath != hostConfig.bellAudioPath {
             bellSound = next.bellAudioPath.flatMap { NSSound(contentsOfFile: $0, byReference: false) }
         }
@@ -207,6 +265,23 @@ private func dispatchToMain(_ work: @MainActor @escaping () -> Void) {
     }
 }
 
+/// Weak set of live surfaces, for the ONE state the core keeps per surface
+/// with NO app-level fan-out: the color scheme (996 query / mode 2031 /
+/// conditional-theme resolution). The v0.17.0 registry was deleted in
+/// v0.45.3 because config reloads DO fan out app-side — that reasoning
+/// still holds; this exists only for `reportColorScheme`, which verified
+/// that app-level-only calls leave every surface answering "light" forever.
+@MainActor
+enum GhosttySurfaceRegistry {
+    private static let views = NSHashTable<GhosttySurfaceView>.weakObjects()
+
+    static func add(_ view: GhosttySurfaceView) { views.add(view) }
+
+    static func allSurfaces() -> [ghostty_surface_t] {
+        views.allObjects.compactMap(\.surface)
+    }
+}
+
 /// Hops to main + recovers the originating `GhosttySurfaceView` from libghostty's
 /// userdata pointer. Action_cb runs on whichever thread libghostty signals
 /// from; SwiftUI / our @MainActor state requires main, hence the bounce.
@@ -224,6 +299,13 @@ private func dispatchToView(_ userdata: UnsafeMutableRawPointer, _ work: @MainAc
 }
 
 private let kookyActionCb: ghostty_runtime_action_cb = { _, target, action in
+    // Before the surface-target guard: the APP-level color-scheme path emits
+    // RELOAD_CONFIG with an APP target (App.colorSchemeEvent), which the
+    // guard below would silently drop. Coalesced either way.
+    if action.tag == GHOSTTY_ACTION_RELOAD_CONFIG {
+        dispatchToMain { LibghosttyApp.shared.reloadConfigCoalesced() }
+        return true
+    }
     guard target.tag == GHOSTTY_TARGET_SURFACE,
           let surface = target.target.surface,
           let userdata = ghostty_surface_userdata(surface)
@@ -530,6 +612,11 @@ final class LibghosttyEngine: TerminalEngine {
 
     func pasteFromClipboardViaCore() -> Bool {
         surfaceView.pasteFromClipboardViaCore()
+    }
+
+    var needsConfirmQuit: Bool {
+        guard let surface = surfaceView.surface else { return false }
+        return ghostty_surface_needs_confirm_quit(surface)
     }
 }
 
@@ -932,6 +1019,12 @@ final class GhosttySurfaceView: NSView {
         }
         surface = new
         pendingConfig = nil
+        // A fresh surface's conditional state defaults to LIGHT — seed it with
+        // kooky's active theme so the 996 query / mode 2031 / conditional
+        // themes are right from the first prompt, and register for the
+        // per-surface fan-out on later theme switches.
+        GhosttySurfaceRegistry.add(self)
+        ghostty_surface_set_color_scheme(new, LibghosttyApp.currentColorScheme)
         ghostty_surface_refresh(new)
     }
 
