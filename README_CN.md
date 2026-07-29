@@ -66,7 +66,9 @@
 
 **侧边栏文件树。** 侧边栏底部的切换按钮把 workspace 列表换成当前 workspace 文件夹的文件树。目录可展开、双击文件用默认程序打开,右键有在访达显示 / 拷贝路径 / 把路径插入终端(文件行还多一个「打开」)—— 也可以直接把文件或文件夹拖进终端,escape 好的路径就插到光标处,跟从 Finder 拖进来一样。改动过的文件会显示 `+X −Y` 行数(和状态栏 git diff 同一套数字),折叠的文件夹汇总其子树的改动。文件树跟随当前 tab 的目录(worktree 工作区固定在各自的 worktree 目录),磁盘上文件一变就自动刷新。
 
-**输入顺手。** 选中即复制：在终端里选中文本，松开鼠标那一刻就已经进了系统剪贴板，不用再按 ⌘C——不管本机 Ghostty 配置怎么写，每台机器都生效（可在 Settings → General → Clipboard 里关掉）。按住 ⌘ 点击 `/path/file.swift:42` 这样的本地文件路径，就能用指定的编辑器打开；网页链接也能指定浏览器（Settings → General → Open With）。在 zsh 提示行点哪儿光标就跳哪儿(不用按 modifier,跟 ghostty.app 一致)。从 Finder 把文件或文件夹拖到任意 pane,绝对路径会自动 escape 后插到光标位置。
+**输入顺手。** 选中即复制：在终端里选中文本，松开鼠标那一刻就已经进了系统剪贴板，不用再按 ⌘C——不管本机 Ghostty 配置怎么写，每台机器都生效（可在 Settings → General → Clipboard 里关掉）。按住 ⌘ 点击 `/path/file.swift:42` 这样的本地文件路径，就能用指定的编辑器打开；网页链接也能指定浏览器（Settings → General → Open With）。在 zsh 提示行点哪儿光标就跳哪儿(不用按 modifier,跟 ghostty.app 一致)。从 Finder 把文件或文件夹拖到任意 pane,绝对路径会自动 escape 后插到光标位置。 按住 ⌘ 悬停任意 URL(或 OSC 8 超链接),角标会先揭示真实指向再让你点。鼠标中键即粘贴。想把 Option 当 Alt/Meta 用(zellij、Emacs 快捷键)?在 settings.json 里配 `macos-option-as-alt`(`true` / `"left"` / `"right"`),不配则保留 macOS 原生特殊字符输入。分屏时开启 `focus-follows-mouse`,鼠标滑到哪个 pane 键盘焦点就跟到哪;`mouse-hide-while-typing` 让指针在打字时自动隐藏。
+
+**剪贴板与输入安全。** 粘贴的内容如果落地就可能执行(未受括号粘贴保护的多行文本),会先弹出带内容预览的确认框——从网页复制的带陷阱 `curl … | sh` 无法借 ⌘V 直接执行。远程程序通过 OSC 52 读你的剪贴板(tmux、SSH 里的 nvim)需要你先授权,`clipboard-write = ask` 同样把守写入。输入 sudo / ssh 密码时,kooky 持有 macOS 安全键盘输入,其他进程无法监听按键。
 
 **Prompt composer (⌘L)。** pane 底部升起一个聊天式输入框，让你安心写长的、多行的 prompt——不会手一抖回车就发出去。回车发给当前 agent（或 shell），Shift+回车换行，Esc 取消并保留草稿。⌘L 或 pane 底部状态栏的 compose 按钮打开。
 
@@ -74,7 +76,7 @@
 
 **zsh、bash、fish 都支持。** 手输 agent 识别、cwd 跟踪、状态栏插槽、一键启动 agent，在三种 shell 下表现一致——即使开着 Fig / Amazon Q / kiro 这类 shell 自动补全工具也照常工作。
 
-**通知。** 你没在看的某个 tab 里 agent 开始等你处理、或那里命令失败时，kooky 会发一条 macOS 系统通知——每一类都能在 Settings → Notifications 里单独开关。顶栏还有个铃铛（⇧⌘I），把这些提醒跨窗口收进一个收件箱——谁在等你、什么失败了、什么跑完了——有没读的就亮红点。点一条直接跳到对应 tab；切到那个 tab，它的提醒会自己清掉。
+**通知。** 你没在看的某个 tab 里 agent 开始等你处理、或那里命令失败时，kooky 会发一条 macOS 系统通知——每一类都能在 Settings → Notifications 里单独开关。顶栏还有个铃铛（⇧⌘I），把这些提醒跨窗口收进一个收件箱——谁在等你、什么失败了、什么跑完了——有没读的就亮红点。点一条直接跳到对应 tab；切到那个 tab，它的提醒会自己清掉。 终端程序也能自己发通知(OSC 9/777,`printf '\e]9;done\a'`):tab 不可见时弹横幅,无论如何都会进收件箱。终端响铃(`\a`)默认请求 Dock 注意;`bell-features` 可加系统提示音或自定义音频。
 
 ![跨窗口收集的通知中心](img/screenshot-3.png)
 
@@ -92,9 +94,9 @@
 
 **SwiftUI 原生开发，简约风格。** Onest + JetBrains Mono 字体。自定义 About 面板、带快捷键提示的原生菜单,中日韩 IME 输入完整支持。
 
-**Light + Dark 双主题。** Light 和 Dark 可以各选一套 terminal 配色，再单独选择 System / Light / Dark 外观模式。System 会实时跟随 macOS，同时切换 terminal 和整个窗口。40 多套内置配色包括 **Ghostty Dark**、Ayu、Catppuccin、Everforest、GitHub、Gruvbox、Material、Night Owl、Nord、Rosé Pine，以及 Codex Desktop 也在使用的其他开源主题；放在 `~/.config/ghostty/themes` 的自定义主题会按背景颜色自动出现在对应的 Light 或 Dark 下拉框。内置主题设置使用 `kooky:` 命名空间，因此升级后也不会覆盖同名的 Ghostty 自定义主题。老用户升级时仍保留原本的 Default 行为：如果以前没有选过主题，kooky 会继续继承 Ghostty 配置，直到你主动修改 Appearance。
+**Light + Dark 双主题。** Light 和 Dark 可以各选一套 terminal 配色，再单独选择 System / Light / Dark 外观模式。System 会实时跟随 macOS，同时切换 terminal 和整个窗口。40 多套内置配色包括 **Ghostty Dark**、Ayu、Catppuccin、Everforest、GitHub、Gruvbox、Material、Night Owl、Nord、Rosé Pine，以及 Codex Desktop 也在使用的其他开源主题；放在 `~/.config/ghostty/themes` 的自定义主题会按背景颜色自动出现在对应的 Light 或 Dark 下拉框。内置主题设置使用 `kooky:` 命名空间，因此升级后也不会覆盖同名的 Ghostty 自定义主题。老用户升级时仍保留原本的 Default 行为：如果以前没有选过主题，kooky 会继续继承 Ghostty 配置，直到你主动修改 Appearance。 终端里的程序询问「现在是暗色吗」(nvim 的 background 自动检测、delta)会得到你当前 kooky 主题的答案;继承的 Ghostty 配置里 `theme = light:X,dark:Y` 条件主题也能正确解析。
 
-**可配置。** Settings 面板（`⌘,`）还可以调字体、光标、默认新 tab 行为、Terminal 预设、agents、Open in 和 pane 底部状态栏。外观修改会立即同步到所有已打开的窗口。
+**可配置。** Settings 面板（`⌘,`）还可以调字体、光标、背景透明度（搭配 liquid-glass 或数字 `background-blur`,任何 macOS 版本都能拥有传统毛玻璃）、默认新 tab 行为、Terminal 预设、agents、Open in 和 pane 底部状态栏。开启 `confirm-close-surface` 后,关闭有进程在跑的 tab 会先确认。外观修改会立即同步到所有已打开的窗口。
 
 **默认本地。** 不需要账号，不做遥测，没有云同步。kooky 的状态都留在本机。
 

@@ -66,7 +66,9 @@ AI コーディングのために作られた、ミニマルでモダンな macO
 
 **サイドバーのファイルツリー。** サイドバー下部のトグルで workspace リストをアクティブな workspace フォルダのファイルツリーに切り替えられます。ディレクトリの展開、ダブルクリックでファイルを開く、右クリックで「Finder で表示 / パスをコピー / ターミナルにパスを挿入」(ファイル行には「開く」も)——ファイルやフォルダをそのままターミナルにドラッグすれば、エスケープ済みのパスが挿入されます (Finder からのドラッグと同じ)。変更のあるファイルには `+X −Y` の行数が表示され (ステータスバーの git diff と同じ数字)、折りたたんだフォルダはサブツリーの変更を合算表示します。ツリーはアクティブな tab のディレクトリに追従し (worktree workspace はその worktree フォルダに固定)、ディスク上の変更を自動で反映します。
 
-**ストレスのない入力。** テキストを選択すると、マウスを離した瞬間にクリップボードへコピーされます — ⌘C は不要で、Ghostty の設定に関わらずどのマシンでも有効です (Settings → General → Clipboard でオフにできます)。⌘ を押しながら `/path/file.swift:42` のようなローカルファイルパスをクリックすると、指定したエディタで開けます。Web リンクに使うブラウザも選択できます (Settings → General → Open With)。zsh の prompt 上のどこをクリックしても shell カーソルがそこに移動します (modifier 不要、ghostty.app と同じ操作感)。Finder からファイル / フォルダを pane にドラッグすると、エスケープ済みの絶対パスがカーソル位置に挿入されます。
+**ストレスのない入力。** テキストを選択すると、マウスを離した瞬間にクリップボードへコピーされます — ⌘C は不要で、Ghostty の設定に関わらずどのマシンでも有効です (Settings → General → Clipboard でオフにできます)。⌘ を押しながら `/path/file.swift:42` のようなローカルファイルパスをクリックすると、指定したエディタで開けます。Web リンクに使うブラウザも選択できます (Settings → General → Open With)。zsh の prompt 上のどこをクリックしても shell カーソルがそこに移動します (modifier 不要、ghostty.app と同じ操作感)。Finder からファイル / フォルダを pane にドラッグすると、エスケープ済みの絶対パスがカーソル位置に挿入されます。 ⌘ を押しながら URL(または OSC 8 ハイパーリンク)にホバーすると、クリック前にバッジが実際のリンク先を表示します。中クリックでペーストできます。Option を Alt/Meta として使いたい場合(zellij、Emacs キーバインド)は settings.json で `macos-option-as-alt`(`true` / `"left"` / `"right"`)を設定してください — 未設定なら macOS ネイティブの特殊文字入力のままです。分割表示中は `focus-follows-mouse` でポインタの下の pane にキーボードフォーカスが移り、`mouse-hide-while-typing` で入力中はカーソルが自動的に隠れます。
+
+**クリップボードと入力の安全。** 貼り付けた瞬間に実行されかねないテキスト(bracketed-paste 保護外の複数行)は、内容プレビュー付きの確認を先に表示します — Web からコピーした罠付き `curl … | sh` が ⌘V で即実行されることはありません。リモートプログラムによる OSC 52 でのクリップボード読み取り(tmux、SSH 上の nvim)は承認が必要で、`clipboard-write = ask` は書き込みも同様に守ります。sudo / ssh のパスワード入力中は kooky が macOS のセキュア キーボード入力を保持し、他プロセスはキー入力を監視できません。
 
 **Prompt composer (⌘L)。** pane 下部からチャット風の入力ボックスがせり上がり、長い複数行の prompt を落ち着いて書けます —— うっかり Return で途中送信されることはありません。Return で現在の agent (または shell) に送信、Shift+Return で改行、Esc でキャンセル (下書きは保持)。⌘L か pane 下部ステータスバーの compose ボタンで開きます。
 
@@ -74,7 +76,7 @@ AI コーディングのために作られた、ミニマルでモダンな macO
 
 **zsh・bash・fish に対応。** 手入力した agent の検出、cwd 追跡、ステータスバーの各スロット、ワンクリック agent 起動が 3 つの shell すべてで同じように動作します —— Fig / Amazon Q / kiro のような shell 補完ツールを併用していても動き続けます。
 
-**通知。** 見ていない tab で agent がユーザー待ちになったり、そこでコマンドが失敗したりすると、kooky が macOS 通知を出します —— 種類ごとに Settings → Notifications でオン / オフできます。上部 chrome のベル (⇧⌘I) は、それらの通知を全ウィンドウ横断で 1 つの受信箱にまとめます —— 誰が待っているか、何が失敗したか、何が完了したか —— 未読があれば赤いドットが点きます。エントリをクリックすればその tab に直接ジャンプ、tab に切り替えればその通知は自動でクリアされます。
+**通知。** 見ていない tab で agent がユーザー待ちになったり、そこでコマンドが失敗したりすると、kooky が macOS 通知を出します —— 種類ごとに Settings → Notifications でオン / オフできます。上部 chrome のベル (⇧⌘I) は、それらの通知を全ウィンドウ横断で 1 つの受信箱にまとめます —— 誰が待っているか、何が失敗したか、何が完了したか —— 未読があれば赤いドットが点きます。エントリをクリックすればその tab に直接ジャンプ、tab に切り替えればその通知は自動でクリアされます。 ターミナル内のプログラム自身も通知を出せます(OSC 9/777、`printf '\e]9;done\a'`):tab が見えていなければバナーが出て、どちらにしても受信箱に残ります。ベル(`\a`)はデフォルトで Dock のアテンションを要求し、`bell-features` でシステム音やカスタム音声も設定できます。
 
 ![全ウィンドウ横断で集約される通知センター](img/screenshot-3.png)
 
@@ -92,9 +94,9 @@ AI コーディングのために作られた、ミニマルでモダンな macO
 
 **SwiftUI ネイティブ、ミニマルな chrome。** Onest + JetBrains Mono。カスタム About パネル、ショートカットヒント付きのネイティブメニュー、日本語 IME を完全サポート。
 
-**Light + Dark のペアテーマ。** Light 用と Dark 用の terminal 配色をそれぞれ選び、System / Light / Dark の外観モードは別に設定できます。System は macOS の変更にリアルタイムで追従し、terminal とウィンドウ全体を同時に切り替えます。40 種類以上の組み込み配色には **Ghostty Dark**、Ayu、Catppuccin、Everforest、GitHub、Gruvbox、Material、Night Owl、Nord、Rosé Pine のほか、Codex Desktop でも使われているオープンソーステーマが含まれます。`~/.config/ghostty/themes` のカスタムテーマは背景色に応じて Light または Dark の picker に自動表示されます。組み込みテーマの設定値には `kooky:` 名前空間を使うため、同名の Ghostty カスタムテーマもアップグレード後にそのまま維持されます。以前の Default の挙動も維持され、テーマを選んだことがない場合は Appearance を変更するまで Ghostty の設定を引き継ぎます。
+**Light + Dark のペアテーマ。** Light 用と Dark 用の terminal 配色をそれぞれ選び、System / Light / Dark の外観モードは別に設定できます。System は macOS の変更にリアルタイムで追従し、terminal とウィンドウ全体を同時に切り替えます。40 種類以上の組み込み配色には **Ghostty Dark**、Ayu、Catppuccin、Everforest、GitHub、Gruvbox、Material、Night Owl、Nord、Rosé Pine のほか、Codex Desktop でも使われているオープンソーステーマが含まれます。`~/.config/ghostty/themes` のカスタムテーマは背景色に応じて Light または Dark の picker に自動表示されます。組み込みテーマの設定値には `kooky:` 名前空間を使うため、同名の Ghostty カスタムテーマもアップグレード後にそのまま維持されます。以前の Default の挙動も維持され、テーマを選んだことがない場合は Appearance を変更するまで Ghostty の設定を引き継ぎます。 ターミナル内のプログラムが「背景は暗い?」と問い合わせると(nvim の background 自動検出、delta)、現在の kooky テーマに基づく答えが返ります。引き継いだ Ghostty 設定の `theme = light:X,dark:Y` 条件テーマも正しく解決されます。
 
-**設定可能。** Settings (`⌘,`) ではフォント、カーソル、デフォルトの新規 tab 挙動、Terminal preset、agents、Open in、pane ステータスバーも調整できます。外観の変更は開いているすべてのウィンドウに即時反映されます。
+**設定可能。** Settings (`⌘,`) ではフォント、カーソル、背景の不透明度(liquid-glass または数値の `background-blur` と組み合わせると、どの macOS でも伝統的なすりガラス表現になります)、デフォルトの新規 tab 挙動、Terminal preset、agents、Open in、pane ステータスバーも調整できます。`confirm-close-surface` をオンにすると、プロセスが動作中の tab を閉じる前に確認が入ります。外観の変更は開いているすべてのウィンドウに即時反映されます。
 
 **ローカルファースト。** アカウント不要、テレメトリなし、クラウド同期なし。kooky の状態はすべて端末内に保存されます。
 
