@@ -82,7 +82,13 @@ enum KookyShellIntegration {
     /// 3. **Plain string** → raw, no escaping (we'd corrupt `ls -la`).
     ///    `bracketed-paste` mode already isolates it from shell parsing.
     static func readTerminalPasteText(from pb: NSPasteboard) -> String? {
-        if let urls = pasteboardFileURLs(pb),
+        readTerminalPasteText(from: pb, fileURLs: pasteboardFileURLs(pb))
+    }
+
+    /// `fileURLs` is threaded in by `paste(from:host:plainText:deliver:)` so
+    /// the ladder pays the pasteboard-server IPC once, not per tier.
+    private static func readTerminalPasteText(from pb: NSPasteboard, fileURLs: [URL]?) -> String? {
+        if let urls = fileURLs,
            let joined = backslashEscapedFileURLs(urls)
         {
             return joined
@@ -151,16 +157,46 @@ enum KookyShellIntegration {
     /// while file paths still deliver escaped. Returns false when nothing
     /// was handled — the caller falls back (or ignores the chord).
     @MainActor
+    /// How a paste site wants PLAIN text (no files on the pasteboard)
+    /// handled. Required, no default, on purpose: the unsafe combination —
+    /// plain clipboard text delivered straight to the PTY, bypassing
+    /// `clipboard-paste-protection` — is unrepresentable, and every future
+    /// paste site must name its plain-text owner to compile.
+    enum PlainTextHandling {
+        /// Terminal sites: route through the engine's protected paste
+        /// (`pasteFromClipboardViaCore` — read cb → safety check → consent).
+        case viaCore(@MainActor () -> Bool)
+        /// The composer: kooky handles files/images only; plain text stays
+        /// with the caller's native paste (NSTextView undo coalescing).
+        case callerHandles
+    }
+
+    /// One entry for every paste site (surface ⌘V, right-click Paste,
+    /// composer): remote upload for SSH workspaces, off-main transcode for
+    /// clipboard images, escaped paths for files, and per-site plain-text
+    /// policy via `plainText`. Returns false when nothing was handled — the
+    /// caller falls back (or ignores the chord).
+    @MainActor
     static func paste(
         from pb: NSPasteboard,
         host: String?,
-        includePlainText: Bool = true,
+        plainText: PlainTextHandling,
         deliver: @escaping @MainActor (String) -> Void
     ) -> Bool {
         if pasteViaRemoteUpload(from: pb, host: host, deliver: deliver) { return true }
-        if pasteImageAsync(from: pb, deliver: deliver) { return true }
-        guard let text = readTerminalPasteText(from: pb), !text.isEmpty else { return false }
-        if !includePlainText, pasteboardFileURLs(pb) == nil { return false }
+        // One pasteboard-server IPC for the whole local ladder — the image
+        // tier, the plain-text fork, and the text tier all key on it.
+        let fileURLs = pasteboardFileURLs(pb)
+        if pasteImageAsync(from: pb, fileURLs: fileURLs, deliver: deliver) { return true }
+        if fileURLs == nil {
+            // File tiers deliver kooky-constructed escaped paths; only PLAIN
+            // clipboard text forks per site policy.
+            switch plainText {
+            case .viaCore(let core): return core()
+            case .callerHandles: return false
+            }
+        }
+        guard let text = readTerminalPasteText(from: pb, fileURLs: fileURLs), !text.isEmpty else { return false }
         deliver(text)
         return true
     }
@@ -175,8 +211,8 @@ enum KookyShellIntegration {
     /// — the same accepted window the remote-upload path has, far smaller.
     /// Returns false when the pasteboard has no raw image (or has real file
     /// URLs, which outrank the image tier).
-    private static func pasteImageAsync(from pb: NSPasteboard, deliver: @escaping @MainActor (String) -> Void) -> Bool {
-        guard pasteboardFileURLs(pb) == nil, let raw = pasteboardRawImage(pb) else { return false }
+    private static func pasteImageAsync(from pb: NSPasteboard, fileURLs: [URL]?, deliver: @escaping @MainActor (String) -> Void) -> Bool {
+        guard fileURLs == nil, let raw = pasteboardRawImage(pb) else { return false }
         // Snapshot the plain-text representation NOW (Codex review): the old
         // synchronous path fell through to the string tier when the image
         // couldn't be transcoded — a corrupt TIFF, unwritable cache, or full

@@ -141,6 +141,11 @@ protocol TerminalEngine: AnyObject {
     /// the same as a real ⌘V. The right-click "Paste" menu item uses
     /// this instead of `sendInput` so the two paths can't drift.
     func paste(_ text: String)
+    /// Plain-text paste through the engine's OWN clipboard-request path so
+    /// `clipboard-paste-protection` inspects the content before it reaches
+    /// the PTY. `paste(_:)` bypasses that check by design (kooky-constructed
+    /// file/image paths) — user-initiated plain-text pastes go here.
+    func pasteFromClipboardViaCore() -> Bool
     /// Returns the current selection as a UTF-8 string, or nil if no
     /// selection is active. Powers the right-click "Ask agent" path and
     /// the menu-bar Copy item — same surface, two callers.

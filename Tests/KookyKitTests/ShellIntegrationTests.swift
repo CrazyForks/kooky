@@ -1073,4 +1073,49 @@ final class ShellIntegrationTests: XCTestCase {
         XCTAssertEqual(try String(contentsOfFile: rcfile, encoding: .utf8), originalRc)
         XCTAssertTrue(fm.isExecutableFile(atPath: launcher))
     }
+
+    /// Private named pasteboard — never touches the user's real clipboard.
+    private func makeTextPasteboard(_ text: String) -> NSPasteboard {
+        let pb = NSPasteboard(name: .init("kooky-test-\(UUID().uuidString)"))
+        pb.declareTypes([.string], owner: nil)
+        pb.setString(text, forType: .string)
+        return pb
+    }
+
+    /// Plain clipboard text at a terminal site must go through the engine's
+    /// protected paste (clipboard-paste-protection), never straight to
+    /// `deliver` — the whole point of `PlainTextHandling.viaCore`.
+    @MainActor
+    func testPastePlainTextRoutesThroughCoreNotDeliver() {
+        let pb = makeTextPasteboard("echo hi\nrm -rf /\n")
+        defer { pb.releaseGlobally() }
+        var coreCalls = 0
+        var delivered: [String] = []
+        let handled = KookyShellIntegration.paste(
+            from: pb,
+            host: nil,
+            plainText: .viaCore({ coreCalls += 1; return true }),
+            deliver: { delivered.append($0) }
+        )
+        XCTAssertTrue(handled)
+        XCTAssertEqual(coreCalls, 1)
+        XCTAssertTrue(delivered.isEmpty, "plain text must not bypass the protected path")
+    }
+
+    /// The composer opts out of plain text entirely (native NSTextView paste
+    /// keeps undo coalescing) — the ladder reports unhandled.
+    @MainActor
+    func testPastePlainTextCallerHandlesFallsThrough() {
+        let pb = makeTextPasteboard("plain text")
+        defer { pb.releaseGlobally() }
+        var delivered: [String] = []
+        let handled = KookyShellIntegration.paste(
+            from: pb,
+            host: nil,
+            plainText: .callerHandles,
+            deliver: { delivered.append($0) }
+        )
+        XCTAssertFalse(handled)
+        XCTAssertTrue(delivered.isEmpty)
+    }
 }

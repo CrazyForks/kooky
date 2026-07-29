@@ -47,6 +47,12 @@ final class TestEngine: TerminalEngine {
         return true
     }
 
+    private(set) var corePasteCount: Int = 0
+    func pasteFromClipboardViaCore() -> Bool {
+        corePasteCount += 1
+        return true
+    }
+
     private(set) var sentInputs: [String] = []
     func sendInput(_ text: String) {
         sentInputs.append(text)

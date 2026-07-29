@@ -2,6 +2,13 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.45.8 — 2026-07-29
+
+- New: paste protection. Pasting text that could run commands the moment it lands (multi-line content outside bracketed-paste framing) now shows a confirmation with a content preview first (`clipboard-paste-protection`, on by default). ⌘W / Esc cancel; file, image, and SSH-upload pastes are unaffected.
+- New: OSC 52 clipboard support, guarded — remote programs (tmux, nvim over SSH) can read your clipboard after you approve it, and `clipboard-write = ask` asks before a program replaces your clipboard.
+- New: secure keyboard input at password prompts — typing a sudo/ssh password now blocks other processes from monitoring keystrokes (`macos-auto-secure-input`, on by default).
+- Fixed: switching macOS input sources now refreshes the terminal's keyboard mapping immediately, so Option-as-Alt stays correct after a layout change.
+
 ## v0.45.7 — 2026-07-29
 
 - Fixed: `macos-option-as-alt` now works. Set it under `terminal` in settings.json (`true` / `false` / `"left"` / `"right"`) to send Option+letter to terminal programs as Alt/ESC sequences (zellij, tmux, emacs bindings); with `"left"`, the right Option keeps typing macOS special characters. When unset, kooky keeps the macOS-native behavior — Option types special characters — instead of inheriting ghostty's per-keyboard-layout guess. (#46)

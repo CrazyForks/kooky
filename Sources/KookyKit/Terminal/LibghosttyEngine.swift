@@ -43,6 +43,23 @@ final class LibghosttyApp {
             NSLog("kooky: ghostty_app_new failed")
         }
         currentConfig = config
+
+        // Input-source switches (US → Pinyin → Dvorak…) must invalidate the
+        // core's cached keymap — `ghostty_surface_key_translation_mods` and
+        // `physical:`-style key handling read it, so a stale keymap skews the
+        // very translation the option-as-alt path depends on (issue #46
+        // follow-up from the host-gap audit). Block observer + assumeIsolated
+        // because LibghosttyApp isn't an NSObject (no selector dispatch);
+        // `queue: .main` already delivers on the main thread.
+        NotificationCenter.default.addObserver(
+            forName: NSTextInputContext.keyboardSelectionDidChangeNotification,
+            object: nil, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated {
+                guard let app = LibghosttyApp.shared.app else { return }
+                ghostty_app_keyboard_changed(app)
+            }
+        }
     }
 
     /// The config currently applied to the app. libghostty's embedded API
@@ -55,6 +72,19 @@ final class LibghosttyApp {
     /// freed when its successor is applied, so reloads no longer accumulate
     /// leaked configs (the old code freed nothing, ever).
     private var currentConfig: ghostty_config_t?
+
+    /// `macos-auto-secure-input` (default true) — the gate is host-side by
+    /// upstream design (the core always emits the SECURE_INPUT action on
+    /// password-prompt detection; the host decides whether to honor it).
+    /// Read per action from the LIVE config so a settings reload applies
+    /// without restart.
+    var autoSecureInputEnabled: Bool {
+        guard let config = currentConfig else { return true }
+        var value = false
+        let key = "macos-auto-secure-input"
+        guard ghostty_config_get(config, &value, key, UInt(key.utf8.count)) else { return true }
+        return value
+    }
 
     func reloadConfig() {
         guard let app else { return }
@@ -86,6 +116,17 @@ private let kookyWakeupCb: ghostty_runtime_wakeup_cb = { _ in
     DispatchQueue.main.async {
         MainActor.assumeIsolated { LibghosttyApp.shared.tick() }
     }
+}
+
+/// Replaces the general pasteboard's contents. Must run on main so the change
+/// notification reaches clipboard managers (Paste, Maccy, …) — otherwise the
+/// value lands but listeners miss it. Single write site for the OSC 52 allow
+/// branch, the consent-sheet allow, and ⌘C.
+@MainActor
+private func writeToGeneralPasteboard(_ text: String) {
+    let pb = NSPasteboard.general
+    pb.clearContents()
+    pb.setString(text, forType: .string)
 }
 
 /// Hops to main + recovers the originating `GhosttySurfaceView` from libghostty's
@@ -202,14 +243,55 @@ private let kookyActionCb: ghostty_runtime_action_cb = { _, target, action in
             NSLog("kooky: ghostty renderer reported UNHEALTHY")
         }
         return true
+    case GHOSTTY_ACTION_SECURE_INPUT:
+        // OSC 133 password-prompt detection → hold Carbon secure keyboard
+        // input while the prompt is focused (macos-auto-secure-input).
+        let mode = action.action.secure_input
+        dispatchToView(userdata) { $0.applySecureInput(mode) }
+        return true
     default:
         return false
     }
 }
 
-private let kookyReadClipboardCb: ghostty_runtime_read_clipboard_cb = { _, _, _ in false }
-private let kookyConfirmReadClipboardCb: ghostty_runtime_confirm_read_clipboard_cb = { _, _, _, _ in }
-private let kookyWriteClipboardCb: ghostty_runtime_write_clipboard_cb = { _, kind, contents, count, _ in
+/// Serves OSC 52 reads AND core-initiated pastes (the ⌘V/right-click text
+/// path routes through `paste_from_clipboard` so `clipboard-paste-protection`
+/// gets a look at the content). Reads the system pasteboard and answers via
+/// `ghostty_surface_complete_clipboard_request`; if the core judges the
+/// content risky it calls back through `confirm_read_clipboard` before
+/// completing. Fires off-main; both the pasteboard read and the completion
+/// hop to main (same rule as the write callback). The `state` pointer is a
+/// core-owned request that stays valid until completed — transit as Int bits
+/// like `dispatchToView`.
+private let kookyReadClipboardCb: ghostty_runtime_read_clipboard_cb = { userdata, kind, state in
+    guard kind == GHOSTTY_CLIPBOARD_STANDARD, let userdata, let state else { return false }
+    let stateBits = Int(bitPattern: state)
+    dispatchToView(userdata) { view in
+        view.completeClipboardRequest(
+            stateBits: stateBits,
+            text: NSPasteboard.general.string(forType: .string) ?? "",
+            confirmed: false
+        )
+    }
+    return true
+}
+
+/// The core judged a clipboard read risky — an unsafe paste (newline into a
+/// non-bracketed prompt, `clipboard-paste-protection`) or an OSC 52 read
+/// needing authorization (`clipboard-read = ask`). Show a consent sheet;
+/// BOTH outcomes must complete the request (deny = empty string) or the
+/// core-side request object leaks (upstream `clipboardConfirmationComplete`
+/// contract).
+private let kookyConfirmReadClipboardCb: ghostty_runtime_confirm_read_clipboard_cb = { userdata, str, state, request in
+    guard let userdata, let str, let state else { return }
+    let contents = String(cString: str)
+    let stateBits = Int(bitPattern: state)
+    dispatchToView(userdata) { view in
+        view.presentClipboardConfirmation(contents: contents, stateBits: stateBits, request: request)
+    }
+}
+
+private let kookyWriteClipboardCb: ghostty_runtime_write_clipboard_cb = { userdata, kind, contents, count, confirm in
     guard kind == GHOSTTY_CLIPBOARD_STANDARD,
           let contents,
           count > 0
@@ -226,13 +308,19 @@ private let kookyWriteClipboardCb: ghostty_runtime_write_clipboard_cb = { _, kin
     guard let chosen = preferred, let dataPtr = chosen.data else { return }
     let text = String(cString: dataPtr)
     guard !text.isEmpty else { return }
-    // libghostty fires this on its own thread; NSPasteboard writes must be on
-    // main for change-notification propagation to clipboard managers
-    // (Paste, Maccy, etc.) — otherwise the value lands but listeners miss it.
+    // `confirm` = `clipboard-write = ask`: an OSC 52 write needs user consent
+    // before touching the pasteboard (it used to be silently dropped, so
+    // `ask` behaved as `allow`). The core doesn't wait on write requests —
+    // the host owns the dialog AND the write (upstream osc_52_write branch).
+    if confirm, let userdata {
+        dispatchToView(userdata) { view in
+            view.presentClipboardWriteConfirmation(contents: text)
+        }
+        return
+    }
+    // libghostty fires this on its own thread; the write helper is main-only.
     DispatchQueue.main.async {
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setString(text, forType: .string)
+        MainActor.assumeIsolated { writeToGeneralPasteboard(text) }
     }
 }
 private let kookyCloseSurfaceCb: ghostty_runtime_close_surface_cb = { _, _ in }
@@ -326,10 +414,7 @@ final class LibghosttyEngine: TerminalEngine {
 
     @discardableResult
     func performAction(_ name: String) -> Bool {
-        guard let surface = surfaceView.surface else { return false }
-        return name.withCString { cstr in
-            ghostty_surface_binding_action(surface, cstr, UInt(name.utf8.count))
-        }
+        surfaceView.performAction(name)
     }
 
     func sendInput(_ text: String) {
@@ -342,6 +427,10 @@ final class LibghosttyEngine: TerminalEngine {
 
     func paste(_ text: String) {
         surfaceView.paste(text)
+    }
+
+    func pasteFromClipboardViaCore() -> Bool {
+        surfaceView.pasteFromClipboardViaCore()
     }
 }
 
@@ -415,6 +504,11 @@ final class GhosttySurfaceView: NSView {
         let pid = pid_t(ghostty_surface_foreground_pid(surface))
         return pid > 0 ? pid : nil
     }
+    /// Key-window transition observers for the current window — secure input
+    /// must drop when the password prompt's window loses key (its
+    /// firstResponder survives, so become/resign can't tell us).
+    private var keyWindowObservers: [NSObjectProtocol] = []
+
     /// Read in `viewDidMoveToWindow` to gate the mount-time first-responder
     /// grab; set by `TerminalView` from the pane's active state. See
     /// `TerminalEngine.grabsFocusOnMount` for the why (issue #24).
@@ -539,6 +633,9 @@ final class GhosttySurfaceView: NSView {
 
     func releaseSurface() {
         guard let dying = surface else { return }
+        // Deregister from secure input BEFORE freeing — a surface closed at a
+        // password prompt must not strand the process-wide Carbon flag.
+        passwordInput = false
         // Null first so any guard-on-surface check post-free sees the cleared
         // state immediately; the local `dying` keeps the handle for free.
         surface = nil
@@ -546,8 +643,72 @@ final class GhosttySurfaceView: NSView {
         ghostty_surface_free(dying)
     }
 
+    /// Whether the PTY is at a password prompt (core's OSC 133 detection).
+    /// Registration with the process-wide secure-input holder tracks this
+    /// flag AND real keyboard ownership — the Carbon flag should only be
+    /// held while the password prompt is actually receiving keystrokes.
+    var passwordInput = false {
+        didSet {
+            guard passwordInput != oldValue else { return }
+            syncSecureInputHolding()
+        }
+    }
+
+    /// The one derivation of "does this surface own the keyboard": first
+    /// responder in ITS window, and that window is the key window — another
+    /// kooky window / Settings / a sheet keeps its own firstResponder, so
+    /// key-ness is what distinguishes "receiving keystrokes" from "parked"
+    /// (Codex review: a non-key password prompt must not hold the
+    /// process-wide flag while the user types elsewhere).
+    private func syncSecureInputHolding() {
+        KookySecureInput.shared.setHolding(
+            ObjectIdentifier(self),
+            passwordInput
+                && window?.firstResponder === self
+                && (window?.isKeyWindow ?? false)
+        )
+    }
+
+    /// The config gate only blocks ENTERING the password state — OFF always
+    /// lands, so flipping `macos-auto-secure-input` off mid-prompt can't
+    /// strand a stale ON that re-enables on the next focus (Codex review).
+    /// A surface already ON when the setting flips keeps protection until
+    /// its own OFF arrives (the prompt ends) — accepted residual window.
+    func applySecureInput(_ mode: ghostty_action_secure_input_e) {
+        switch mode {
+        case GHOSTTY_SECURE_INPUT_OFF:
+            passwordInput = false
+        case GHOSTTY_SECURE_INPUT_ON:
+            guard LibghosttyApp.shared.autoSecureInputEnabled else { return }
+            passwordInput = true
+        case GHOSTTY_SECURE_INPUT_TOGGLE:
+            if passwordInput {
+                passwordInput = false
+            } else if LibghosttyApp.shared.autoSecureInputEnabled {
+                passwordInput = true
+            }
+        default: break
+        }
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        // Re-subscribe key-window transitions for the CURRENT window: a
+        // window losing key keeps its firstResponder, so become/resign never
+        // fire — these notifications are the only signal that a password
+        // prompt's surface stopped (or resumed) owning the keyboard.
+        keyWindowObservers.forEach(NotificationCenter.default.removeObserver)
+        keyWindowObservers = []
+        if let window {
+            for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
+                keyWindowObservers.append(NotificationCenter.default.addObserver(
+                    forName: name, object: window, queue: .main
+                ) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.syncSecureInputHolding() }
+                })
+            }
+        }
+        syncSecureInputHolding()
         if window != nil {
             // A pre-existing surface means we're re-entering a window (workspace
             // switch), not creating fresh: createSurfaceIfReady no-ops and
@@ -794,6 +955,14 @@ final class GhosttySurfaceView: NSView {
         let became = super.becomeFirstResponder()
         if became {
             if let surface { ghostty_surface_set_focus(surface, true); setNeedsRender() }
+            // Explicit, not syncSecureInputHolding(): AppKit hasn't set
+            // window.firstResponder to self yet inside becomeFirstResponder.
+            // Key-ness still gates; if the window becomes key a beat later,
+            // the didBecomeKey observer re-syncs.
+            KookySecureInput.shared.setHolding(
+                ObjectIdentifier(self),
+                passwordInput && (window?.isKeyWindow ?? false)
+            )
             onFocus?()
         }
         return became
@@ -801,9 +970,12 @@ final class GhosttySurfaceView: NSView {
 
     override func resignFirstResponder() -> Bool {
         let resigned = super.resignFirstResponder()
-        if resigned, let surface {
-            ghostty_surface_set_focus(surface, false)
-            setNeedsRender()
+        if resigned {
+            if let surface {
+                ghostty_surface_set_focus(surface, false)
+                setNeedsRender()
+            }
+            KookySecureInput.shared.setHolding(ObjectIdentifier(self), false)
         }
         return resigned
     }
@@ -825,11 +997,13 @@ final class GhosttySurfaceView: NSView {
         // spilled to a cache PNG so agents can open it as a path).
         if cmdOnly, event.charactersIgnoringModifiers?.lowercased() == "v" {
             // One entry owns the whole tier ladder: remote upload for SSH
-            // workspaces, off-main transcode for clipboard images, and
-            // synchronous delivery for files/plain text.
+            // workspaces, off-main transcode for clipboard images, escaped
+            // paths for files — and plain text handed to the core's protected
+            // paste path (clipboard-paste-protection).
             if KookyShellIntegration.paste(
                 from: .general,
                 host: pasteUploadHostProvider?(),
+                plainText: .viaCore({ [weak self] in self?.pasteFromClipboardViaCore() ?? false }),
                 deliver: { [weak self] in self?.paste($0) }
             ) {
                 return
@@ -1242,9 +1416,7 @@ final class GhosttySurfaceView: NSView {
     /// path via the `TerminalEngine.readSelection()` interface.
     private func performCopy() {
         guard let str = readSelection() else { return }
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setString(str, forType: .string)
+        writeToGeneralPasteboard(str)
     }
 
     func readSelection() -> String? {
@@ -1268,6 +1440,86 @@ final class GhosttySurfaceView: NSView {
         // arrival, which a Return-key trigger would miss.
         onUserInput?()
         text.withCString { ghostty_surface_text(surface, $0, UInt(strlen($0))) }
+    }
+
+    // MARK: - Clipboard requests (OSC 52 read + protected paste)
+
+    /// Single primitive for libghostty named binding actions — the engine's
+    /// `performAction`, the protected paste below, and the resize re-pin all
+    /// funnel through here (3 call sites; the call shape must not fork).
+    @discardableResult
+    func performAction(_ name: String) -> Bool {
+        guard let surface else { return false }
+        return name.withCString { cstr in
+            ghostty_surface_binding_action(surface, cstr, UInt(name.utf8.count))
+        }
+    }
+
+    /// Plain-text paste via the core's own `paste_from_clipboard` binding —
+    /// the read callback answers with the pasteboard text and the core's
+    /// safety check (`clipboard-paste-protection`) gets to veto/confirm
+    /// before anything reaches the PTY. `paste(_:)` bypasses that check by
+    /// design (kooky-constructed file paths / image cache paths), so every
+    /// USER-initiated plain-text paste must come through here instead.
+    func pasteFromClipboardViaCore() -> Bool {
+        // Same next-command signal as the direct paste path.
+        onUserInput?()
+        return performAction("paste_from_clipboard")
+    }
+
+    /// Answers a core-owned clipboard request. `stateBits` is the request
+    /// pointer in Int transit form (see `dispatchToView`); the request stays
+    /// valid until this call, so every code path that receives one MUST end
+    /// here exactly once — deny answers with an empty string, never silence.
+    func completeClipboardRequest(stateBits: Int, text: String, confirmed: Bool) {
+        guard let surface, let state = UnsafeMutableRawPointer(bitPattern: stateBits) else { return }
+        text.withCString { ptr in
+            ghostty_surface_complete_clipboard_request(surface, ptr, state, confirmed)
+        }
+    }
+
+    /// Consent sheet for a risky clipboard READ (unsafe paste / OSC 52 read).
+    /// Both buttons complete the request: Allow returns the contents with
+    /// confirmed=true (the core re-checks nothing further), Cancel returns an
+    /// empty string so the core-side request object is freed.
+    func presentClipboardConfirmation(
+        contents: String,
+        stateBits: Int,
+        request: ghostty_clipboard_request_e
+    ) {
+        let decide: @MainActor (Bool) -> Void = { [weak self] allowed in
+            self?.completeClipboardRequest(
+                stateBits: stateBits,
+                text: allowed ? contents : "",
+                confirmed: true
+            )
+        }
+        guard let window else {
+            // No window to anchor a sheet (detached/background surface) — deny.
+            decide(false)
+            return
+        }
+        ClipboardConfirmPresenter.present(
+            on: window,
+            kind: request == GHOSTTY_CLIPBOARD_REQUEST_PASTE ? .unsafePaste : .oscRead,
+            contents: contents,
+            onDecision: decide
+        )
+    }
+
+    /// Consent sheet for `clipboard-write = ask` (OSC 52 write). The core
+    /// doesn't hold a request open for writes — the host owns both the dialog
+    /// and, on consent, the pasteboard write itself.
+    func presentClipboardWriteConfirmation(contents: String) {
+        guard let window else { return }
+        ClipboardConfirmPresenter.present(
+            on: window,
+            kind: .oscWrite,
+            contents: contents
+        ) { allowed in
+            guard allowed else { return }
+            writeToGeneralPasteboard(contents)
+        }
     }
 
     /// Open a libghostty link action using the configured editor / browser,
@@ -1441,8 +1693,7 @@ final class GhosttySurfaceView: NSView {
         // only when we were already at the bottom, so a user reading scrollback
         // isn't yanked down mid-resize.
         if viewportAtBottom {
-            let action = "scroll_to_bottom"
-            action.withCString { _ = ghostty_surface_binding_action(surface, $0, UInt(action.utf8.count)) }
+            performAction("scroll_to_bottom")
         }
         // Render the resized frame on the next vsync without waiting for
         // libghostty's async RENDER action — removes the ordering dependency

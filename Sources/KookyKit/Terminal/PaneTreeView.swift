@@ -1072,11 +1072,13 @@ private struct PaneContextMenu: View {
             }
             KookyMenuRow(title: "Paste", shortcut: "⌘V", isDisabled: !pasteAvailable) {
                 isPresented = false
-                // Same tier ladder as ⌘V in the surface — one shared entry.
+                // Same tier ladder as ⌘V in the surface — one shared entry,
+                // incl. the protected plain-text path.
                 let engine = session.engine
                 _ = KookyShellIntegration.paste(
                     from: .general,
                     host: session.sshWorkspaceHost,
+                    plainText: .viaCore({ engine.pasteFromClipboardViaCore() }),
                     deliver: { engine.paste($0) }
                 )
             }
@@ -1372,14 +1374,14 @@ private final class ComposerNSTextView: NSTextView {
         let pb = NSPasteboard.general
         // SSH workspace tab: the composed prompt runs on the remote, so a
         // pasted file/image must be uploaded and referenced by remote path.
-        // Shared tier ladder; `includePlainText: false` keeps plain text on
+        // Shared tier ladder; `.callerHandles` keeps plain text on
         // NSTextView's native paste (undo coalescing) while files and
         // images still deliver escaped paths — async ones insert at
         // wherever the caret is when they land.
         if KookyShellIntegration.paste(
             from: pb,
             host: remotePasteHost,
-            includePlainText: false,
+            plainText: .callerHandles,
             deliver: { [weak self] text in
                 self?.insertText(text, replacementRange: self?.selectedRange() ?? NSRange())
             }
