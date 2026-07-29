@@ -107,6 +107,13 @@ private struct PaneView: View {
                             .padding(.bottom, Theme.space3)
                         }
                     }
+                    .overlay(alignment: .bottomLeading) {
+                        // ⌘-hover URL preview (`link-previews`) — browser-style
+                        // badge in the corner while the pointer is on a link.
+                        if let url = active.hoveredLinkURL, !active.composerActive {
+                            LinkPreviewBadge(url: url)
+                        }
+                    }
                 // Always present now that it hosts the compose button — a
                 // stable bottom affordance, not gated on git / env / zoom data.
                 Rectangle().fill(Theme.chromeHairline).frame(height: 1)
@@ -1191,6 +1198,29 @@ private func menuRowCheckmark(visible: Bool) -> some View {
 /// search activates so Esc / Enter route here instead of to the terminal
 /// NSView. Lives in `PaneTreeView` because search state belongs visually
 /// next to the content it filters — not in the global window chrome.
+/// Browser-style URL badge shown while ⌘-hovering a link (`link-previews`).
+/// Middle-truncated: the scheme+host and the path tail are what identify a
+/// link; the middle is the least informative part.
+private struct LinkPreviewBadge: View {
+    let url: String
+
+    var body: some View {
+        Text(url)
+            .font(Theme.mono(10.5))
+            .foregroundStyle(Theme.chromeForeground.opacity(0.9))
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Theme.chromeBackground.opacity(0.96))
+            .bracketBorder()
+            .frame(maxWidth: 480, alignment: .leading)
+            .padding(.leading, Theme.space3)
+            .padding(.bottom, Theme.space3)
+            .allowsHitTesting(false)
+    }
+}
+
 private struct PaneSearchBar: View {
     @Bindable var session: Session
     /// Called when the TextField gains focus so the parent can promote this

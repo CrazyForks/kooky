@@ -15,6 +15,7 @@ final class TestEngine: TerminalEngine {
     var onProcessExitedCleanly: (() -> Void)?
     var onDesktopNotification: ((String, String) -> Void)?
     var needsConfirmQuit = false
+    var onLinkHover: ((String?) -> Void)?
     var onSearchStart: ((String) -> Void)?
     var onSearchEnd: (() -> Void)?
     var onSearchTotal: ((Int) -> Void)?

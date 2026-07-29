@@ -2,6 +2,24 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.46.0 — 2026-07-29
+
+A full audit of every ghostty option against kooky's host layer, shipped in three rounds (v0.45.8–v0.45.10, bundled here), plus link previews.
+
+- New: paste protection. Pasting text that could run commands the moment it lands shows a confirmation with a content preview first (`clipboard-paste-protection`, on by default). ⌘W / Esc cancel; file, image, and SSH-upload pastes are unaffected.
+- New: OSC 52 clipboard support, guarded — remote programs (tmux, nvim over SSH) can read your clipboard after you approve it, and `clipboard-write = ask` asks before a program replaces your clipboard.
+- New: secure keyboard input at password prompts — typing a sudo/ssh password blocks other processes from monitoring keystrokes (`macos-auto-secure-input`, on by default).
+- New: the terminal bell works. `\a` requests Dock attention by default; `bell-features` configures a system beep or a custom sound (`bell-audio-path`, `bell-audio-volume`).
+- New: desktop notifications from terminal programs (OSC 9/777) — a system banner when the tab isn't visible, and every notification lands in kooky's notification inbox either way.
+- New: `mouse-hide-while-typing` — the pointer disappears while you type, reappears on movement.
+- New: middle-click pastes, through the same protected paste path as ⌘V.
+- New: `focus-follows-mouse` — with splits open, hovering any part of a pane moves keyboard focus there without a click. Hovering never steals the caret from the composer or search field.
+- New: terminal programs get the right light/dark answer (CSI ?996n queries, mode 2031 reports) — nvim/delta-style auto theming follows your kooky theme, and `theme = light:X,dark:Y` conditional themes in an inherited ghostty config resolve correctly.
+- New: window translucency without Liquid Glass — `background-opacity` takes effect with liquid-glass or a numeric `background-blur` (the traditional frosted look, any macOS), and Settings → appearance gains a background-opacity slider.
+- New: `confirm-close-surface` — opt in and closing a tab with a running process asks first. Off by default: agent tabs are long-running by nature.
+- New: link previews — ⌘-hover a URL (or an OSC 8 hyperlink) and a badge shows the full target, revealing where "click me" text really points.
+- Fixed: switching macOS input sources refreshes the terminal's keyboard mapping immediately, so Option-as-Alt stays correct after a layout change.
+
 ## v0.45.10 — 2026-07-29
 
 - New: terminal programs get the right light/dark answer. kooky reports its active theme's appearance to the terminal (CSI ?996n queries, mode 2031 reports), so nvim/delta-style auto theming follows your kooky theme — and `theme = light:X,dark:Y` conditional themes in an inherited ghostty config resolve correctly.

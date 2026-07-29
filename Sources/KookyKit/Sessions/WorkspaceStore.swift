@@ -1874,6 +1874,9 @@ final class WorkspaceStore {
             guard let self, let session else { return }
             self.onSessionAlert(session.id, .programNotification(title: title, body: body))
         }
+        engine.onLinkHover = { [weak session] url in
+            session?.hoveredLinkURL = url
+        }
         engine.onSearchStart = { [weak session] needle in
             guard let session else { return }
             session.searchActive = true

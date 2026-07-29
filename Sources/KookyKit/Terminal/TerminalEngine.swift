@@ -109,6 +109,9 @@ protocol TerminalEngine: AnyObject {
     /// Whether closing this surface deserves a confirmation — the core's
     /// own judgment (`confirm-close-surface` config × a live child process).
     var needsConfirmQuit: Bool { get }
+    /// ⌘-hover entered (url) / left (nil) a link — drives the URL preview
+    /// badge. Emission is gated core-side by `link-previews`.
+    var onLinkHover: ((String?) -> Void)? { get set }
     func start(config: TerminalSessionConfig)
     func terminate()
     /// True while ANY owner holds a size-propagation suspension. While set, AppKit

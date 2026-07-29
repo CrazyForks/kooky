@@ -413,6 +413,13 @@ private let kookyActionCb: ghostty_runtime_action_cb = { _, target, action in
         // `\a` — bell-features decides audio/attention; no view state needed.
         dispatchToMain { handleBellRing() }
         return true
+    case GHOSTTY_ACTION_MOUSE_OVER_LINK:
+        // ⌘-hover enters/leaves a link (`link-previews` gates emission
+        // core-side). len == 0 = left the link; copy before hopping main.
+        let link = action.action.mouse_over_link
+        let url: String? = link.len > 0 ? link.url.map { String(cString: $0) } : nil
+        dispatchToView(userdata) { $0.onLinkHover?(url) }
+        return true
     case GHOSTTY_ACTION_DESKTOP_NOTIFICATION:
         // OSC 9 / OSC 777 — copy the core-owned strings BEFORE hopping main.
         let n = action.action.desktop_notification
@@ -533,6 +540,10 @@ final class LibghosttyEngine: TerminalEngine {
     var onDesktopNotification: ((String, String) -> Void)? {
         get { surfaceView.onDesktopNotification }
         set { surfaceView.onDesktopNotification = newValue }
+    }
+    var onLinkHover: ((String?) -> Void)? {
+        get { surfaceView.onLinkHover }
+        set { surfaceView.onLinkHover = newValue }
     }
     var onProcessExitedCleanly: (() -> Void)? {
         get { surfaceView.onProcessExitedCleanly }
@@ -679,6 +690,7 @@ final class GhosttySurfaceView: NSView {
     var onUserInput: (() -> Void)?
     var onProcessExitedCleanly: (() -> Void)?
     var onDesktopNotification: ((String, String) -> Void)?
+    var onLinkHover: ((String?) -> Void)?
     var onSearchStart: ((String) -> Void)?
     var onSearchEnd: (() -> Void)?
     var onSearchTotal: ((Int) -> Void)?

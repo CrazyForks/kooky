@@ -124,6 +124,10 @@ final class Session: Identifiable {
     var composerActive = false
     var composerDraft = ""
 
+    /// URL under a ⌘-hover (`link-previews`) — drives the preview badge in
+    /// the pane's bottom-left corner. Runtime-only, not persisted.
+    var hoveredLinkURL: String?
+
     /// Set true to open the rename popover on this tab from outside the view
     /// (the ⌘R menu command). The active tab's `TabBarItem` observes this,
     /// opens its rename popover, and resets the flag. Runtime-only.
