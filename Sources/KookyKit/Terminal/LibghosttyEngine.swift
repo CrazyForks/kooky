@@ -917,10 +917,46 @@ final class GhosttySurfaceView: NSView {
         // + one text-commit per keystroke instead of per-IME-callback —
         // critical for CJK composition where rapid transient preedit
         // states otherwise leak phantom cells.
+        //
+        // The IME must translate with the mods libghostty says participate in
+        // text translation — `macos-option-as-alt` strips Option here, so a
+        // configured Left Option+Z translates to "z" (which the key encoder
+        // turns into ESC z) instead of macOS's Ω (issue #46). When the mods
+        // are unchanged we MUST reuse the original event object: AppKit does
+        // object-identity tracking somewhere and a rebuilt event breaks
+        // Korean-style IMEs (upstream SurfaceView_AppKit keyDown comment).
+        let translationGhosttyMods = Self.eventModifierFlags(
+            mods: ghostty_surface_key_translation_mods(surface, Self.mapModifiers(mods))
+        )
+        var translationMods = mods
+        for flag in [NSEvent.ModifierFlags.shift, .control, .option, .command] {
+            if translationGhosttyMods.contains(flag) {
+                translationMods.insert(flag)
+            } else {
+                translationMods.remove(flag)
+            }
+        }
+        let translationEvent: NSEvent
+        if translationMods == mods {
+            translationEvent = event
+        } else {
+            translationEvent = NSEvent.keyEvent(
+                with: event.type,
+                location: event.locationInWindow,
+                modifierFlags: translationMods,
+                timestamp: event.timestamp,
+                windowNumber: event.windowNumber,
+                context: nil,
+                characters: event.characters(byApplyingModifiers: translationMods) ?? "",
+                charactersIgnoringModifiers: event.charactersIgnoringModifiers ?? "",
+                isARepeat: event.isARepeat,
+                keyCode: event.keyCode
+            ) ?? event
+        }
         let hadMarkedTextBefore = !markedText.isEmpty
         keyTextAccumulator = []
         defer { keyTextAccumulator = nil }
-        inputContext?.handleEvent(event)
+        inputContext?.handleEvent(translationEvent)
         // Only sync preedit when there's a state change to communicate.
         // Sending `ghostty_surface_preedit(nil, 0)` on every keystroke
         // (including pure ASCII typing) was confusing libghostty's wrap
@@ -930,7 +966,7 @@ final class GhosttySurfaceView: NSView {
         syncPreedit(clearIfNeeded: hadMarkedTextBefore)
         if let accumulated = keyTextAccumulator, !accumulated.isEmpty {
             for text in accumulated {
-                sendKeyText(text, to: surface)
+                sendKeyText(text, event: event, translationMods: translationMods, to: surface)
             }
         }
     }
@@ -954,7 +990,21 @@ final class GhosttySurfaceView: NSView {
     /// sequences. Control bytes (< 0x20) still go through `text_input` — those
     /// are post-translation control sequences kooky already encodes itself.
     /// Mirrors ghostty.app's `committedPreeditTextAction` pattern.
-    private func sendKeyText(_ text: String, to surface: ghostty_surface_t) {
+    /// `event` + `translationMods` (keyDown's batched path) attach the real
+    /// key identity to the committed text: keycode, real mods (sided bits
+    /// included), and consumed_mods = the mods the IME translation actually
+    /// consumed. That trio is what lets libghostty's key encoder implement
+    /// `macos-option-as-alt` — Alt in `mods` but absent from `consumed_mods`
+    /// means "not consumed by translation" → encode ESC-prefix instead of the
+    /// translated character (issue #46). Callers outside keyDown (mouse-click
+    /// candidate commit) pass no event and keep the bare-text shape, mirroring
+    /// ghostty.app's `committedPreeditTextAction`.
+    private func sendKeyText(
+        _ text: String,
+        event: NSEvent? = nil,
+        translationMods: NSEvent.ModifierFlags? = nil,
+        to surface: ghostty_surface_t
+    ) {
         guard !text.isEmpty else { return }
         if let first = text.utf8.first, first < 0x20 {
             sendInputBytes(text, to: surface)  // control byte → fires onUserInput there
@@ -968,12 +1018,26 @@ final class GhosttySurfaceView: NSView {
         text.withCString { ptr in
             var key_ev = ghostty_input_key_s()
             key_ev.action = GHOSTTY_ACTION_PRESS
-            key_ev.keycode = 0
             key_ev.text = ptr
             key_ev.composing = false
-            key_ev.mods = GHOSTTY_MODS_NONE
-            key_ev.consumed_mods = GHOSTTY_MODS_NONE
-            key_ev.unshifted_codepoint = 0
+            if let event {
+                key_ev.keycode = UInt32(event.keyCode)
+                key_ev.mods = Self.mapModifiers(event.modifierFlags)
+                // ghostty.app's heuristic: control and command never contribute
+                // to text translation; everything else in the translation mods
+                // did (NSEvent+Extension.swift `ghosttyKeyEvent`).
+                key_ev.consumed_mods = Self.mapModifiers(
+                    (translationMods ?? event.modifierFlags).subtracting([.control, .command])
+                )
+                if let scalar = event.characters(byApplyingModifiers: [])?.unicodeScalars.first {
+                    key_ev.unshifted_codepoint = scalar.value
+                }
+            } else {
+                key_ev.keycode = 0
+                key_ev.mods = GHOSTTY_MODS_NONE
+                key_ev.consumed_mods = GHOSTTY_MODS_NONE
+                key_ev.unshifted_codepoint = 0
+            }
             _ = ghostty_surface_key(surface, key_ev)
         }
     }
@@ -1305,14 +1369,37 @@ final class GhosttySurfaceView: NSView {
         }
     }
 
-    private static func mapModifiers(_ flags: NSEvent.ModifierFlags) -> ghostty_input_mods_e {
+    static func mapModifiers(_ flags: NSEvent.ModifierFlags) -> ghostty_input_mods_e {
         var raw: UInt32 = 0
         if flags.contains(.shift)    { raw |= GHOSTTY_MODS_SHIFT.rawValue }
         if flags.contains(.control)  { raw |= GHOSTTY_MODS_CTRL.rawValue }
         if flags.contains(.option)   { raw |= GHOSTTY_MODS_ALT.rawValue }
         if flags.contains(.command)  { raw |= GHOSTTY_MODS_SUPER.rawValue }
         if flags.contains(.capsLock) { raw |= GHOSTTY_MODS_CAPS.rawValue }
+        // Sided bits (device-dependent NSEvent raw flags, mirroring ghostty.app's
+        // ghosttyMods) — `macos-option-as-alt = left|right` needs to know WHICH
+        // Option is down; libghostty's translation-mods + key encoder read these.
+        let rawFlags = flags.rawValue
+        if rawFlags & UInt(NX_DEVICERSHIFTKEYMASK) != 0 { raw |= GHOSTTY_MODS_SHIFT_RIGHT.rawValue }
+        if rawFlags & UInt(NX_DEVICERCTLKEYMASK)   != 0 { raw |= GHOSTTY_MODS_CTRL_RIGHT.rawValue }
+        if rawFlags & UInt(NX_DEVICERALTKEYMASK)   != 0 { raw |= GHOSTTY_MODS_ALT_RIGHT.rawValue }
+        if rawFlags & UInt(NX_DEVICERCMDKEYMASK)   != 0 { raw |= GHOSTTY_MODS_SUPER_RIGHT.rawValue }
         return ghostty_input_mods_e(rawValue: raw)
+    }
+
+    /// Inverse of `mapModifiers` for the four base modifiers only — used to
+    /// fold libghostty's `ghostty_surface_key_translation_mods` answer back
+    /// into NSEvent flags for the translation event (mirrors ghostty.app's
+    /// `eventModifierFlags`). Sided/caps bits deliberately don't round-trip:
+    /// the caller only transplants the four base flags onto the real event's
+    /// flags, so device-dependent bits stay whatever the hardware reported.
+    static func eventModifierFlags(mods: ghostty_input_mods_e) -> NSEvent.ModifierFlags {
+        var flags: NSEvent.ModifierFlags = []
+        if mods.rawValue & GHOSTTY_MODS_SHIFT.rawValue != 0 { flags.insert(.shift) }
+        if mods.rawValue & GHOSTTY_MODS_CTRL.rawValue  != 0 { flags.insert(.control) }
+        if mods.rawValue & GHOSTTY_MODS_ALT.rawValue   != 0 { flags.insert(.option) }
+        if mods.rawValue & GHOSTTY_MODS_SUPER.rawValue != 0 { flags.insert(.command) }
+        return flags
     }
 
     private func propagateSizeToSurface(force: Bool = false) {

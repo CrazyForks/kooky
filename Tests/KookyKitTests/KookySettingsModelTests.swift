@@ -225,7 +225,11 @@ final class KookySettingsModelTests: XCTestCase {
     /// own ghostty config (see `KookySettings.baselineConfig`); losing a line
     /// is a user-visible regression, not a cleanup.
     func testBaselineConfigPinsPromisedDefaults() {
-        for line in ["copy-on-select = true", "cursor-click-to-move = true"] {
+        for line in [
+            "copy-on-select = true",
+            "cursor-click-to-move = true",
+            "macos-option-as-alt = false",
+        ] {
             XCTAssertTrue(
                 KookySettings.baselineConfig.contains(line + "\n"),
                 "baseline lost `\(line)`"

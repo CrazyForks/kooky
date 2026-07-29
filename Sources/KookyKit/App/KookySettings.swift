@@ -205,7 +205,13 @@ enum KookySettings {
     ///   inherited `copy-on-select = false` from the user's ghostty config
     ///   silently killed select-to-copy on those machines (issue #32).
     ///   Declaring it here makes kooky's default hold for everyone.
-    static let baselineConfig = "cursor-click-to-move = true\ncopy-on-select = true\n"
+    /// - macos-option-as-alt: an UNSET value makes libghostty guess per
+    ///   keyboard layout (`detectOptionAsAlt` — US layouts default to Option
+    ///   acting as Alt, ghostty.app's behavior). kooky's promised default is
+    ///   macOS-native Option (special characters / IME), so pin `false`;
+    ///   users opt into Alt via `terminal.macos-option-as-alt` (issue #46).
+    static let baselineConfig =
+        "cursor-click-to-move = true\ncopy-on-select = true\nmacos-option-as-alt = false\n"
 
     private static func applyBaseline(to config: ghostty_config_t?) {
         guard let config else { return }

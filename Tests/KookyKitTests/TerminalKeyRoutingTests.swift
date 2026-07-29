@@ -147,6 +147,40 @@ final class TerminalKeyRoutingTests: XCTestCase {
         key.composing = false
         return ghostty_surface_key(surface, key)
     }
+    func testMapModifiersCarriesSidedOptionBits() {
+        // Device-dependent NSEvent bits: left Option = NX_DEVICELALTKEYMASK
+        // (0x20), right Option = NX_DEVICERALTKEYMASK (0x40). libghostty's
+        // `macos-option-as-alt = left|right` needs the RIGHT bit to tell the
+        // sides apart (issue #46).
+        let base = NSEvent.ModifierFlags.option.rawValue
+        let leftOption = NSEvent.ModifierFlags(rawValue: base | 0x20)
+        let rightOption = NSEvent.ModifierFlags(rawValue: base | 0x40)
+
+        let left = GhosttySurfaceView.mapModifiers(leftOption).rawValue
+        XCTAssertNotEqual(left & GHOSTTY_MODS_ALT.rawValue, 0)
+        XCTAssertEqual(left & GHOSTTY_MODS_ALT_RIGHT.rawValue, 0)
+
+        let right = GhosttySurfaceView.mapModifiers(rightOption).rawValue
+        XCTAssertNotEqual(right & GHOSTTY_MODS_ALT.rawValue, 0)
+        XCTAssertNotEqual(right & GHOSTTY_MODS_ALT_RIGHT.rawValue, 0)
+    }
+
+    func testEventModifierFlagsRoundTripsBaseModifiers() {
+        // The reverse map only carries the four base modifiers — that's all
+        // the translation-event transplant reads. Sided/caps bits stay with
+        // the hardware event.
+        let combos: [NSEvent.ModifierFlags] = [
+            [], [.shift], [.control], [.option], [.command],
+            [.shift, .option], [.control, .option, .command],
+            [.shift, .control, .option, .command],
+        ]
+        for flags in combos {
+            let roundTripped = GhosttySurfaceView.eventModifierFlags(
+                mods: GhosttySurfaceView.mapModifiers(flags)
+            )
+            XCTAssertEqual(roundTripped, flags, "round-trip failed for \(flags.rawValue)")
+        }
+    }
 }
 
 private final class ManualGhosttyOutput {

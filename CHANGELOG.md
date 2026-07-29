@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.45.7 — 2026-07-29
+
+- Fixed: `macos-option-as-alt` now works. Set it under `terminal` in settings.json (`true` / `false` / `"left"` / `"right"`) to send Option+letter to terminal programs as Alt/ESC sequences (zellij, tmux, emacs bindings); with `"left"`, the right Option keeps typing macOS special characters. When unset, kooky keeps the macOS-native behavior — Option types special characters — instead of inheriting ghostty's per-keyboard-layout guess. (#46)
+
 ## v0.45.6 — 2026-07-29
 
 - Fixed: new tabs opening as a bare shell — no aliases, no PATH, no prompt theme — after kooky ran for a few days. macOS periodically deletes temp files it considers stale, taking kooky's zsh/bash shell-integration bridge with it, and kooky never rebuilt it until the app was restarted. The bridge is now recreated on the spot whenever a terminal spawns; if that ever fails, new shells load your own config directly instead of pointing at a dead path. (#45)
