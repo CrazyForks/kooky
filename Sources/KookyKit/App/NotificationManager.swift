@@ -3,13 +3,16 @@ import UserNotifications
 
 /// What kind of agent event warrants a notification. Drives the notification
 /// copy; both kinds only fire when the originating tab isn't currently visible.
-enum SessionAlertKind {
+enum SessionAlertKind: Equatable {
     /// The agent entered an attention (waiting-on-you) state.
     case attention
     /// The most recent command in the tab exited non-zero.
     case failure
     /// The agent finished / exited. Inbox-only — never posts a banner.
     case completed
+    /// A terminal program posted its own notification (OSC 9 / OSC 777),
+    /// carrying its own text — rides the same alert seam as the fixed kinds.
+    case programNotification(title: String, body: String)
 }
 
 /// Thin wrapper over `UNUserNotificationCenter` for kooky's agent

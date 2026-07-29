@@ -1870,6 +1870,10 @@ final class WorkspaceStore {
             guard let self, let session, let workspace else { return }
             self.closeTab(session, in: workspace)
         }
+        engine.onDesktopNotification = { [weak self, weak session] title, body in
+            guard let self, let session else { return }
+            self.onSessionAlert(session.id, .programNotification(title: title, body: body))
+        }
         engine.onSearchStart = { [weak session] needle in
             guard let session else { return }
             session.searchActive = true

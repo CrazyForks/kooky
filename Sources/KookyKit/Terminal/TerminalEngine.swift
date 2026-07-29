@@ -102,6 +102,10 @@ protocol TerminalEngine: AnyObject {
     /// don't fire this — libghostty's "press any key to close" message
     /// stays so the user can read crash output before dismissing.
     var onProcessExitedCleanly: (() -> Void)? { get set }
+    /// A program in the terminal posted a desktop notification (OSC 9 /
+    /// OSC 777) — (title, body). The store routes it to the app-level
+    /// notification pipeline (visibility suppression + UN banner).
+    var onDesktopNotification: ((String, String) -> Void)? { get set }
     func start(config: TerminalSessionConfig)
     func terminate()
     /// True while ANY owner holds a size-propagation suspension. While set, AppKit

@@ -36,6 +36,8 @@ final class NotificationInbox {
             case .attention: return "\(agentTitle) is waiting on you"
             case .failure: return "Command failed"
             case .completed: return "\(agentTitle) finished"
+            case .programNotification(let title, let body):
+                return [title, body].filter { !$0.isEmpty }.joined(separator: ": ")
             }
         }
 
@@ -262,6 +264,7 @@ private struct InboxRow: View {
         case .attention: return Theme.activityAttention
         case .failure: return Theme.activityFailure
         case .completed: return Theme.activityRunning
+        case .programNotification: return Theme.chromeMuted
         }
     }
 

@@ -367,9 +367,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
     // MARK: - Notifications
 
-    /// Called by any window's store when a session enters attention or a
-    /// command fails. Posts a system notification only for a tab the user
-    /// can't currently see, and only when notifications are enabled.
+    /// Called by any window's store when a session raises an alert —
+    /// attention, command failure, completion, or a program's own OSC 9/777
+    /// notification. Every kind lands in the inbox (visible tab → read); the
+    /// system banner only fires for a tab the user can't currently see, and
+    /// only when notifications are enabled.
     private func handleSessionAlert(_ sessionId: UUID, _ kind: SessionAlertKind) {
         guard let location = dockTabLocation(for: sessionId) else { return }
         let tab = location.session.title
@@ -393,6 +395,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         switch kind {
         case .completed:
             return
+        case .programNotification(let title, let body):
+            // Program-originated (own core-side gate: `desktop-notifications`)
+            // — kooky's per-kind sub-toggles don't apply, but the master
+            // switch does: a user who turned notifications off must not get
+            // banners (or the OS authorization prompt) from a stray OSC 9.
+            guard settings.notificationsEnabled, !visible else { return }
+            notificationManager.post(
+                title: title.isEmpty ? location.session.displayAgent.title : title,
+                body: body,
+                sessionId: sessionId
+            )
         case .attention:
             guard settings.notificationsEnabled, settings.notifyOnAttention,
                   !visible else { return }

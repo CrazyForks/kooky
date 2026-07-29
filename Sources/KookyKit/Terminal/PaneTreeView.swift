@@ -32,6 +32,21 @@ private struct PaneView: View {
 
     private static let inactivePaneOpacity: Double = 0.5
 
+    /// "Work with this pane": promote it AND hand its terminal the keyboard.
+    /// Shared by the pane-wide tap and focus-follows-mouse hover. If the
+    /// keyboard is currently in a text control (the search bar's field
+    /// editor, the composer's NSTextView), the caret stays there — pane
+    /// activation alone is enough (Codex P2). The terminal surface itself is
+    /// a plain NSView, never matched.
+    private func focusThisPane() {
+        guard let active = pane.activeTab else { return }
+        store.activateTab(active, in: workspace)
+        let view = active.engine.view
+        guard let window = view.window else { return }
+        if window.firstResponder is NSTextView { return }
+        window.makeFirstResponder(view)
+    }
+
     @State private var contextMenuOpen = false
     @State private var contextMenuAnchor: UnitPoint = .center
 
@@ -108,19 +123,25 @@ private struct PaneView: View {
         // the terminal content area does the same via `mouseDown` in
         // `GhosttySurfaceView` (an AppKit sibling this gesture can't see).
         // Both are idempotent, so any overlap is harmless.
-        .simultaneousGesture(TapGesture().onEnded {
-            guard let active = pane.activeTab else { return }
-            store.activateTab(active, in: workspace)
-            let view = active.engine.view
-            guard let window = view.window else { return }
-            // Same click may have just landed in a text control (the search
-            // bar's field editor, the composer's NSTextView — both are
-            // NSTextView by the time this mouse-up fires): the caret must
-            // stay there, pane activation alone is enough (Codex P2). The
-            // terminal surface itself is a plain NSView, never matched.
-            if window.firstResponder is NSTextView { return }
-            window.makeFirstResponder(view)
-        })
+        .simultaneousGesture(TapGesture().onEnded { focusThisPane() })
+        // focus-follows-mouse, the ONE implementation: this hover region is
+        // the whole pane — chrome AND the terminal content area (tracking
+        // areas are geometric; the surface NSView doesn't occlude the
+        // hosting view's). Enter/exit semantics on purpose: a stationary
+        // pointer doesn't re-steal focus after ⌘]/⌘[ moves it away. Unlike
+        // the tap, a mere hover must never steal the caret from a text
+        // control (composer/search) OR churn pane activation while the user
+        // types there — hence the stricter full-skip guard.
+        .onHover { hovering in
+            guard hovering,
+                  LibghosttyApp.shared.hostConfig.focusFollowsMouse,
+                  !isFocused,
+                  let window = pane.activeTab?.engine.view.window,
+                  window.isKeyWindow,
+                  !(window.firstResponder is NSTextView)
+            else { return }
+            focusThisPane()
+        }
         .animation(Theme.chromeTransition, value: isFocused)
         .onChange(of: pane.activeTab.map { paneStatusBarHasData(session: $0) } ?? false) { _, _ in
             // Status-bar height transition. The bar is always present now (it

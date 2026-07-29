@@ -2,6 +2,14 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.45.9 — 2026-07-29
+
+- New: the terminal bell works. `\a` requests Dock attention by default; `bell-features` configures a system beep or a custom sound file (`bell-audio-path`, `bell-audio-volume`).
+- New: desktop notifications from terminal programs (OSC 9/777, `printf '\e]9;done\a'`) — a system banner when the tab isn't visible, and every notification lands in kooky's notification inbox either way. Kooky's master notification toggle is respected.
+- New: `mouse-hide-while-typing` — the pointer disappears while you type, reappears on movement.
+- New: middle-click pastes, through the same protected paste path as ⌘V.
+- New: `focus-follows-mouse` — with splits open, hovering any part of a pane (terminal, tab bar, status bar) moves keyboard focus there without a click. Hovering never steals the caret while you're typing in the composer or search field.
+
 ## v0.45.8 — 2026-07-29
 
 - New: paste protection. Pasting text that could run commands the moment it lands (multi-line content outside bracketed-paste framing) now shows a confirmation with a content preview first (`clipboard-paste-protection`, on by default). ⌘W / Esc cancel; file, image, and SSH-upload pastes are unaffected.

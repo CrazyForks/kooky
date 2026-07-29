@@ -43,6 +43,7 @@ final class LibghosttyApp {
             NSLog("kooky: ghostty_app_new failed")
         }
         currentConfig = config
+        refreshHostConfig()
 
         // Input-source switches (US → Pinyin → Dvorak…) must invalidate the
         // core's cached keymap — `ghostty_surface_key_translation_mods` and
@@ -73,18 +74,6 @@ final class LibghosttyApp {
     /// leaked configs (the old code freed nothing, ever).
     private var currentConfig: ghostty_config_t?
 
-    /// `macos-auto-secure-input` (default true) — the gate is host-side by
-    /// upstream design (the core always emits the SECURE_INPUT action on
-    /// password-prompt detection; the host decides whether to honor it).
-    /// Read per action from the LIVE config so a settings reload applies
-    /// without restart.
-    var autoSecureInputEnabled: Bool {
-        guard let config = currentConfig else { return true }
-        var value = false
-        let key = "macos-auto-secure-input"
-        guard ghostty_config_get(config, &value, key, UInt(key.utf8.count)) else { return true }
-        return value
-    }
 
     func reloadConfig() {
         guard let app else { return }
@@ -102,6 +91,67 @@ final class LibghosttyApp {
         // PREVIOUS config is unreferenced once update returns.
         if let previous = currentConfig { ghostty_config_free(previous) }
         currentConfig = config
+        refreshHostConfig()
+    }
+
+    /// Host-side config kooky itself acts on (the core only stores these —
+    /// the host must implement the behavior). Cached at config apply because
+    /// `focusFollowsMouse` is read per mouseMoved and a bell flood shouldn't
+    /// re-read three keys per ring; refreshed by init + every reload, which
+    /// is what keeps a settings edit applying without restart.
+    struct HostConfig {
+        var focusFollowsMouse = false
+        // bell-features upstream default: attention + title. kooky implements
+        // system/audio/attention; title/border are ghostty.app-chrome forms
+        // kooky's own tab UI doesn't mirror.
+        var bellSystem = false
+        var bellAudio = false
+        var bellAttention = true
+        var bellAudioPath: String?
+        var bellAudioVolume: Float = 0.5
+        /// `macos-auto-secure-input` — the gate is host-side by upstream
+        /// design (the core always emits SECURE_INPUT on password-prompt
+        /// detection; the host decides whether to honor it).
+        var autoSecureInput = true
+    }
+    private(set) var hostConfig = HostConfig()
+
+    /// The configured bell sound, decoded once per config apply — building
+    /// an NSSound per ring re-reads the file on the main thread (a visible
+    /// hitch when the page cache is cold), and a ring-local instance can be
+    /// released before playback finishes.
+    private(set) var bellSound: NSSound?
+
+    private func refreshHostConfig() {
+        guard let config = currentConfig else { return }
+        var next = HostConfig()
+        var ffm = false
+        if get(config, "focus-follows-mouse", &ffm) { next.focusFollowsMouse = ffm }
+        var bell: CUnsignedInt = 0
+        if get(config, "bell-features", &bell) {
+            next.bellSystem = bell & (1 << 0) != 0
+            next.bellAudio = bell & (1 << 1) != 0
+            next.bellAttention = bell & (1 << 2) != 0
+        }
+        var path = ghostty_config_path_s()
+        if get(config, "bell-audio-path", &path), let cstr = path.path {
+            let str = String(cString: cstr)
+            next.bellAudioPath = str.isEmpty ? nil : str
+        }
+        var volume: Double = 0
+        if get(config, "bell-audio-volume", &volume) {
+            next.bellAudioVolume = Float(volume)
+        }
+        var secure = true
+        if get(config, "macos-auto-secure-input", &secure) { next.autoSecureInput = secure }
+        if next.bellAudioPath != hostConfig.bellAudioPath {
+            bellSound = next.bellAudioPath.flatMap { NSSound(contentsOfFile: $0, byReference: false) }
+        }
+        hostConfig = next
+    }
+
+    private func get<T>(_ config: ghostty_config_t, _ key: String, _ out: inout T) -> Bool {
+        ghostty_config_get(config, &out, key, UInt(key.utf8.count))
     }
 
     func tick() {
@@ -113,9 +163,7 @@ final class LibghosttyApp {
 // MARK: - C callbacks
 
 private let kookyWakeupCb: ghostty_runtime_wakeup_cb = { _ in
-    DispatchQueue.main.async {
-        MainActor.assumeIsolated { LibghosttyApp.shared.tick() }
-    }
+    dispatchToMain { LibghosttyApp.shared.tick() }
 }
 
 /// Replaces the general pasteboard's contents. Must run on main so the change
@@ -127,6 +175,36 @@ private func writeToGeneralPasteboard(_ text: String) {
     let pb = NSPasteboard.general
     pb.clearContents()
     pb.setString(text, forType: .string)
+}
+
+/// `\a` reached the terminal — play the configured bell (upstream
+/// ghosttyBellDidRing semantics; the core debounces rings at 100ms so a bell
+/// flood can't hammer this). `requestUserAttention` only bounces the Dock
+/// when kooky isn't frontmost — the OS handles that gate.
+@MainActor
+private func handleBellRing() {
+    let cfg = LibghosttyApp.shared.hostConfig
+    if cfg.bellSystem {
+        NSSound.beep()
+    }
+    if cfg.bellAudio, let sound = LibghosttyApp.shared.bellSound {
+        // stop() restarts playback for a re-ring inside the debounce window.
+        sound.stop()
+        sound.volume = cfg.bellAudioVolume
+        sound.play()
+    }
+    if cfg.bellAttention {
+        NSApp.requestUserAttention(.informationalRequest)
+    }
+}
+
+/// Main-actor hop for view-less core callbacks (bell, cursor visibility,
+/// pasteboard writes) — the sibling of `dispatchToView` for work that needs
+/// no originating surface.
+private func dispatchToMain(_ work: @MainActor @escaping () -> Void) {
+    DispatchQueue.main.async {
+        MainActor.assumeIsolated(work)
+    }
 }
 
 /// Hops to main + recovers the originating `GhosttySurfaceView` from libghostty's
@@ -249,6 +327,25 @@ private let kookyActionCb: ghostty_runtime_action_cb = { _, target, action in
         let mode = action.action.secure_input
         dispatchToView(userdata) { $0.applySecureInput(mode) }
         return true
+    case GHOSTTY_ACTION_RING_BELL:
+        // `\a` — bell-features decides audio/attention; no view state needed.
+        dispatchToMain { handleBellRing() }
+        return true
+    case GHOSTTY_ACTION_DESKTOP_NOTIFICATION:
+        // OSC 9 / OSC 777 — copy the core-owned strings BEFORE hopping main.
+        let n = action.action.desktop_notification
+        let title = n.title.map { String(cString: $0) } ?? ""
+        let body = n.body.map { String(cString: $0) } ?? ""
+        guard !title.isEmpty || !body.isEmpty else { return true }
+        dispatchToView(userdata) { $0.onDesktopNotification?(title, body) }
+        return true
+    case GHOSTTY_ACTION_MOUSE_VISIBILITY:
+        // mouse-hide-while-typing: the core says hide on text keypress and
+        // show on movement/scroll; setHiddenUntilMouseMoves matches — the OS
+        // un-hides on motion even if a VISIBLE action never lands.
+        let visible = action.action.mouse_visibility == GHOSTTY_MOUSE_VISIBLE
+        dispatchToMain { NSCursor.setHiddenUntilMouseMoves(!visible) }
+        return true
     default:
         return false
     }
@@ -319,9 +416,7 @@ private let kookyWriteClipboardCb: ghostty_runtime_write_clipboard_cb = { userda
         return
     }
     // libghostty fires this on its own thread; the write helper is main-only.
-    DispatchQueue.main.async {
-        MainActor.assumeIsolated { writeToGeneralPasteboard(text) }
-    }
+    dispatchToMain { writeToGeneralPasteboard(text) }
 }
 private let kookyCloseSurfaceCb: ghostty_runtime_close_surface_cb = { _, _ in }
 
@@ -352,6 +447,10 @@ final class LibghosttyEngine: TerminalEngine {
     var onUserInput: (() -> Void)? {
         get { surfaceView.onUserInput }
         set { surfaceView.onUserInput = newValue }
+    }
+    var onDesktopNotification: ((String, String) -> Void)? {
+        get { surfaceView.onDesktopNotification }
+        set { surfaceView.onDesktopNotification = newValue }
     }
     var onProcessExitedCleanly: (() -> Void)? {
         get { surfaceView.onProcessExitedCleanly }
@@ -492,6 +591,7 @@ final class GhosttySurfaceView: NSView {
     var onCommandFinished: ((Int?, TimeInterval) -> Void)?
     var onUserInput: (() -> Void)?
     var onProcessExitedCleanly: (() -> Void)?
+    var onDesktopNotification: ((String, String) -> Void)?
     var onSearchStart: ((String) -> Void)?
     var onSearchEnd: (() -> Void)?
     var onSearchTotal: ((Int) -> Void)?
@@ -579,7 +679,12 @@ final class GhosttySurfaceView: NSView {
         super.updateTrackingAreas()
         trackingAreas.forEach { removeTrackingArea($0) }
         // `.activeWhenFirstResponder` keeps non-focused panes from receiving
-        // mouseMoved and stomping on the focused surface's hover.
+        // mouseMoved and stomping on the focused surface's hover (it also
+        // keeps their `cursorUpdate` from painting a stale cached shape the
+        // core has no way to correct). focus-follows-mouse lives at the
+        // SwiftUI layer — `PaneView.onHover` covers the whole pane including
+        // this surface's frame, since tracking areas are geometric and a
+        // child NSView doesn't occlude the hosting view's.
         // `.cursorUpdate` lets us re-apply `currentCursor` whenever the mouse
         // re-enters the surface — libghostty's `MOUSE_SHAPE` action only fires
         // when the shape *changes*, so without this the I-beam → pointer
@@ -679,12 +784,12 @@ final class GhosttySurfaceView: NSView {
         case GHOSTTY_SECURE_INPUT_OFF:
             passwordInput = false
         case GHOSTTY_SECURE_INPUT_ON:
-            guard LibghosttyApp.shared.autoSecureInputEnabled else { return }
+            guard LibghosttyApp.shared.hostConfig.autoSecureInput else { return }
             passwordInput = true
         case GHOSTTY_SECURE_INPUT_TOGGLE:
             if passwordInput {
                 passwordInput = false
-            } else if LibghosttyApp.shared.autoSecureInputEnabled {
+            } else if LibghosttyApp.shared.hostConfig.autoSecureInput {
                 passwordInput = true
             }
         default: break
@@ -1409,6 +1514,27 @@ final class GhosttySurfaceView: NSView {
         forwardMouseEvent(event, button: (.RELEASE, .LEFT))
     }
 
+    // Middle button (buttonNumber 2): the core owns the behavior —
+    // `middle-click-action` defaults to paste, routed through the protected
+    // clipboard-request path; with mouse reporting on, the TUI gets the
+    // event instead. Other "other" buttons (side buttons 3+) stay with
+    // AppKit — the core has no bindings for them.
+    override func otherMouseDown(with event: NSEvent) {
+        guard event.buttonNumber == 2 else { return super.otherMouseDown(with: event) }
+        // Middle-click usually pastes (the start of the next command) — clear
+        // a stale failure dot like every other paste path (Codex review).
+        // Fired unconditionally: with mouse reporting on this is a TUI event
+        // instead, but "user acted on the terminal" is exactly the signal the
+        // dot clears on, and the dot is long gone inside a running TUI anyway.
+        onUserInput?()
+        forwardMouseEvent(event, button: (.PRESS, .MIDDLE))
+    }
+
+    override func otherMouseUp(with event: NSEvent) {
+        guard event.buttonNumber == 2 else { return super.otherMouseUp(with: event) }
+        forwardMouseEvent(event, button: (.RELEASE, .MIDDLE))
+    }
+
     /// Direct selection extraction — bypasses the libghostty binding +
     /// write_clipboard_cb path so `keyDown`'s Cmd+C fallback works
     /// regardless of which keys are bound for copy in the active config.
@@ -1711,6 +1837,7 @@ private extension ghostty_input_mouse_state_e {
 
 private extension ghostty_input_mouse_button_e {
     static var LEFT: Self { GHOSTTY_MOUSE_LEFT }
+    static var MIDDLE: Self { GHOSTTY_MOUSE_MIDDLE }
     static var RIGHT: Self { GHOSTTY_MOUSE_RIGHT }
 }
 

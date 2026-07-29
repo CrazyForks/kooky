@@ -13,6 +13,7 @@ final class TestEngine: TerminalEngine {
     var onCommandFinished: ((Int?, TimeInterval) -> Void)?
     var onUserInput: (() -> Void)?
     var onProcessExitedCleanly: (() -> Void)?
+    var onDesktopNotification: ((String, String) -> Void)?
     var onSearchStart: ((String) -> Void)?
     var onSearchEnd: (() -> Void)?
     var onSearchTotal: ((Int) -> Void)?
