@@ -4,8 +4,6 @@ Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
 ## v0.46.0 — 2026-07-29
 
-A full audit of every ghostty option against kooky's host layer, shipped in three rounds (v0.45.8–v0.45.10, bundled here), plus link previews.
-
 - New: paste protection. Pasting text that could run commands the moment it lands shows a confirmation with a content preview first (`clipboard-paste-protection`, on by default). ⌘W / Esc cancel; file, image, and SSH-upload pastes are unaffected.
 - New: OSC 52 clipboard support, guarded — remote programs (tmux, nvim over SSH) can read your clipboard after you approve it, and `clipboard-write = ask` asks before a program replaces your clipboard.
 - New: secure keyboard input at password prompts — typing a sudo/ssh password blocks other processes from monitoring keystrokes (`macos-auto-secure-input`, on by default).
