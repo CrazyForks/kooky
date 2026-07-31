@@ -537,12 +537,24 @@ final class AgentSessionScannerTests: XCTestCase {
 
     func testRelativeActivityLabelTiers() {
         let now = Date()
-        XCTAssertEqual(relativeActivityLabel(now.addingTimeInterval(-5), now: now), "now")
-        XCTAssertEqual(relativeActivityLabel(now.addingTimeInterval(-120), now: now), "2m")
-        XCTAssertEqual(relativeActivityLabel(now.addingTimeInterval(-7200), now: now), "2h")
-        XCTAssertEqual(relativeActivityLabel(now.addingTimeInterval(-3 * 86_400), now: now), "3d")
+        let bundle = KookyAppLanguage.english.previewBundle
+        XCTAssertEqual(relativeActivityLabel(now.addingTimeInterval(-5), now: now, bundle: bundle), "now")
+        XCTAssertEqual(relativeActivityLabel(now.addingTimeInterval(-120), now: now, bundle: bundle), "2m")
+        XCTAssertEqual(relativeActivityLabel(now.addingTimeInterval(-7200), now: now, bundle: bundle), "2h")
+        XCTAssertEqual(
+            relativeActivityLabel(
+                now.addingTimeInterval(-3 * 86_400),
+                now: now,
+                bundle: bundle
+            ),
+            "3d"
+        )
         // Past a week it's a date, not a count.
-        let old = relativeActivityLabel(now.addingTimeInterval(-30 * 86_400), now: now)
+        let old = relativeActivityLabel(
+            now.addingTimeInterval(-30 * 86_400),
+            now: now,
+            bundle: bundle
+        )
         XCTAssertFalse(old.hasSuffix("d"))
         XCTAssertFalse(old.isEmpty)
     }

@@ -194,7 +194,7 @@ struct CreateWorktreeSheet: View {
     // MARK: Sections
 
     private var statusLabel: some View {
-        Text("CREATE-WORKTREE")
+        Text(String(localized: "CREATE-WORKTREE", bundle: .kookyResources))
             .font(Theme.mono(10, weight: .medium))
             .tracking(1.6)
             .foregroundStyle(Theme.chromeMuted.opacity(0.85))
@@ -320,12 +320,12 @@ struct CreateWorktreeSheet: View {
             VStack(alignment: .leading, spacing: 6) {
                 fieldLabel("mode")
                 Picker("", selection: $branchMode) {
-                    Text("new").tag(BranchModeUI.newBranch)
+                    Text(String(localized: "new", bundle: .kookyResources)).tag(BranchModeUI.newBranch)
                     if hasSelectableExistingBranches {
-                        Text("existing").tag(BranchModeUI.existing)
+                        Text(String(localized: "existing", bundle: .kookyResources)).tag(BranchModeUI.existing)
                     }
                     if hasAdoptablePool {
-                        Text("adopt").tag(BranchModeUI.adopt)
+                        Text(String(localized: "adopt", bundle: .kookyResources)).tag(BranchModeUI.adopt)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -370,7 +370,7 @@ struct CreateWorktreeSheet: View {
         HStack(spacing: 8) {
             inlineStatus(newBranchConflictMessage, color: Theme.activityFailure.opacity(0.85))
             if !newBranchIsCheckedOut {
-                Button("use existing") {
+                Button(String(localized: "use existing", bundle: .kookyResources)) {
                     existingBranch = normalizedNewBranchName
                     branchMode = .existing
                 }
@@ -408,7 +408,7 @@ struct CreateWorktreeSheet: View {
                 ForEach(availableBranches, id: \.self) { branch in
                     Text(branch).tag(StartFromChoice.branch(branch))
                 }
-                Text("custom ref…").tag(StartFromChoice.custom)
+                Text(String(localized: "custom ref…", bundle: .kookyResources)).tag(StartFromChoice.custom)
             }
             .pickerStyle(.menu)
             .labelsHidden()
@@ -444,7 +444,7 @@ struct CreateWorktreeSheet: View {
     }
 
     private func inlineStatus(_ text: String, color: Color = Theme.chromeMuted) -> some View {
-        Text(text)
+        Text(LocalizedStringKey(text), bundle: .kookyResources)
             .font(Theme.mono(11.5))
             .foregroundStyle(color)
     }
@@ -459,7 +459,7 @@ struct CreateWorktreeSheet: View {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 9, weight: .semibold))
                     .rotationEffect(.degrees(isOptionsExpanded ? 90 : 0))
-                Text("options")
+                Text(String(localized: "options", bundle: .kookyResources))
                     .font(Theme.mono(10, weight: .medium))
                     .tracking(1.2)
             }
@@ -470,7 +470,7 @@ struct CreateWorktreeSheet: View {
     }
 
     private func fieldLabel(_ text: String) -> some View {
-        Text(text)
+        Text(LocalizedStringKey(text), bundle: .kookyResources)
             .font(Theme.mono(10, weight: .medium))
             .tracking(1.2)
             .foregroundStyle(Theme.chromeMuted.opacity(0.85))
@@ -480,7 +480,13 @@ struct CreateWorktreeSheet: View {
     private func editRow(label: String, text: Binding<String>, placeholder: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             fieldLabel(label)
-            TextField(placeholder, text: text)
+            TextField(
+                String(
+                    localized: String.LocalizationValue(placeholder),
+                    bundle: .kookyResources
+                ),
+                text: text
+            )
                 .textFieldStyle(.plain)
                 .font(Theme.mono(12))
                 .foregroundStyle(Theme.chromeForeground)
@@ -522,9 +528,14 @@ struct CreateWorktreeSheet: View {
     }
 
     private var newBranchConflictMessage: String {
-        newBranchIsCheckedOut
-            ? "branch is already checked out"
-            : "branch exists locally"
+        String(
+            localized: String.LocalizationValue(
+                newBranchIsCheckedOut
+                    ? "branch is already checked out"
+                    : "branch exists locally"
+            ),
+            bundle: .kookyResources
+        )
     }
 
     private var customStartRefIsMissing: Bool {
@@ -588,11 +599,16 @@ struct CreateWorktreeSheet: View {
 
     private var submitButtonLabel: String {
         if isWorking {
-            return branchMode == .adopt ? "adopting…" : "creating…"
+            return String(
+                localized: String.LocalizationValue(
+                    branchMode == .adopt ? "adopting…" : "creating…"
+                ),
+                bundle: .kookyResources
+            )
         }
         switch branchMode {
-        case .newBranch, .existing: return "create worktree"
-        case .adopt: return "adopt"
+        case .newBranch, .existing: return String(localized: "create worktree", bundle: .kookyResources)
+        case .adopt: return String(localized: "adopt", bundle: .kookyResources)
         }
     }
 

@@ -3,6 +3,135 @@ import XCTest
 
 @MainActor
 final class KookySettingsModelTests: XCTestCase {
+    func testNativeAppLanguagePreferenceCodec() {
+        XCTAssertEqual(KookyAppLanguage.resolved(nil), .system)
+        XCTAssertEqual(KookyAppLanguage.resolved([]), .system)
+        XCTAssertEqual(KookyAppLanguage.resolved(["en"]), .english)
+        XCTAssertEqual(KookyAppLanguage.resolved(["en_US"]), .english)
+        XCTAssertEqual(KookyAppLanguage.resolved(["zh-Hans"]), .simplifiedChinese)
+        XCTAssertEqual(KookyAppLanguage.resolved(["zh_CN"]), .simplifiedChinese)
+        XCTAssertEqual(KookyAppLanguage.resolved(["zh-Hant"]), .system)
+        XCTAssertEqual(KookyAppLanguage.resolved(["zh_TW"]), .system)
+        XCTAssertEqual(KookyAppLanguage.resolved(["fr"]), .system)
+    }
+
+    func testSystemLanguagePreviewUsesFirstSupportedGlobalLanguage() {
+        XCTAssertEqual(
+            KookyAppLanguage.systemPreferred(
+                from: ["fr-FR", "zh-Hans-CN", "en-US"]
+            ),
+            .simplifiedChinese
+        )
+        XCTAssertEqual(
+            KookyAppLanguage.systemPreferred(
+                from: ["fr-FR", "en-US", "zh-Hans-CN"]
+            ),
+            .english
+        )
+        XCTAssertEqual(
+            KookyAppLanguage.systemPreferred(from: ["zh-Hant", "en-US"]),
+            .english
+        )
+        XCTAssertEqual(
+            KookyAppLanguage.systemPreferred(from: ["zh-TW", "en-US"]),
+            .english
+        )
+        XCTAssertEqual(KookyAppLanguage.systemPreferred(from: ["fr-FR"]), .english)
+    }
+
+    func testNativeAppLanguageWritesAppleLanguagesWithoutKookyConfig() {
+        let suite = "KookyAppLanguageTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        KookyAppLanguage.simplifiedChinese.persist(to: defaults)
+        XCTAssertEqual(defaults.stringArray(forKey: "AppleLanguages"), ["zh-Hans"])
+
+        KookyAppLanguage.english.persist(to: defaults)
+        XCTAssertEqual(defaults.stringArray(forKey: "AppleLanguages"), ["en"])
+
+        KookyAppLanguage.system.persist(to: defaults)
+        XCTAssertNil(defaults.persistentDomain(forName: suite)?["AppleLanguages"])
+    }
+
+    func testAppLanguageOnlyNeedsRestartAfterSelectionChanges() {
+        let model = KookySettingsModel()
+        let launchedLanguage = model.appLanguage
+        let changedLanguage = KookyAppLanguage.allCases.first { $0 != launchedLanguage }!
+
+        XCTAssertFalse(model.appLanguageNeedsRestart)
+        model.appLanguage = changedLanguage
+        XCTAssertTrue(model.appLanguageNeedsRestart)
+        model.appLanguage = launchedLanguage
+        XCTAssertFalse(model.appLanguageNeedsRestart)
+    }
+
+    func testSelectedLanguagePreviewUsesItsNativeLocalizationBundle() {
+        let chineseBundle = KookyAppLanguage.simplifiedChinese.previewBundle
+        XCTAssertEqual(
+            String(
+                localized: "Changes take effect after restarting Kooky.",
+                bundle: chineseBundle
+            ),
+            "更改将在重启 Kooky 后生效。"
+        )
+        XCTAssertEqual(
+            String(localized: "Restart Kooky", bundle: chineseBundle),
+            "重启 Kooky"
+        )
+
+        let englishBundle = KookyAppLanguage.english.previewBundle
+        XCTAssertEqual(
+            String(
+                localized: "Changes take effect after restarting Kooky.",
+                bundle: englishBundle
+            ),
+            "Changes take effect after restarting Kooky."
+        )
+        XCTAssertEqual(
+            String(localized: "Restart Kooky", bundle: englishBundle),
+            "Restart Kooky"
+        )
+    }
+
+    func testNativeChineseLocalizationLoadsFromResourceBundle() throws {
+        let bundle = try languageBundle("zh-Hans")
+        XCTAssertEqual(
+            String(localized: "General", bundle: bundle),
+            "通用"
+        )
+        XCTAssertEqual(
+            String.localizedStringWithFormat(
+                String(localized: "Tab %d", bundle: bundle),
+                3
+            ),
+            "标签页 3"
+        )
+        XCTAssertEqual(
+            String(localized: "Untranslated test key", bundle: bundle),
+            "Untranslated test key"
+        )
+    }
+
+    func testNativeEnglishLocalizationKeepsSourceStrings() throws {
+        let bundle = try languageBundle("en")
+        XCTAssertEqual(
+            String(localized: "General", bundle: bundle),
+            "General"
+        )
+    }
+
+    private func languageBundle(_ identifier: String) throws -> Bundle {
+        let resourceURL = try XCTUnwrap(Bundle.kookyResources.resourceURL)
+        let candidates = [identifier, identifier.lowercased()]
+        return try XCTUnwrap(candidates.lazy.compactMap { language in
+            Bundle(url: resourceURL.appendingPathComponent(
+                "\(language).lproj",
+                isDirectory: true
+            ))
+        }.first)
+    }
+
     func testShowSearchPillDefaultsToVisible() {
         XCTAssertTrue(
             KookySettingsModel.resolvedShowSearchPill(

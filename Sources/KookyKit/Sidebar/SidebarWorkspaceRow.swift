@@ -117,7 +117,7 @@ private struct TagEditor: View {
                     .frame(width: 19, height: 19)
                     .clipShape(Circle())
                     .overlay(Circle().stroke(Theme.chromeHairline, lineWidth: 1))
-                Text("color")
+                Text(String(localized: "color", bundle: .kookyResources))
                     .font(Theme.mono(11.5))
                     .foregroundStyle(Theme.chromeMuted)
                 Spacer(minLength: 0)

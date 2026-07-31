@@ -2,6 +2,13 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.47.0 — 2026-07-31
+
+- New: native Simplified Chinese localization across kooky's settings, menus, sheets, popovers, notifications, status bar, command palette, and other app chrome; English remains the development language.
+- New: Settings → General gains an app-language picker for Follow System, English, and 简体中文. It writes macOS's native per-app language preference and applies after a restart, preserving terminal sessions until the user chooses to restart.
+- Fixed: Follow System now uses Foundation's localization matching, so unsupported variants such as Traditional Chinese fall back exactly as the app bundle does; the selected-language preview, restart copy, relative-time labels, and VoiceOver tool-count labels all use the correct target language.
+- Fixed: runtime names such as git branches, installed apps, Node versions, and custom agents stay verbatim instead of being mistaken for localization keys.
+
 ## v0.46.0 — 2026-07-29
 
 - New: paste protection. Pasting text that could run commands the moment it lands shows a confirmation with a content preview first (`clipboard-paste-protection`, on by default). ⌘W / Esc cancel; file, image, and SSH-upload pastes are unaffected.

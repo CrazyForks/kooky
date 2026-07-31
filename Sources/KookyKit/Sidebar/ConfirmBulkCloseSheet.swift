@@ -73,20 +73,20 @@ struct ConfirmBulkCloseSheet: View {
     }
 
     private var statusBadge: some View {
-        Text(statusLabel)
+        Text(verbatim: statusLabel)
             .font(Theme.mono(10, weight: .medium))
             .tracking(1.6)
             .foregroundStyle(Theme.chromeMuted.opacity(0.85))
     }
 
     private var headline: some View {
-        Text(headlineText)
+        Text(verbatim: headlineText)
             .font(Theme.display(20, weight: .medium))
             .foregroundStyle(Theme.chromeForeground)
     }
 
     private var subtitle: some View {
-        Text(subtitleText)
+        Text(verbatim: subtitleText)
             .font(Theme.mono(11.5))
             .foregroundStyle(Theme.chromeMuted)
     }
@@ -115,7 +115,7 @@ struct ConfirmBulkCloseSheet: View {
 
     private var alsoDeleteCheckbox: some View {
         Toggle(isOn: $alsoDelete) {
-            Text("also delete worktree directories and branches")
+            Text(String(localized: "also delete worktree directories and branches", bundle: .kookyResources))
                 .font(Theme.mono(11.5))
                 .foregroundStyle(alsoDelete ? Theme.chromeForeground : Theme.chromeMuted)
         }
@@ -124,8 +124,20 @@ struct ConfirmBulkCloseSheet: View {
     }
 
     private var buttonLabel: String {
-        if isWorking { return alsoDelete ? "deleting…" : "closing…" }
-        return alsoDelete ? "close & delete" : "close"
+        if isWorking {
+            return String(
+                localized: String.LocalizationValue(
+                    alsoDelete ? "deleting…" : "closing…"
+                ),
+                bundle: .kookyResources
+            )
+        }
+        return String(
+            localized: String.LocalizationValue(
+                alsoDelete ? "close & delete" : "close"
+            ),
+            bundle: .kookyResources
+        )
     }
 
     private func worktreePath(for workspace: Workspace) -> URL { workspace.diskPath }

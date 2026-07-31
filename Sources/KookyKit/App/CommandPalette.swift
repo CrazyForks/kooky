@@ -76,16 +76,26 @@ enum PaletteIndex {
     /// Build the live index from every open window + the settings model's
     /// visible templates. Rebuilt fresh on every palette open so additions
     /// / closures / renames all show up without cache invalidation.
-    static func build(controllers: [KookyWindowController], model: KookySettingsModel, recentFolders: [URL] = []) -> [PaletteItem] {
+    static func build(
+        controllers: [KookyWindowController],
+        model: KookySettingsModel,
+        recentFolders: [URL] = [],
+        bundle: Bundle = .kookyResources
+    ) -> [PaletteItem] {
         var items: [PaletteItem] = []
         let multiWindow = controllers.count > 1
         for (idx, controller) in controllers.enumerated() {
-            let winLabel = multiWindow ? " · window \(idx + 1)" : ""
+            let winLabel = multiWindow
+                ? String.localizedStringWithFormat(
+                    String(localized: " · window %d", bundle: bundle),
+                    idx + 1
+                )
+                : ""
             for ws in controller.store.workspaces {
                 items.append(PaletteItem(
                     id: "ws-\(ws.id.uuidString)",
                     title: ws.title,
-                    subtitle: "workspace\(winLabel)",
+                    subtitle: String(localized: "workspace", bundle: bundle) + winLabel,
                     kind: .workspace(workspaceId: ws.id, windowId: controller.windowId),
                     symbol: "folder",
                     iconAsset: nil
@@ -93,8 +103,11 @@ enum PaletteIndex {
                 if ws.worktreeParentId == nil, GitWatcher.findGitDir(near: ws.workingDirectory) != nil {
                     items.append(PaletteItem(
                         id: "create-worktree-\(ws.id.uuidString)",
-                        title: "Create Worktree for \(ws.title)",
-                        subtitle: "worktree\(winLabel)",
+                        title: String.localizedStringWithFormat(
+                            String(localized: "Create Worktree for %@", bundle: bundle),
+                            ws.title
+                        ),
+                        subtitle: String(localized: "worktree", bundle: bundle) + winLabel,
                         kind: .createWorktree(workspaceId: ws.id, windowId: controller.windowId),
                         symbol: "arrow.triangle.branch",
                         iconAsset: nil
@@ -105,7 +118,10 @@ enum PaletteIndex {
                         items.append(PaletteItem(
                             id: "tab-\(tab.id.uuidString)",
                             title: tab.title,
-                            subtitle: "tab in \(ws.title)\(winLabel)",
+                            subtitle: String.localizedStringWithFormat(
+                                String(localized: "tab in %@", bundle: bundle),
+                                ws.title
+                            ) + winLabel,
                             kind: .tab(sessionId: tab.id, workspaceId: ws.id, windowId: controller.windowId),
                             symbol: tab.displayAgent.symbol,
                             iconAsset: tab.displayAgent.iconAsset
@@ -117,8 +133,16 @@ enum PaletteIndex {
         for template in AgentTemplate.visibleOrdered(model: model) {
             items.append(PaletteItem(
                 id: "agent-\(template.id)",
-                title: "Open \(template.title)",
-                subtitle: template.isShell ? "shell" : "agent",
+                title: String.localizedStringWithFormat(
+                    String(localized: "Open %@", bundle: bundle),
+                    template.title
+                ),
+                subtitle: String(
+                    localized: String.LocalizationValue(
+                        template.isShell ? "shell" : "agent"
+                    ),
+                    bundle: bundle
+                ),
                 kind: .agent(templateId: template.id),
                 symbol: template.symbol,
                 iconAsset: template.iconAsset
@@ -126,8 +150,8 @@ enum PaletteIndex {
         }
         items.append(PaletteItem(
             id: "create-ssh-workspace",
-            title: "New SSH Workspace…",
-            subtitle: "workspace on a remote host",
+            title: String(localized: "New SSH Workspace…", bundle: bundle),
+            subtitle: String(localized: "workspace on a remote host", bundle: bundle),
             kind: .createSSHWorkspace,
             symbol: "network",
             iconAsset: nil
@@ -141,7 +165,9 @@ enum PaletteIndex {
             items.append(PaletteItem(
                 id: "recent-\(url.path)",
                 title: url.lastPathComponent,
-                subtitle: "recent · \((url.path as NSString).abbreviatingWithTildeInPath)",
+                subtitle: String(localized: "recent", bundle: bundle)
+                    + " · "
+                    + (url.path as NSString).abbreviatingWithTildeInPath,
                 kind: .openRecentFolder(path: url.path),
                 symbol: "clock.arrow.circlepath",
                 iconAsset: nil
@@ -222,7 +248,7 @@ struct CommandPaletteView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(Theme.chromeMuted)
-            TextField("Search a workspace, tab, worktree, agent, or preset…", text: $query)
+            TextField(String(localized: "Search a workspace, tab, worktree, agent, or preset…", bundle: .kookyResources), text: $query)
                 .textFieldStyle(.plain)
                 .font(Theme.mono(13))
                 .foregroundStyle(Theme.chromeForeground)
@@ -268,7 +294,7 @@ struct CommandPaletteView: View {
     }
 
     private var emptyState: some View {
-        Text("No matches.")
+        Text(String(localized: "No matches.", bundle: .kookyResources))
             .font(Theme.mono(12))
             .foregroundStyle(Theme.chromeMuted)
             .frame(maxWidth: .infinity, alignment: .center)
@@ -464,7 +490,7 @@ struct SearchTriggerPill: View {
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(Theme.chromeMuted)
             if showsLabel {
-                Text("search workspace, tab, agent…")
+                Text(String(localized: "search workspace, tab, agent…", bundle: .kookyResources))
                     .font(Theme.mono(11))
                     .foregroundStyle(Theme.chromeMuted)
                     .lineLimit(1)

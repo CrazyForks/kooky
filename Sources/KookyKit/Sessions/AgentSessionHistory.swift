@@ -429,8 +429,11 @@ final class AgentSessionHistory {
 /// Short age tier shared by every "how long ago" label: `now`, `12m`, `3h`,
 /// `5d`. The history rows and the notification inbox both build on this so
 /// the app has one ago-vocabulary.
-func relativeAgeTier(_ seconds: TimeInterval) -> String {
-    if seconds < 60 { return "now" }
+func relativeAgeTier(
+    _ seconds: TimeInterval,
+    bundle: Bundle = .kookyResources
+) -> String {
+    if seconds < 60 { return String(localized: "now", bundle: bundle) }
     if seconds < 3600 { return "\(Int(seconds / 60))m" }
     if seconds < 86_400 { return "\(Int(seconds / 3600))h" }
     return "\(Int(seconds / 86_400))d"
@@ -438,9 +441,13 @@ func relativeAgeTier(_ seconds: TimeInterval) -> String {
 
 /// History-row label: the shared tiers, then a bare `MMM d` date once
 /// "n days" stops being how people think of it.
-func relativeActivityLabel(_ date: Date, now: Date = Date()) -> String {
+func relativeActivityLabel(
+    _ date: Date,
+    now: Date = Date(),
+    bundle: Bundle = .kookyResources
+) -> String {
     let seconds = max(0, now.timeIntervalSince(date))
-    if seconds < 7 * 86_400 { return relativeAgeTier(seconds) }
+    if seconds < 7 * 86_400 { return relativeAgeTier(seconds, bundle: bundle) }
     return monthDayFormatter.string(from: date)
 }
 
@@ -530,7 +537,7 @@ struct SessionHistoryView: View {
             // brightness, which reads glaring on dark chrome.
             ZStack(alignment: .leading) {
                 if store.historySearchQuery.isEmpty {
-                    Text("search sessions")
+                    Text(String(localized: "search sessions", bundle: .kookyResources))
                         .font(Theme.mono(11))
                         .foregroundStyle(Theme.chromeMuted.opacity(0.5))
                         .allowsHitTesting(false)
@@ -558,7 +565,7 @@ struct SessionHistoryView: View {
         // the everything-installed fallback.
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 4) {
-                filterChip(nil, label: "all")
+                filterChip(nil, label: String(localized: "all", bundle: .kookyResources))
                 let present = history.presentAgentIds
                 ForEach(AgentSessionScanner.supportedAgentIds.filter { present.contains($0) || $0 == store.historyFilterAgentId }, id: \.self) { agentId in
                     filterChip(agentId, label: AgentTemplate.builtin(id: agentId)?.title.lowercased() ?? agentId)
@@ -615,7 +622,7 @@ private struct SessionHistoryRow: View {
         HStack(spacing: 10) {
             AgentIconView(asset: template?.iconAsset, fallbackSymbol: template?.symbol ?? "sparkles", size: 16)
             VStack(alignment: .leading, spacing: 1) {
-                Text(record.title.isEmpty ? "untitled" : record.title)
+                Text(record.title.isEmpty ? String(localized: "untitled", bundle: .kookyResources) : record.title)
                     .font(Theme.mono(12, weight: .medium))
                     .foregroundStyle(record.title.isEmpty ? Theme.chromeMuted : Theme.chromeForeground)
                     .lineLimit(1)
@@ -637,7 +644,7 @@ private struct SessionHistoryRow: View {
 
     private var hoverText: String {
         let name = singleLine(template?.title ?? record.agentId)
-        let title = singleLine(record.title.isEmpty ? "untitled" : record.title)
+        let title = singleLine(record.title.isEmpty ? String(localized: "untitled", bundle: .kookyResources) : record.title)
         let location = singleLine((record.cwd.path as NSString).abbreviatingWithTildeInPath)
         return "\(name) · \(relativeActivityLabel(record.lastActivity))\n\(title)\n\(location)"
     }

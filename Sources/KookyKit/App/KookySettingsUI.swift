@@ -2,6 +2,111 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// App-specific macOS language preference. This only reads/writes the
+/// `AppleLanguages` preference consumed by Foundation at the next launch;
+/// string lookup remains entirely native (`String(localized:)` /
+/// `LocalizedStringKey`) with no Kooky localization layer.
+enum KookyAppLanguage: String, CaseIterable, Identifiable, Sendable {
+    case system
+    case english = "en"
+    case simplifiedChinese = "zh-Hans"
+
+    private static let supportedLocalizationIdentifiers = [
+        KookyAppLanguage.english.rawValue,
+        KookyAppLanguage.simplifiedChinese.rawValue,
+    ]
+
+    var id: String { rawValue }
+
+    /// Language resource bundle used only by the Settings language preview.
+    /// String lookup itself remains Foundation-native; selecting System
+    /// Default resolves against the global Apple language list first.
+    var previewBundle: Bundle {
+        let language = self == .system ? Self.systemPreferred() : self
+        guard let resourceURL = Bundle.kookyResources.resourceURL else {
+            return .kookyResources
+        }
+        for identifier in [language.rawValue, language.rawValue.lowercased()] {
+            let url = resourceURL.appendingPathComponent(
+                "\(identifier).lproj",
+                isDirectory: true
+            )
+            if let bundle = Bundle(url: url) { return bundle }
+        }
+        return .kookyResources
+    }
+
+    static func resolved(_ rawValue: Any?) -> KookyAppLanguage {
+        let identifier: String?
+        if let values = rawValue as? [String] {
+            identifier = values.first
+        } else {
+            identifier = rawValue as? String
+        }
+        guard let identifier else { return .system }
+        let components = identifier
+            .replacingOccurrences(of: "_", with: "-")
+            .lowercased()
+            .split(separator: "-")
+        switch components.first {
+        case "en": return .english
+        case "zh":
+            let usesTraditionalChinese = components.contains("hant")
+                || components.contains("tw")
+                || components.contains("hk")
+                || components.contains("mo")
+            return usesTraditionalChinese ? .system : .simplifiedChinese
+        default: return .system
+        }
+    }
+
+    static func current(
+        defaults: UserDefaults = .standard,
+        bundleIdentifier: String? = Bundle.main.bundleIdentifier
+    ) -> KookyAppLanguage {
+        guard let bundleIdentifier,
+              let domain = defaults.persistentDomain(forName: bundleIdentifier) else {
+            return .system
+        }
+        return resolved(domain["AppleLanguages"])
+    }
+
+    static func systemPreferred(defaults: UserDefaults = .standard) -> KookyAppLanguage {
+        let rawValue = defaults
+            .persistentDomain(forName: UserDefaults.globalDomain)?["AppleLanguages"]
+        return systemPreferred(from: rawValue)
+    }
+
+    static func systemPreferred(from rawValue: Any?) -> KookyAppLanguage {
+        let identifiers: [String]
+        if let values = rawValue as? [String] {
+            identifiers = values
+        } else if let value = rawValue as? String {
+            identifiers = [value]
+        } else {
+            identifiers = []
+        }
+        guard let preferred = Bundle.preferredLocalizations(
+            from: supportedLocalizationIdentifiers,
+            forPreferences: identifiers
+        ).first else {
+            return .english
+        }
+        return preferred.caseInsensitiveCompare(simplifiedChinese.rawValue) == .orderedSame
+            ? .simplifiedChinese
+            : .english
+    }
+
+    func persist(to defaults: UserDefaults = .standard) {
+        switch self {
+        case .system:
+            defaults.removeObject(forKey: "AppleLanguages")
+        case .english, .simplifiedChinese:
+            defaults.set([rawValue], forKey: "AppleLanguages")
+        }
+    }
+}
+
 /// `@Observable` mirror of the typed slice of `~/.kooky/settings.json` we
 /// expose in the Settings UI. Loads on init, debounces writes back to disk
 /// so rapid `Stepper` taps don't thrash the file. Only knows about keys that
@@ -15,6 +120,15 @@ final class KookySettingsModel {
     /// Singleton so non-Settings UI surfaces (TabBarView's `+` menu, etc.)
     /// observe the same instance and react to user edits without a reload.
     static let shared = KookySettingsModel()
+
+    /// Stored by macOS in the app preference domain, not settings.json.
+    /// `launchedAppLanguage` stays pinned for this process so Settings can
+    /// distinguish a pending preference from the language currently in use.
+    private let launchedAppLanguage: KookyAppLanguage
+    var appLanguage: KookyAppLanguage
+    var appLanguageNeedsRestart: Bool {
+        appLanguage != launchedAppLanguage
+    }
 
     var fontFamily: String = ""
     /// `nil` = not overridden — let libghostty fall back to ghostty's own
@@ -214,10 +328,16 @@ final class KookySettingsModel {
         }
     }
 
-    init() { load() }
+    init() {
+        let language = KookyAppLanguage.current()
+        launchedAppLanguage = language
+        appLanguage = language
+        load()
+    }
 
     func load() {
         let parsed = KookySettings.loadParsed() ?? [:]
+        appLanguage = .current()
         terminalThemeChoices = KookyTerminalTheme.availableThemes()
         let terminal = parsed["terminal"] as? [String: Any] ?? [:]
         let appearance = parsed["appearance"] as? [String: Any] ?? [:]
@@ -488,6 +608,7 @@ final class KookySettingsModel {
         // One-way compatibility migrations: consume the old homes above, but
         // only write each setting's current namespace from now on.
         general.removeValue(forKey: "showSearchPill")
+        general.removeValue(forKey: "language")
         general["showInMenuBar"] = showInMenuBar ? nil : false
         general["awakeMode"] = awakeMode == .auto ? nil : awakeMode.rawValue
         if general.isEmpty {
@@ -709,7 +830,10 @@ final class KookySettingsModel {
         guard selection == customThemeSelection else { return nil }
         guard let raw = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
               !raw.isEmpty else { return nil }
-        return "Custom (\(raw))"
+        return String.localizedStringWithFormat(
+            String(localized: "Custom (%@)", bundle: .kookyResources),
+            raw
+        )
     }
 
     var bundledTerminalThemes: [KookyTerminalTheme] {
@@ -914,16 +1038,17 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    @MainActor
     var title: String {
         switch self {
-        case .general: return "General"
-        case .appearance: return "Appearance"
-        case .codingAgents: return "Agents"
-        case .terminalPresets: return "Terminals"
-        case .openIn: return "Open in"
-        case .statusBar: return "Status Bar"
-        case .notifications: return "Notifications"
-        case .advanced: return "Advanced"
+        case .general: return String(localized: "General", bundle: .kookyResources)
+        case .appearance: return String(localized: "Appearance", bundle: .kookyResources)
+        case .codingAgents: return String(localized: "Agents", bundle: .kookyResources)
+        case .terminalPresets: return String(localized: "Terminals", bundle: .kookyResources)
+        case .openIn: return String(localized: "Open in", bundle: .kookyResources)
+        case .statusBar: return String(localized: "Status Bar", bundle: .kookyResources)
+        case .notifications: return String(localized: "Notifications", bundle: .kookyResources)
+        case .advanced: return String(localized: "Advanced", bundle: .kookyResources)
         }
     }
 }
@@ -993,7 +1118,7 @@ struct KookySettingsView: View {
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("SETTINGS")
+            Text(String(localized: "SETTINGS", bundle: .kookyResources))
                 .font(Theme.mono(10, weight: .medium))
                 .tracking(1.6)
                 .foregroundStyle(Theme.chromeMuted.opacity(0.85))
@@ -1078,9 +1203,9 @@ struct KookySettingsView: View {
             SettingsSection(title: "Appearance") {
                 SettingsRow(label: "mode") {
                     Picker("", selection: $model.appearanceMode) {
-                        Text("System").tag(KookyAppearanceMode.system)
-                        Text("Light").tag(KookyAppearanceMode.light)
-                        Text("Dark").tag(KookyAppearanceMode.dark)
+                        Text(String(localized: "Follow System", bundle: .kookyResources)).tag(KookyAppearanceMode.system)
+                        Text(String(localized: "Light", bundle: .kookyResources)).tag(KookyAppearanceMode.light)
+                        Text(String(localized: "Dark", bundle: .kookyResources)).tag(KookyAppearanceMode.dark)
                     }
                     .labelsHidden()
                     .pickerStyle(.segmented)
@@ -1109,7 +1234,7 @@ struct KookySettingsView: View {
             SettingsSection(title: "Terminal") {
                 SettingsRow(label: "font-family") {
                     Picker("", selection: $model.fontFamily) {
-                        Text("Default").tag("")
+                        Text(String(localized: "Default", bundle: .kookyResources)).tag("")
                         Divider()
                         ForEach(Self.monospaceFamilies, id: \.self) { family in
                             Text(family).tag(family)
@@ -1134,9 +1259,9 @@ struct KookySettingsView: View {
                 SettingsHairline()
                 SettingsRow(label: "cursor-style") {
                     Picker("", selection: $model.cursorStyle) {
-                        Text("Block").tag("block")
-                        Text("Underline").tag("underline")
-                        Text("Bar").tag("bar")
+                        Text(String(localized: "Block", bundle: .kookyResources)).tag("block")
+                        Text(String(localized: "Underline", bundle: .kookyResources)).tag("underline")
+                        Text(String(localized: "Bar", bundle: .kookyResources)).tag("bar")
                     }
                     .labelsHidden()
                     .pickerStyle(.menu)
@@ -1148,9 +1273,9 @@ struct KookySettingsView: View {
                     // Tags are ghostty's `background-blur` values; "Off" stores
                     // `false` so it overrides a glassy ghostty config.
                     Picker("", selection: glassSelection) {
-                        Text("Off").tag("false")
-                        Text("Regular").tag("macos-glass-regular")
-                        Text("Clear").tag("macos-glass-clear")
+                        Text(String(localized: "Off", bundle: .kookyResources)).tag("false")
+                        Text(String(localized: "Regular", bundle: .kookyResources)).tag("macos-glass-regular")
+                        Text(String(localized: "Clear Glass", bundle: .kookyResources)).tag("macos-glass-clear")
                     }
                     .labelsHidden()
                     .pickerStyle(.menu)
@@ -1192,11 +1317,58 @@ struct KookySettingsView: View {
     }
 
     private var generalDetail: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let previewBundle = model.appLanguage.previewBundle
+        let restartCaption = String(
+            localized: "Changes take effect after restarting Kooky.",
+            bundle: previewBundle
+        )
+        let restartTitle = String(
+            localized: "Restart Kooky",
+            bundle: previewBundle
+        )
+        let systemDefaultTitle = String(
+            localized: "System Default",
+            bundle: KookyAppLanguage.system.previewBundle
+        )
+
+        return VStack(alignment: .leading, spacing: 0) {
+            SettingsRow(label: "App Language / 应用语言", localizesLabel: false) {
+                Picker("", selection: Binding(
+                    get: { model.appLanguage },
+                    set: { language in
+                        guard model.appLanguage != language else { return }
+                        language.persist()
+                        model.appLanguage = language
+                    }
+                )) {
+                    Text(verbatim: systemDefaultTitle)
+                        .tag(KookyAppLanguage.system)
+                    Text(verbatim: "English")
+                        .tag(KookyAppLanguage.english)
+                    Text(verbatim: "简体中文")
+                        .tag(KookyAppLanguage.simplifiedChinese)
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .frame(minWidth: 190, alignment: .trailing)
+            }
+            HStack(spacing: 12) {
+                Text(verbatim: restartCaption)
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.chromeMuted)
+                Spacer(minLength: 12)
+                if model.appLanguageNeedsRestart {
+                    BracketButton(restartTitle, localizesTitle: false, action: restartApp)
+                }
+            }
+            .padding(.horizontal, 28)
+            .padding(.top, 6)
+            .padding(.bottom, 10)
+
             SettingsSection(title: "Startup") {
                 SettingsRow(label: "default-new-tab") {
                     Picker("", selection: $model.defaultAgentId) {
-                        Text("Ask each time").tag(String?.none)
+                        Text(String(localized: "Ask each time", bundle: .kookyResources)).tag(String?.none)
                         Divider()
                         ForEach(AgentTemplate.visibleOrdered(model: model)) { template in
                             Text(template.title).tag(String?.some(template.id))
@@ -1207,6 +1379,7 @@ struct KookySettingsView: View {
                     .frame(minWidth: 180, alignment: .trailing)
                 }
             }
+            .padding(.top, 22)
 
             SettingsSection(title: "Clipboard") {
                 SettingsRow(label: "copy-on-select") {
@@ -1237,9 +1410,9 @@ struct KookySettingsView: View {
                         get: { model.awakeMode },
                         set: { model.applyAwakeMode($0) }
                     )) {
-                        Text("Off").tag(AwakeMode.off)
-                        Text("Auto").tag(AwakeMode.auto)
-                        Text("Always").tag(AwakeMode.always)
+                        Text(String(localized: "Off", bundle: .kookyResources)).tag(AwakeMode.off)
+                        Text(String(localized: "Auto", bundle: .kookyResources)).tag(AwakeMode.auto)
+                        Text(String(localized: "Always", bundle: .kookyResources)).tag(AwakeMode.always)
                     }
                     .labelsHidden()
                     .pickerStyle(.segmented)
@@ -1316,7 +1489,7 @@ struct KookySettingsView: View {
             SettingsRow(label: "~/.kooky/settings.json") {
                 BracketButton("open in new tab", action: onOpenInTab)
             }
-            Text("Edit the raw JSON for any key not exposed above. Comments (`//`, `/* */`) are accepted.")
+            Text(String(localized: "Edit the raw JSON for any key not exposed above. Comments (`//`, `/* */`) are accepted.", bundle: .kookyResources))
                 .font(Theme.mono(11))
                 .foregroundStyle(Theme.chromeMuted)
                 .padding(.horizontal, 28)
@@ -1326,7 +1499,7 @@ struct KookySettingsView: View {
 
     private var terminalRestartCallout: some View {
         HStack(spacing: 12) {
-            Text("Theme reloads existing panes. Font and cursor changes may need restart.")
+            Text(String(localized: "Theme reloads existing panes. Font and cursor changes may need restart.", bundle: .kookyResources))
                 .font(Theme.mono(11.5))
                 .foregroundStyle(Theme.chromeMuted)
             Spacer()
@@ -1371,13 +1544,13 @@ struct KookySettingsView: View {
             if let customLabel {
                 Text(customLabel).tag(KookySettingsModel.customThemeSelection)
             }
-            Section("Built-in") {
+            Section(String(localized: "Built-in", bundle: .kookyResources)) {
                 ForEach(bundledThemes) { preset in
                     Text(preset.title).tag(preset.id)
                 }
             }
             if !userThemes.isEmpty {
-                Section("Custom") {
+                Section(String(localized: "Custom", bundle: .kookyResources)) {
                     ForEach(userThemes) { theme in
                         Text(theme.title).tag(theme.id)
                     }
@@ -1477,11 +1650,28 @@ struct KookySettingsView: View {
 
 private struct SettingsRow<Trailing: View>: View {
     let label: String
+    let localizesLabel: Bool
     @ViewBuilder var trailing: () -> Trailing
+
+    init(
+        label: String,
+        localizesLabel: Bool = true,
+        @ViewBuilder trailing: @escaping () -> Trailing
+    ) {
+        self.label = label
+        self.localizesLabel = localizesLabel
+        self.trailing = trailing
+    }
 
     var body: some View {
         HStack(spacing: 14) {
-            Text(label)
+            Group {
+                if localizesLabel {
+                    Text(LocalizedStringKey(label), bundle: .kookyResources)
+                } else {
+                    Text(verbatim: label)
+                }
+            }
                 .font(Theme.mono(12.5))
                 .foregroundStyle(Theme.chromeForeground)
             Spacer(minLength: 14)
@@ -1510,7 +1700,7 @@ private struct SettingsCaption: View {
     init(_ text: String) { self.text = text }
 
     var body: some View {
-        Text(text)
+        Text(LocalizedStringKey(text), bundle: .kookyResources)
             .font(Theme.mono(11))
             .foregroundStyle(Theme.chromeMuted)
             .padding(.horizontal, 28)
@@ -1521,9 +1711,16 @@ private struct SettingsCaption: View {
 
 private struct SettingsSectionHeader: View {
     let title: String
+    let localizesTitle: Bool
 
     var body: some View {
-        Text(title)
+        Group {
+            if localizesTitle {
+                Text(LocalizedStringKey(title), bundle: .kookyResources)
+            } else {
+                Text(verbatim: title)
+            }
+        }
             .font(Theme.display(18, weight: .medium))
             .foregroundStyle(Theme.chromeForeground)
             .padding(.horizontal, 28)
@@ -1533,19 +1730,22 @@ private struct SettingsSectionHeader: View {
 
 private struct SettingsSection<Content: View>: View {
     let title: String
+    let localizesTitle: Bool
     let content: Content
 
     init(
         title: String,
+        localizesTitle: Bool = true,
         @ViewBuilder content: () -> Content
     ) {
         self.title = title
+        self.localizesTitle = localizesTitle
         self.content = content()
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SettingsSectionHeader(title: title)
+            SettingsSectionHeader(title: title, localizesTitle: localizesTitle)
             VStack(alignment: .leading, spacing: 0) {
                 content
             }
@@ -1617,7 +1817,7 @@ private struct AgentReorderList: View {
                         expandedId = id
                     }
                 } label: {
-                    Text("+ add custom agent")
+                    Text(String(localized: "+ add custom agent", bundle: .kookyResources))
                         .font(Theme.mono(11, weight: .medium))
                         .foregroundStyle(Theme.chromeForeground)
                         .padding(.horizontal, 10)
@@ -1627,7 +1827,7 @@ private struct AgentReorderList: View {
                 .buttonStyle(.plain)
                 Spacer()
                 if hasCustomisation {
-                    Button("reset to defaults") { model.resetAgentCustomisation() }
+                    Button(String(localized: "reset to defaults", bundle: .kookyResources)) { model.resetAgentCustomisation() }
                         .buttonStyle(.plain)
                         .font(Theme.mono(11))
                         .foregroundStyle(Theme.chromeMuted)
@@ -1652,7 +1852,7 @@ private struct AgentReorderList: View {
         panel.canChooseFiles = true
         panel.allowsMultipleSelection = false
         panel.allowedContentTypes = [.png, .jpeg, .svg]
-        panel.message = "Choose an icon for this agent."
+        panel.message = String(localized: "Choose an icon for this agent.", bundle: .kookyResources)
         let assign: (URL) -> Void = { url in
             guard let idx = model.customAgents.firstIndex(where: { $0.id == id }) else { return }
             do {
@@ -1664,7 +1864,7 @@ private struct AgentReorderList: View {
                 let message = error.localizedDescription
                 DispatchQueue.main.async {
                     let alert = NSAlert()
-                    alert.messageText = "Couldn't use that icon"
+                    alert.messageText = String(localized: "Couldn't use that icon", bundle: .kookyResources)
                     alert.informativeText = message
                     alert.alertStyle = .warning
                     alert.runModal()
@@ -1837,7 +2037,7 @@ private struct AgentRow: View {
                 HStack {
                     Spacer()
                     if let onDelete {
-                        Button("delete", action: onDelete)
+                        Button(String(localized: "delete", bundle: .kookyResources), action: onDelete)
                             .buttonStyle(.plain)
                             .font(Theme.mono(11))
                             .foregroundStyle(Theme.activityFailure.opacity(0.85))
@@ -1861,12 +2061,12 @@ private struct AgentRow: View {
     /// can't silently win over the base's binary.
     private var basedOnRow: some View {
         HStack(spacing: 10) {
-            Text("based on")
+            Text(String(localized: "based on", bundle: .kookyResources))
                 .font(Theme.mono(11))
                 .foregroundStyle(Theme.chromeMuted)
                 .frame(width: 50, alignment: .leading)
             Picker("", selection: $baseAgentId) {
-                Text("(none)").tag("")
+                Text(String(localized: "(none)", bundle: .kookyResources)).tag("")
                 Divider()
                 ForEach(AgentTemplate.builtin.filter { !$0.isShell }) { template in
                     Text(template.title).tag(template.id)
@@ -1890,7 +2090,7 @@ private struct AgentRow: View {
     /// resolves.
     private var iconRow: some View {
         HStack(spacing: 10) {
-            Text("icon")
+            Text(String(localized: "icon", bundle: .kookyResources))
                 .font(Theme.mono(11))
                 .foregroundStyle(Theme.chromeMuted)
                 .frame(width: 50, alignment: .leading)
@@ -1902,7 +2102,7 @@ private struct AgentRow: View {
             // so the drawn border would ring a dead zone (~56% of the visible
             // box). Matches `+ add custom agent` above.
             Button(action: onChooseIcon) {
-                Text("choose…")
+                Text(String(localized: "choose…", bundle: .kookyResources))
                     .font(Theme.mono(11))
                     .foregroundStyle(Theme.chromeForeground)
                     .padding(.horizontal, 8)
@@ -1914,14 +2114,21 @@ private struct AgentRow: View {
             if !iconAsset.isEmpty {
                 // Clearing only drops the reference; `save()`'s prune deletes
                 // the file once no agent names it.
-                Button("clear") { iconAsset = "" }
+                Button(String(localized: "clear", bundle: .kookyResources)) { iconAsset = "" }
                     .buttonStyle(.plain)
                     .font(Theme.mono(11))
                     .foregroundStyle(Theme.chromeMuted)
                     .underline()
             }
             Spacer(minLength: 8)
-            Text("png · jpg · svg — \(AgentIconStore.recommendedDimension)×\(AgentIconStore.recommendedDimension) or larger")
+            Text(String.localizedStringWithFormat(
+                String(
+                    localized: "png · jpg · svg — %d×%d or larger",
+                    bundle: .kookyResources
+                ),
+                AgentIconStore.recommendedDimension,
+                AgentIconStore.recommendedDimension
+            ))
                 .font(Theme.mono(10))
                 .foregroundStyle(Theme.chromeMuted.opacity(0.7))
         }
@@ -1936,7 +2143,7 @@ private struct AgentRow: View {
         axis: Axis = .horizontal
     ) -> some View {
         HStack(alignment: axis == .vertical ? .top : .center, spacing: 10) {
-            Text(label)
+            Text(LocalizedStringKey(label), bundle: .kookyResources)
                 .font(Theme.mono(11))
                 .foregroundStyle(Theme.chromeMuted)
                 .frame(width: 50, alignment: .leading)
@@ -1944,9 +2151,23 @@ private struct AgentRow: View {
                 .padding(.top, axis == .vertical ? 6 : 0)
             Group {
                 if axis == .vertical {
-                    TextField(placeholder, text: text, axis: .vertical).lineLimit(3...12)
+                    TextField(
+                        String(
+                            localized: String.LocalizationValue(placeholder),
+                            bundle: .kookyResources
+                        ),
+                        text: text,
+                        axis: .vertical
+                    )
+                    .lineLimit(3...12)
                 } else {
-                    TextField(placeholder, text: text)
+                    TextField(
+                        String(
+                            localized: String.LocalizationValue(placeholder),
+                            bundle: .kookyResources
+                        ),
+                        text: text
+                    )
                 }
             }
             .textFieldStyle(.plain)
@@ -2000,7 +2221,7 @@ final class KookySettingsWindowController: NSWindowController {
         let host = NSHostingController(rootView: view)
         self.host = host
         let window = NSWindow(contentViewController: host)
-        window.title = "Settings"
+        window.title = String(localized: "Settings", bundle: .kookyResources)
         // Keep the title set (Window menu / accessibility) but hide the text in
         // the bar, matching the main window + About + the floating panels.
         window.titleVisibility = .hidden
@@ -2096,7 +2317,7 @@ private struct TerminalPresetsList: View {
                         expandedId = newId
                     }
                 } label: {
-                    Text("+ add terminal preset")
+                    Text(String(localized: "+ add terminal preset", bundle: .kookyResources))
                         .font(Theme.mono(11, weight: .medium))
                         .foregroundStyle(Theme.chromeForeground)
                         .padding(.horizontal, 10)
@@ -2110,7 +2331,7 @@ private struct TerminalPresetsList: View {
             .padding(.top, model.terminalPresets.isEmpty ? 6 : 14)
 
             if model.terminalPresets.isEmpty {
-                Text("Each preset becomes a Terminal entry in the + menu that always spawns in the configured folder, regardless of the active workspace.")
+                Text(String(localized: "Each preset becomes a Terminal entry in the + menu that always spawns in the configured folder, regardless of the active workspace.", bundle: .kookyResources))
                     .font(Theme.mono(11))
                     .foregroundStyle(Theme.chromeMuted)
                     .padding(.horizontal, 28)
@@ -2149,7 +2370,7 @@ private struct TerminalPresetsList: View {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
-        panel.message = "Choose a folder for this terminal preset."
+        panel.message = String(localized: "Choose a folder for this terminal preset.", bundle: .kookyResources)
         let assign: (URL) -> Void = { url in
             // Resolve by id so a concurrent deletion (or a parallel
             // Settings window mutating the same singleton) doesn't write
@@ -2271,7 +2492,7 @@ private struct TerminalPresetRow: View {
         VStack(alignment: .leading, spacing: 6) {
             editRow(label: "name", placeholder: "Work", text: $title)
             HStack(alignment: .center, spacing: 10) {
-                Text("path")
+                Text(String(localized: "path", bundle: .kookyResources))
                     .font(Theme.mono(11))
                     .foregroundStyle(Theme.chromeMuted)
                     .frame(width: 50, alignment: .leading)
@@ -2286,7 +2507,7 @@ private struct TerminalPresetRow: View {
                 // `choose…` button; outside the Button it draws a border
                 // around a dead click zone.
                 Button(action: onChooseFolder) {
-                    Text("choose")
+                    Text(String(localized: "choose", bundle: .kookyResources))
                         .font(Theme.mono(11))
                         .foregroundStyle(Theme.chromeForeground)
                         .padding(.horizontal, 8)
@@ -2300,7 +2521,7 @@ private struct TerminalPresetRow: View {
             .padding(.trailing, 22)
             HStack {
                 Spacer()
-                Button("delete", action: onDelete)
+                Button(String(localized: "delete", bundle: .kookyResources), action: onDelete)
                     .buttonStyle(.plain)
                     .font(Theme.mono(11))
                     .foregroundStyle(Theme.activityFailure.opacity(0.85))
@@ -2315,11 +2536,17 @@ private struct TerminalPresetRow: View {
 
     private func editRow(label: String, placeholder: String, text: Binding<String>) -> some View {
         HStack(alignment: .center, spacing: 10) {
-            Text(label)
+            Text(LocalizedStringKey(label), bundle: .kookyResources)
                 .font(Theme.mono(11))
                 .foregroundStyle(Theme.chromeMuted)
                 .frame(width: 50, alignment: .leading)
-            TextField(placeholder, text: text)
+            TextField(
+                String(
+                    localized: String.LocalizationValue(placeholder),
+                    bundle: .kookyResources
+                ),
+                text: text
+            )
                 .textFieldStyle(.plain)
                 .font(Theme.mono(12))
                 .foregroundStyle(Theme.chromeForeground)
@@ -2424,7 +2651,7 @@ private struct StatusBarReorderList: View {
             HStack {
                 Spacer()
                 if hasCustomisation {
-                    Button("reset to defaults") { model.resetStatusBar() }
+                    Button(String(localized: "reset to defaults", bundle: .kookyResources)) { model.resetStatusBar() }
                         .buttonStyle(.plain)
                         .font(Theme.mono(11))
                         .foregroundStyle(Theme.chromeMuted)
@@ -2445,7 +2672,7 @@ private struct StatusBarReorderList: View {
             if let agentAsset {
                 AgentIconView(asset: agentAsset, fallbackSymbol: "sparkles", size: 16)
             }
-            Text(text)
+            Text(LocalizedStringKey(text), bundle: .kookyResources)
                 .font(Theme.mono(12, weight: .medium))
                 .foregroundStyle(Theme.chromeMuted)
         }
@@ -2594,7 +2821,7 @@ private struct OpenWithPreferences: View {
         apps: [OpenInApp]
     ) -> some View {
         Picker("", selection: selection) {
-            Text("System Default").tag(String?.none)
+            Text(String(localized: "System Default", bundle: .kookyResources)).tag(String?.none)
             if !apps.isEmpty {
                 Divider()
                 ForEach(apps) { app in
@@ -2608,7 +2835,11 @@ private struct OpenWithPreferences: View {
             if let selected = selection.wrappedValue,
                !apps.contains(where: { $0.id == selected }) {
                 Divider()
-                Text("Unavailable (\(selected))").tag(String?.some(selected))
+                Text(String.localizedStringWithFormat(
+                    String(localized: "Unavailable (%@)", bundle: .kookyResources),
+                    selected
+                ))
+                .tag(String?.some(selected))
             }
         }
         .labelsHidden()
@@ -2640,7 +2871,7 @@ private struct OpenInReorderList: View {
         // freshly-cleared resolver cache.
         let _ = refreshTick
         return VStack(alignment: .leading, spacing: 0) {
-            Text("Apps installed on this Mac. The top-bar button opens the current tab's folder in your last-used one.")
+            Text(String(localized: "Apps installed on this Mac. The top-bar button opens the current tab's folder in your last-used one.", bundle: .kookyResources))
                 .font(Theme.mono(11))
                 .foregroundStyle(Theme.chromeMuted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -2675,7 +2906,7 @@ private struct OpenInReorderList: View {
             HStack {
                 Spacer()
                 if hasCustomisation {
-                    Button("reset to defaults") { model.resetOpenIn() }
+                    Button(String(localized: "reset to defaults", bundle: .kookyResources)) { model.resetOpenIn() }
                         .buttonStyle(.plain)
                         .font(Theme.mono(11))
                         .foregroundStyle(Theme.chromeMuted)

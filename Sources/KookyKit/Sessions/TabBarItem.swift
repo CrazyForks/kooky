@@ -136,8 +136,17 @@ struct TabBarItem: View {
     }
 
     private static func statusTooltip(exit: Int, duration: TimeInterval?) -> String {
-        guard let duration else { return "exit \(exit)" }
-        return "exit \(exit) · \(formatDuration(duration))"
+        guard let duration else {
+            return String.localizedStringWithFormat(
+                String(localized: "exit %d", bundle: .kookyResources),
+                exit
+            )
+        }
+        return String.localizedStringWithFormat(
+            String(localized: "exit %d · %@", bundle: .kookyResources),
+            exit,
+            formatDuration(duration)
+        )
     }
 
     private static func formatDuration(_ seconds: TimeInterval) -> String {

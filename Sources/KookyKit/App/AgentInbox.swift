@@ -31,11 +31,20 @@ final class NotificationInbox {
         let workspaceTitle: String
         var isRead = false
 
+        @MainActor
         var headline: String {
             switch kind {
-            case .attention: return "\(agentTitle) is waiting on you"
-            case .failure: return "Command failed"
-            case .completed: return "\(agentTitle) finished"
+            case .attention:
+                return String.localizedStringWithFormat(
+                    String(localized: "%@ is waiting on you", bundle: .kookyResources),
+                    agentTitle
+                )
+            case .failure: return String(localized: "Command failed", bundle: .kookyResources)
+            case .completed:
+                return String.localizedStringWithFormat(
+                    String(localized: "%@ finished", bundle: .kookyResources),
+                    agentTitle
+                )
             case .programNotification(let title, let body):
                 return [title, body].filter { !$0.isEmpty }.joined(separator: ": ")
             }
@@ -98,11 +107,20 @@ final class NotificationInbox {
 /// "now" / "2m ago" / "3h ago" / "1d ago". Computed once when the panel
 /// renders (the panel rebuilds its host on every open, so each open is fresh).
 enum InboxTime {
-    static func relative(from date: Date, now: Date = Date()) -> String {
+    static func relative(
+        from date: Date,
+        now: Date = Date(),
+        bundle: Bundle = .kookyResources
+    ) -> String {
         // One ago-vocabulary app-wide: the tiers live in `relativeAgeTier`
         // (shared with the session-history rows); the inbox adds the suffix.
-        let tier = relativeAgeTier(max(0, now.timeIntervalSince(date)))
-        return tier == "now" ? tier : "\(tier) ago"
+        let elapsed = max(0, now.timeIntervalSince(date))
+        let tier = relativeAgeTier(elapsed, bundle: bundle)
+        guard elapsed >= 60 else { return tier }
+        return String.localizedStringWithFormat(
+            String(localized: "%@ ago", bundle: bundle),
+            tier
+        )
     }
 }
 
@@ -191,7 +209,7 @@ struct InboxView: View {
 
     private var header: some View {
         HStack(spacing: 7) {
-            Text("Notifications")
+            Text(String(localized: "Notifications", bundle: .kookyResources))
                 .font(Theme.mono(13, weight: .semibold))
                 .foregroundStyle(Theme.chromeForeground)
             if inbox.unreadCount > 0 {
@@ -240,7 +258,7 @@ struct InboxView: View {
                 Image(systemName: "tray")
                     .font(.system(size: 19, weight: .light))
                     .foregroundStyle(Theme.chromeMuted.opacity(0.4))
-                Text("no notifications")
+                Text(String(localized: "no notifications", bundle: .kookyResources))
                     .font(Theme.mono(12))
                     .foregroundStyle(Theme.chromeMuted)
             }

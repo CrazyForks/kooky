@@ -344,7 +344,7 @@ struct KeepAwakeButton: View {
         HoverableIconButton(size: 28, help: helpText, action: cycleDial) {
             indicatorDot
         }
-        .accessibilityLabel("Keep Mac awake while agents or SSH sessions are active")
+        .accessibilityLabel(String(localized: "Keep Mac awake while agents or SSH sessions are active", bundle: .kookyResources))
     }
 
     /// Click cycles the dial: off → auto → always → off. Funnels through
@@ -377,13 +377,17 @@ struct KeepAwakeButton: View {
     private var helpText: String {
         switch model.awakeMode {
         case .always:
-            return "Always awake — Mac never sleeps (click to turn off)"
+            return String(localized: "Always awake — Mac never sleeps (click to turn off)", bundle: .kookyResources)
         case .auto:
-            if sleepGuard.lidSleepDisabled { return "Keeping Mac awake — even with the lid closed (click for always)" }
-            if sleepGuard.isKeepingAwake { return "Keeping Mac awake — agent or SSH session active (click for always)" }
-            return "Keep awake: auto — holds while agents or SSH work (click for always)"
+            if sleepGuard.lidSleepDisabled {
+                return String(localized: "Keeping Mac awake — even with the lid closed (click for always)", bundle: .kookyResources)
+            }
+            if sleepGuard.isKeepingAwake {
+                return String(localized: "Keeping Mac awake — agent or SSH session active (click for always)", bundle: .kookyResources)
+            }
+            return String(localized: "Keep awake: auto — holds while agents or SSH work (click for always)", bundle: .kookyResources)
         case .off:
-            return "Keep awake: off (click for auto)"
+            return String(localized: "Keep awake: off (click for auto)", bundle: .kookyResources)
         }
     }
 }

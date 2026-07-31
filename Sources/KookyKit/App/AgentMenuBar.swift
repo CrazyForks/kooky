@@ -77,7 +77,17 @@ final class AgentMenuBarController: NSObject, NSMenuDelegate {
         lastRenderedCount = count
         button.title = Self.countTitle(count)
         button.imagePosition = count == 0 ? .imageOnly : .imageLeading
-        button.toolTip = count == 0 ? "No agents running" : "\(count) agent\(count == 1 ? "" : "s") active"
+        button.toolTip = count == 0
+            ? String(localized: "No agents running", bundle: .kookyResources)
+            : String.localizedStringWithFormat(
+                String(
+                    localized: String.LocalizationValue(
+                        count == 1 ? "%d agent active" : "%d agents active"
+                    ),
+                    bundle: .kookyResources
+                ),
+                count
+            )
         button.setAccessibilityLabel(button.toolTip)
     }
 
@@ -109,25 +119,44 @@ final class AgentMenuBarController: NSObject, NSMenuDelegate {
         menu.removeAllItems()
         let entries = monitor.entries
         if entries.isEmpty {
-            let empty = NSMenuItem(title: "No agents running", action: nil, keyEquivalent: "")
+            let empty = NSMenuItem(
+                title: String(localized: "No agents running", bundle: .kookyResources),
+                action: nil,
+                keyEquivalent: ""
+            )
             empty.isEnabled = false
             menu.addItem(empty)
         } else {
-            menu.addItem(.sectionHeader(title: "Recent Agents"))
+            menu.addItem(.sectionHeader(
+                title: String(localized: "Recent Agents", bundle: .kookyResources)
+            ))
             for entry in entries {
                 menu.addItem(menuItem(for: entry))
             }
         }
         menu.addItem(.separator())
-        menu.addItem(actionItem(title: "Open Kooky", action: #selector(openKooky)))
-        menu.addItem(actionItem(title: "Settings…", action: #selector(showSettingsWindow)))
+        menu.addItem(actionItem(
+            title: String(localized: "Open Kooky", bundle: .kookyResources),
+            action: #selector(openKooky)
+        ))
+        menu.addItem(actionItem(
+            title: String(localized: "Settings…", bundle: .kookyResources),
+            action: #selector(showSettingsWindow)
+        ))
 
-        let keepAwake = NSMenuItem(title: "Keep Awake", action: nil, keyEquivalent: "")
+        let keepAwake = NSMenuItem(
+            title: String(localized: "Keep Awake", bundle: .kookyResources),
+            action: nil,
+            keyEquivalent: ""
+        )
         keepAwake.submenu = keepAwakeMenu()
         keepAwake.isEnabled = true
         menu.addItem(keepAwake)
 
-        menu.addItem(actionItem(title: "Quit Kooky", action: #selector(quitKooky)))
+        menu.addItem(actionItem(
+            title: String(localized: "Quit Kooky", bundle: .kookyResources),
+            action: #selector(quitKooky)
+        ))
 
         // AppKit injects standard symbols after insertion (notably a gear for
         // Settings…), even when the item was created with `image == nil`.
@@ -145,7 +174,9 @@ final class AgentMenuBarController: NSObject, NSMenuDelegate {
     }
 
     private func keepAwakeMenu() -> NSMenu {
-        let submenu = NSMenu(title: "Keep Awake")
+        let submenu = NSMenu(
+            title: String(localized: "Keep Awake", bundle: .kookyResources)
+        )
         submenu.autoenablesItems = false
         for mode in AwakeMode.allCases {
             let item = NSMenuItem(
@@ -202,12 +233,20 @@ final class AgentMenuBarController: NSObject, NSMenuDelegate {
         NSApp.terminate(nil)
     }
 
-    static func awakeModeTitle(_ mode: AwakeMode) -> String {
+    static func awakeModeTitle(
+        _ mode: AwakeMode,
+        bundle: Bundle = .kookyResources
+    ) -> String {
+        let key: String
         switch mode {
-        case .off: return "Off"
-        case .auto: return "Auto"
-        case .always: return "Always"
+        case .off: key = "Off"
+        case .auto: key = "Auto"
+        case .always: key = "Always"
         }
+        return String(
+            localized: String.LocalizationValue(key),
+            bundle: bundle
+        )
     }
 
     static func countTitle(_ count: Int) -> String {

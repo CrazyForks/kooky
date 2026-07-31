@@ -233,8 +233,11 @@ struct SidebarView: View {
                 )
             case .confirmCloseOthers(let request):
                 ConfirmBulkCloseSheet(
-                    statusLabel: "CLOSE-OTHERS",
-                    headlineText: "keeping \(request.keeping.title)",
+                    statusLabel: String(localized: "CLOSE-OTHERS", bundle: .kookyResources),
+                    headlineText: String.localizedStringWithFormat(
+                        String(localized: "keeping %@", bundle: .kookyResources),
+                        request.keeping.title
+                    ),
                     subtitleText: bulkSubtitle(
                         closingCount: request.others.count,
                         worktreeCount: request.worktreeOthers.count
@@ -250,8 +253,11 @@ struct SidebarView: View {
                 )
             case .confirmCloseSource(let request):
                 ConfirmBulkCloseSheet(
-                    statusLabel: "CLOSE-WORKSPACE",
-                    headlineText: "closing \(request.source.title)",
+                    statusLabel: String(localized: "CLOSE-WORKSPACE", bundle: .kookyResources),
+                    headlineText: String.localizedStringWithFormat(
+                        String(localized: "closing %@", bundle: .kookyResources),
+                        request.source.title
+                    ),
                     subtitleText: bulkSubtitle(
                         closingCount: request.worktrees.count + 1,
                         worktreeCount: request.worktrees.count
@@ -345,9 +351,14 @@ struct SidebarView: View {
     /// pluralisation into one place so the count never reads as
     /// "1 workspaces" or "1 worktrees".
     private func bulkSubtitle(closingCount: Int, worktreeCount: Int) -> String {
-        let workspaceWord = closingCount == 1 ? "workspace" : "workspaces"
-        let worktreeWord = worktreeCount == 1 ? "worktree" : "worktrees"
-        return "\(closingCount) \(workspaceWord) will close · \(worktreeCount) \(worktreeWord)"
+        String.localizedStringWithFormat(
+            String(
+                localized: "%d workspace(s) will close · %d worktree(s)",
+                bundle: .kookyResources
+            ),
+            closingCount,
+            worktreeCount
+        )
     }
 
     /// True when `workspace` is a top-level source workspace *and* its

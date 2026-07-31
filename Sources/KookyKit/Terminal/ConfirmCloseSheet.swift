@@ -38,18 +38,21 @@ private struct ConfirmCloseSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("CLOSE-TAB")
+            Text(String(localized: "CLOSE-TAB", bundle: .kookyResources))
                 .font(Theme.mono(10, weight: .medium))
                 .tracking(1.6)
                 .foregroundStyle(Theme.chromeMuted.opacity(0.85))
                 .padding(.bottom, 18)
 
-            Text("Close \"\(tabTitle)\"?")
+            Text(String.localizedStringWithFormat(
+                String(localized: "Close “%@”?", bundle: .kookyResources),
+                tabTitle
+            ))
                 .font(Theme.display(20, weight: .medium))
                 .foregroundStyle(Theme.chromeForeground)
                 .lineLimit(2)
 
-            Text("A process is still running in this tab; closing will terminate it.")
+            Text(String(localized: "A process is still running in this tab; closing will terminate it.", bundle: .kookyResources))
                 .font(Theme.mono(11.5))
                 .foregroundStyle(Theme.chromeMuted)
                 .fixedSize(horizontal: false, vertical: true)

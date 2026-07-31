@@ -206,18 +206,24 @@ enum StatusBarItemKind: String, CaseIterable, Codable, Hashable, Sendable {
     case gitBranch = "git-branch"
     case gitDiff = "git-diff"
 
+    @MainActor
     var displayName: String {
+        let key: String
         switch self {
-        case .toolCallActivity: return "Tool calls"
-        case .codexUsage: return "Usage remaining"
-        case .pythonVenv: return "Python venv"
-        case .nodeVersion: return "Node version"
-        case .proxy: return "Proxy"
-        case .remoteLogin: return "Remote Login"
-        case .gitRepo: return "Git repo"
-        case .gitBranch: return "Git branch"
-        case .gitDiff: return "Git diff"
+        case .toolCallActivity: key = "Tool calls"
+        case .codexUsage: key = "Usage remaining"
+        case .pythonVenv: key = "Python venv"
+        case .nodeVersion: key = "Node version"
+        case .proxy: key = "Proxy"
+        case .remoteLogin: key = "Remote Login"
+        case .gitRepo: key = "Git repo"
+        case .gitBranch: key = "Git branch"
+        case .gitDiff: key = "Git diff"
         }
+        return String(
+            localized: String.LocalizationValue(key),
+            bundle: .kookyResources
+        )
     }
 
     /// SF Symbol used by Settings → Status Bar to label each row. nil for
@@ -340,7 +346,10 @@ private struct StatusBarIconButton: View {
                 .contentShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
         }
         .buttonStyle(.plain)
-        .help(help)
+        .help(String(
+            localized: String.LocalizationValue(help),
+            bundle: .kookyResources
+        ))
         .onHover { hovered = $0 }
         .animation(Theme.chromeTransition, value: hovered)
         .animation(Theme.chromeTransition, value: isActive)
@@ -811,6 +820,7 @@ private struct SwitchableStatusSegment<Item: Hashable & Sendable>: View {
                     let current = isCurrent(item)
                     KookyMenuRow(
                         title: titleFor(item),
+                        localizesTitle: false,
                         isDisabled: current,
                         leading: { menuRowCheckmark(visible: current) }
                     ) {
@@ -840,7 +850,13 @@ private struct GitRepoStatusSegment: View {
             loadSnapshot: { [repoRoot] in GitRemoteWebInfo.resolve(repoRoot: repoRoot) }
         ) { remote, dismiss in
             if let remote {
-                KookyMenuRow(title: "Open on \(remote.forgeName)") {
+                KookyMenuRow(
+                    title: String.localizedStringWithFormat(
+                        String(localized: "Open on %@", bundle: .kookyResources),
+                        remote.forgeName
+                    ),
+                    localizesTitle: false
+                ) {
                     dismiss()
                     NSWorkspace.shared.open(remote.webURL)
                 }
@@ -1030,8 +1046,8 @@ private struct ProxyEntryRow: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Copy")
-            Button("Unset") { onUnset(name) }
+            .help(String(localized: "Copy", bundle: .kookyResources))
+            Button(String(localized: "Unset", bundle: .kookyResources)) { onUnset(name) }
                 .buttonStyle(.plain)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(Theme.chromeForeground)
@@ -1041,7 +1057,10 @@ private struct ProxyEntryRow: View {
                     RoundedRectangle(cornerRadius: 4)
                         .fill(Theme.chromeFaint.opacity(0.6))
                 )
-                .help("unset \(name)")
+                .help(String.localizedStringWithFormat(
+                    String(localized: "unset %@", bundle: .kookyResources),
+                    name
+                ))
         }
         .padding(.horizontal, Theme.space2 + 2)
         .padding(.vertical, 6)
@@ -1083,7 +1102,16 @@ private struct PaneContextMenu: View {
             if !askRows.isEmpty {
                 ForEach(askRows, id: \.template.id) { row in
                     KookyMenuRow(
-                        title: row.isDefault ? "▸ Ask \(row.template.title)" : "Ask \(row.template.title)",
+                        title: String.localizedStringWithFormat(
+                            String(
+                                localized: String.LocalizationValue(
+                                    row.isDefault ? "▸ Ask %@" : "Ask %@"
+                                ),
+                                bundle: .kookyResources
+                            ),
+                            row.template.title
+                        ),
+                        localizesTitle: false,
                         leading: {
                             AgentIconView(asset: row.template.iconAsset, fallbackSymbol: row.template.symbol, size: 16)
                         }
@@ -1236,7 +1264,7 @@ private struct PaneSearchBar: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 11))
                 .foregroundStyle(Theme.chromeMuted)
-            TextField("Search…", text: $needle)
+            TextField(String(localized: "Search…", bundle: .kookyResources), text: $needle)
                 .textFieldStyle(.plain)
                 .font(Theme.mono(11.5))
                 .foregroundStyle(Theme.chromeForeground)
@@ -1344,7 +1372,7 @@ private struct PaneComposerBar: View {
             .frame(minHeight: 46, maxHeight: 168)
             .overlay(alignment: .topLeading) {
                 if session.composerDraft.isEmpty {
-                    Text("type prompt or command here")
+                    Text(String(localized: "type prompt or command here", bundle: .kookyResources))
                         .font(Theme.mono(12.5))
                         .foregroundStyle(Theme.chromeMuted.opacity(0.55))
                         .padding(.leading, 7)

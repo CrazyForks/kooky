@@ -102,6 +102,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         // at process init when the first surface is created.
         KookyOnboarding.runIfNeeded()
         let settings = KookySettingsModel.shared
+        // Onboarding can construct the shared model before a potential import
+        // writes settings.json. Reload so first-launch imports are reflected
+        // in the windows created below.
+        settings.load()
         systemAppearanceObservation = NSApp.observe(
             \.effectiveAppearance,
             options: [.new]
@@ -277,7 +281,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     public func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
         let menu = NSMenu()
         let newWindow = NSMenuItem(
-            title: "New Window",
+            title: String(localized: "New Window", bundle: .kookyResources),
             action: #selector(handleNewWindow),
             keyEquivalent: ""
         )
@@ -606,6 +610,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             responderRow("Quit \(KookyApp.name)", #selector(NSApplication.terminate(_:)), "q"),
         ])))
 
+        openRecentMenu.title = String(localized: "Open Recent", bundle: .kookyResources)
         openRecentMenuDelegate.rebuild = { [weak self] menu in self?.rebuildOpenRecentMenu(menu) }
         openRecentMenu.delegate = openRecentMenuDelegate
         mainMenu.addItem(submenu(buildMenu(title: "File", entries: [
@@ -643,11 +648,27 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         ])))
 
         let tabSwitchRows: [MenuEntry] = MenuTag.tabRange.map { n in
-            selfRow("Tab \(n)", #selector(handleSwitchTab(_:)), "\(n)", tag: MenuTag.tab(n))
+            selfRow(
+                String.localizedStringWithFormat(
+                    String(localized: "Tab %d", bundle: .kookyResources),
+                    n
+                ),
+                #selector(handleSwitchTab(_:)),
+                "\(n)",
+                tag: MenuTag.tab(n)
+            )
         }
         let workspaceSwitchRows: [MenuEntry] = (1...9).map { n in
-            selfRow("Workspace \(n)", #selector(handleSwitchWorkspace(_:)), "\(n)",
-                    modifiers: [.command, .option], tag: MenuTag.workspace(n))
+            selfRow(
+                String.localizedStringWithFormat(
+                    String(localized: "Workspace %d", bundle: .kookyResources),
+                    n
+                ),
+                #selector(handleSwitchWorkspace(_:)),
+                "\(n)",
+                modifiers: [.command, .option],
+                tag: MenuTag.workspace(n)
+            )
         }
         let viewEntries: [MenuEntry] = [
             selfRow("Toggle Sidebar", #selector(handleToggleSidebar), "s", modifiers: [.command, .control]),
@@ -736,8 +757,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     /// methods that need a concrete target.
     private func selfRow(_ title: String, _ selector: Selector, _ key: String = "",
                          modifiers: NSEvent.ModifierFlags = .command, tag: Int = 0) -> MenuEntry {
-        .row(MenuRow(title: title, selector: selector, key: key,
-                     modifiers: modifiers, target: self, tag: tag))
+        .row(MenuRow(
+            title: String(
+                localized: String.LocalizationValue(title),
+                bundle: .kookyResources
+            ),
+            selector: selector,
+            key: key,
+            modifiers: modifiers,
+            target: self,
+            tag: tag
+        ))
     }
 
     /// Item with `target: nil` — AppKit dispatches via the responder chain.
@@ -745,12 +775,24 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     /// `NSText.cut(_:)`, which let libghostty / the active window handle them.
     private func responderRow(_ title: String, _ selector: Selector, _ key: String = "",
                               modifiers: NSEvent.ModifierFlags = .command) -> MenuEntry {
-        .row(MenuRow(title: title, selector: selector, key: key,
-                     modifiers: modifiers, target: nil, tag: 0))
+        .row(MenuRow(
+            title: String(
+                localized: String.LocalizationValue(title),
+                bundle: .kookyResources
+            ),
+            selector: selector,
+            key: key,
+            modifiers: modifiers,
+            target: nil,
+            tag: 0
+        ))
     }
 
     private func buildMenu(title: String, entries: [MenuEntry]) -> NSMenu {
-        let menu = NSMenu(title: title)
+        let menu = NSMenu(title: String(
+            localized: String.LocalizationValue(title),
+            bundle: .kookyResources
+        ))
         for entry in entries {
             switch entry {
             case .row(let row):
@@ -837,7 +879,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         // dir is deleted/unmounted the menu shows empty, but the hidden
         // entries still hold list slots — Clear must stay reachable (Codex).
         let clear = NSMenuItem(
-            title: "Clear Menu",
+            title: String(localized: "Clear Menu", bundle: .kookyResources),
             action: RecentFolders.shared.paths.isEmpty ? nil : #selector(handleClearRecentFolders),
             keyEquivalent: ""
         )
@@ -934,8 +976,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = true
-        panel.title = "Open Folder"
-        panel.message = "Choose a folder to open as a workspace."
+        panel.title = String(localized: "Open Folder", bundle: .kookyResources)
+        panel.message = String(localized: "Choose a folder to open as a workspace.", bundle: .kookyResources)
 
         let controller = activeController
         let store = controller?.store
@@ -1135,7 +1177,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
     @objc private func handleCheckForUpdates(_ sender: NSMenuItem) {
         let originalTitle = sender.title
-        sender.title = "Checking for Updates…"
+        sender.title = String(localized: "Checking for Updates…", bundle: .kookyResources)
         sender.isEnabled = false
         // KOOKY_FAKE_VERSION lets us preview the "newer release" prompt without
         // mutating KookyApp.displayVersion. Launch via:

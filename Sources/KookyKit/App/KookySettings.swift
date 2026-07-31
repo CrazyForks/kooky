@@ -361,10 +361,10 @@ enum KookyOnboarding {
 
     private static func promptGhosttyImport(from path: URL) {
         let alert = NSAlert()
-        alert.messageText = "Welcome to kooky"
-        alert.informativeText = "We found your existing ghostty configuration. Would you like to import it into kooky?\n\nYou can change settings any time via Help → Open Settings."
-        alert.addButton(withTitle: "Use ghostty settings")
-        alert.addButton(withTitle: "Start fresh")
+        alert.messageText = String(localized: "Welcome to kooky", bundle: .kookyResources)
+        alert.informativeText = String(localized: "We found your existing ghostty configuration. Would you like to import it into kooky?\n\nYou can change settings any time via Help → Open Settings.", bundle: .kookyResources)
+        alert.addButton(withTitle: String(localized: "Use ghostty settings", bundle: .kookyResources))
+        alert.addButton(withTitle: String(localized: "Start fresh", bundle: .kookyResources))
 
         switch alert.runModal() {
         case .alertFirstButtonReturn:

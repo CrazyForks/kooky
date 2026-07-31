@@ -67,6 +67,19 @@ final class NotificationInboxTests: XCTestCase {
         XCTAssertFalse(inbox.hasUnread, "an event added as read must not flag unread")
     }
 
+    func testRelativeTimeUsesTheSelectedLanguageBundle() {
+        let now = Date()
+        let bundle = KookyAppLanguage.simplifiedChinese.previewBundle
+        XCTAssertEqual(
+            InboxTime.relative(from: now.addingTimeInterval(-5), now: now, bundle: bundle),
+            "刚刚"
+        )
+        XCTAssertEqual(
+            InboxTime.relative(from: now.addingTimeInterval(-120), now: now, bundle: bundle),
+            "2m前"
+        )
+    }
+
     func testClearAllEmptiesInbox() {
         let inbox = NotificationInbox()
         add(inbox, .attention)

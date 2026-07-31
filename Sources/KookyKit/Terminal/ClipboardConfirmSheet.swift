@@ -10,6 +10,7 @@ import SwiftUI
 /// after the user saw it.
 @MainActor
 enum ClipboardConfirmPresenter {
+    @MainActor
     enum Kind {
         case unsafePaste
         case oscRead
@@ -17,34 +18,34 @@ enum ClipboardConfirmPresenter {
 
         var statusLabel: String {
             switch self {
-            case .unsafePaste: "UNSAFE-PASTE"
-            case .oscRead, .oscWrite: "CLIPBOARD-ACCESS"
+            case .unsafePaste: String(localized: "UNSAFE-PASTE", bundle: .kookyResources)
+            case .oscRead, .oscWrite: String(localized: "CLIPBOARD-ACCESS", bundle: .kookyResources)
             }
         }
 
         var headline: String {
             switch self {
-            case .unsafePaste: "Paste looks dangerous"
-            case .oscRead: "Allow clipboard read?"
-            case .oscWrite: "Allow clipboard write?"
+            case .unsafePaste: String(localized: "Paste looks dangerous", bundle: .kookyResources)
+            case .oscRead: String(localized: "Allow clipboard read?", bundle: .kookyResources)
+            case .oscWrite: String(localized: "Allow clipboard write?", bundle: .kookyResources)
             }
         }
 
         var subtitle: String {
             switch self {
             case .unsafePaste:
-                "The clipboard text contains characters that may run commands the moment they are pasted."
+                String(localized: "The clipboard text contains characters that may run commands the moment they are pasted.", bundle: .kookyResources)
             case .oscRead:
-                "A program running in the terminal wants to read your clipboard."
+                String(localized: "A program running in the terminal wants to read your clipboard.", bundle: .kookyResources)
             case .oscWrite:
-                "A program running in the terminal wants to replace your clipboard contents."
+                String(localized: "A program running in the terminal wants to replace your clipboard contents.", bundle: .kookyResources)
             }
         }
 
         var allowTitle: String {
             switch self {
-            case .unsafePaste: "paste anyway"
-            case .oscRead, .oscWrite: "allow"
+            case .unsafePaste: String(localized: "paste anyway", bundle: .kookyResources)
+            case .oscRead, .oscWrite: String(localized: "allow", bundle: .kookyResources)
             }
         }
     }

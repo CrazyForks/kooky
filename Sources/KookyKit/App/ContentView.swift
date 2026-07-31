@@ -96,9 +96,9 @@ struct ContentView: View {
 
     private var sidebarTooltip: String {
         switch store.sidebarMode {
-        case .full: return "Compact sidebar"
-        case .compact: return "Hide sidebar"
-        case .hidden: return "Show sidebar"
+        case .full: return String(localized: "Compact sidebar", bundle: .kookyResources)
+        case .compact: return String(localized: "Hide sidebar", bundle: .kookyResources)
+        case .hidden: return String(localized: "Show sidebar", bundle: .kookyResources)
         }
     }
 

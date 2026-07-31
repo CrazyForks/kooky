@@ -122,7 +122,10 @@ private struct AddTabButton: View {
                 // suffix keeps that from surprising anyone mid-click.
                 let sshSuffix = workspace.sshRemoteHost == nil ? "" : " on SSH"
                 ForEach(AgentTemplate.visibleOrdered(model: KookySettingsModel.shared)) { template in
-                    KookyMenuRow(title: template.title + sshSuffix) {
+                    KookyMenuRow(
+                        title: template.title + sshSuffix,
+                        localizesTitle: false
+                    ) {
                         AgentIconView(asset: template.iconAsset, fallbackSymbol: template.symbol, size: 16)
                     } action: {
                         store.addTab(in: workspace, pane: pane, template: template)

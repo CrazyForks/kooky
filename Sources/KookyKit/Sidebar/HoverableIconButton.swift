@@ -44,7 +44,12 @@ struct HoverableIconButton<Label: View>: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
-        .help(help ?? "")
+        .help(help.map {
+            String(
+                localized: String.LocalizationValue($0),
+                bundle: .kookyResources
+            )
+        } ?? "")
     }
 }
 

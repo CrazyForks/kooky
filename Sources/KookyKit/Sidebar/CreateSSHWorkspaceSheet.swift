@@ -19,17 +19,17 @@ struct CreateSSHWorkspaceSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("SSH-WORKSPACE")
+            Text(String(localized: "SSH-WORKSPACE", bundle: .kookyResources))
                 .font(Theme.mono(10.5, weight: .semibold))
                 .foregroundStyle(Theme.chromeMuted)
                 .tracking(1.2)
                 .padding(.bottom, 18)
 
-            Text("Connect to a remote host")
+            Text(String(localized: "Connect to a remote host", bundle: .kookyResources))
                 .font(Theme.display(20, weight: .semibold))
                 .foregroundStyle(Theme.chromeForeground)
 
-            Text("Every new tab in this workspace opens an SSH session to the same destination; agent tabs launch their agent on the remote.")
+            Text(String(localized: "Every new tab in this workspace opens an SSH session to the same destination; agent tabs launch their agent on the remote.", bundle: .kookyResources))
                 .font(Theme.display(12.5))
                 .foregroundStyle(Theme.chromeMuted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -41,7 +41,7 @@ struct CreateSSHWorkspaceSheet: View {
                 .padding(.vertical, 22)
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("destination")
+                Text(String(localized: "destination", bundle: .kookyResources))
                     .font(Theme.mono(10.5, weight: .semibold))
                     .foregroundStyle(Theme.chromeMuted)
                 TextField("user@host", text: $destination)
@@ -53,7 +53,7 @@ struct CreateSSHWorkspaceSheet: View {
                     .bracketBorder()
                     .focused($fieldFocused)
                     .onSubmit(submit)
-                Text("anything your `ssh` accepts — host aliases from ~/.ssh/config work")
+                Text(String(localized: "anything your `ssh` accepts — host aliases from ~/.ssh/config work", bundle: .kookyResources))
                     .font(Theme.mono(10.5))
                     .foregroundStyle(Theme.chromeMuted.opacity(0.8))
             }

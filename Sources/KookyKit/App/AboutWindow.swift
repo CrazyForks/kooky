@@ -14,11 +14,17 @@ struct AboutView: View {
             Text(KookyApp.name)
                 .font(Theme.display(28, weight: .medium))
                 .foregroundStyle(Theme.chromeForeground)
-            Text("Version \(KookyApp.displayVersion)")
+            Text(String.localizedStringWithFormat(
+                String(localized: "Version %@", bundle: .kookyResources),
+                KookyApp.displayVersion
+            ))
                 .font(Theme.mono(11))
                 .foregroundStyle(Theme.chromeMuted)
                 .padding(.top, 4)
-            Text(KookyApp.tagline)
+            Text(String(
+                localized: String.LocalizationValue(KookyApp.tagline),
+                bundle: .kookyResources
+            ))
                 .font(Theme.display(12))
                 .foregroundStyle(Theme.chromeMuted)
                 .multilineTextAlignment(.center)
@@ -29,11 +35,18 @@ struct AboutView: View {
                 .fill(Theme.chromeHairline)
                 .frame(width: 32, height: 1)
                 .padding(.vertical, 16)
-            Text("© \(KookyApp.copyrightYear) \(KookyApp.name). All rights reserved.")
+            Text(String.localizedStringWithFormat(
+                String(
+                    localized: "© %@ %@. All rights reserved.",
+                    bundle: .kookyResources
+                ),
+                KookyApp.copyrightYear,
+                KookyApp.name
+            ))
                 .font(Theme.mono(9))
                 .foregroundStyle(Theme.chromeFaint)
             HStack(spacing: 0) {
-                Text("Built with ❤️ by ")
+                Text(String(localized: "Built with ❤️ by ", bundle: .kookyResources))
                     .font(Theme.mono(9))
                     .foregroundStyle(Theme.chromeFaint)
                 aboutLink(KookyApp.author, url: KookyApp.authorURL, font: Theme.mono(9))
@@ -80,7 +93,10 @@ final class AboutWindowController: NSWindowController {
         let host = NSHostingController(rootView: AboutView())
         host.sizingOptions = .preferredContentSize
         let window = NSWindow(contentViewController: host)
-        window.title = "About \(KookyApp.name)"
+        window.title = String.localizedStringWithFormat(
+            String(localized: "About %@", bundle: .kookyResources),
+            KookyApp.name
+        )
         window.styleMask = [.titled, .closable]
         // Name/version live in the content, so hide the titlebar text.
         window.titleVisibility = .hidden

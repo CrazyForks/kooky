@@ -32,6 +32,7 @@ extension View {
 /// AppKit uses for native NSMenuItem key equivalents (e.g. "⌘W", "⌘⇧D").
 struct KookyMenuRow<Leading: View>: View {
     let title: String
+    let localizesTitle: Bool
     let shortcut: String?
     let isDisabled: Bool
     let leading: Leading
@@ -41,12 +42,14 @@ struct KookyMenuRow<Leading: View>: View {
 
     init(
         title: String,
+        localizesTitle: Bool = true,
         shortcut: String? = nil,
         isDisabled: Bool = false,
         @ViewBuilder leading: () -> Leading,
         action: @escaping () -> Void
     ) {
         self.title = title
+        self.localizesTitle = localizesTitle
         self.shortcut = shortcut
         self.isDisabled = isDisabled
         self.leading = leading()
@@ -57,7 +60,13 @@ struct KookyMenuRow<Leading: View>: View {
         Button(action: action) {
             HStack(spacing: Theme.space2) {
                 leading
-                Text(title)
+                Group {
+                    if localizesTitle {
+                        Text(LocalizedStringKey(title), bundle: .kookyResources)
+                    } else {
+                        Text(verbatim: title)
+                    }
+                }
                     .font(Theme.display(12.5, weight: .regular))
                     .foregroundStyle(isDisabled ? Theme.chromeMuted : Theme.chromeForeground)
                 Spacer(minLength: 0)
@@ -88,12 +97,14 @@ struct KookyMenuRow<Leading: View>: View {
 extension KookyMenuRow where Leading == EmptyView {
     init(
         title: String,
+        localizesTitle: Bool = true,
         shortcut: String? = nil,
         isDisabled: Bool = false,
         action: @escaping () -> Void
     ) {
         self.init(
             title: title,
+            localizesTitle: localizesTitle,
             shortcut: shortcut,
             isDisabled: isDisabled,
             leading: { EmptyView() },
@@ -261,7 +272,13 @@ struct KookyRenameField: View {
     let onSubmit: () -> Void
 
     var body: some View {
-        TextField(placeholder, text: $text)
+        TextField(
+            String(
+                localized: String.LocalizationValue(placeholder),
+                bundle: .kookyResources
+            ),
+            text: $text
+        )
             .textFieldStyle(.plain)
             .font(Theme.display(13))
             .foregroundStyle(Theme.chromeForeground)

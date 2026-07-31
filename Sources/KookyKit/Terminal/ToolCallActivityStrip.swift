@@ -22,28 +22,28 @@ extension ToolCallEventState {
                 textColor: Theme.activityRunning,
                 glyphColor: Theme.activityRunning,
                 glyph: "⋯",  // ASCII ellipsis (no ProgressView surface)
-                accessibleName: "running"
+                accessibleName: String(localized: "running", bundle: .kookyResources)
             )
         case .success:
             return Presentation(
                 textColor: Theme.chromeForeground,
                 glyphColor: Theme.gitInsertion,  // DRY reuse — same green as git diff
                 glyph: "✓",
-                accessibleName: "succeeded"
+                accessibleName: String(localized: "succeeded", bundle: .kookyResources)
             )
         case .failed:
             return Presentation(
                 textColor: Theme.activityFailure,
                 glyphColor: Theme.activityFailure,
                 glyph: "✗",
-                accessibleName: "failed"
+                accessibleName: String(localized: "failed", bundle: .kookyResources)
             )
         case .stalled:
             return Presentation(
                 textColor: Theme.chromeMuted,
                 glyphColor: Theme.chromeMuted,
                 glyph: "⊘",
-                accessibleName: "stalled"
+                accessibleName: String(localized: "stalled", bundle: .kookyResources)
             )
         }
     }
@@ -169,7 +169,7 @@ struct ToolCallActivityPill: View {
             Image(systemName: "hourglass")
                 .imageScale(.small)
                 .foregroundStyle(Theme.chromeMuted)
-            Text("waiting")
+            Text(String(localized: "waiting", bundle: .kookyResources))
                 .font(Theme.mono(11, weight: .regular))
                 .foregroundStyle(Theme.chromeMuted)
         }
@@ -284,9 +284,9 @@ struct ToolCallActivityPill: View {
 
     private var accessibilityLabel: String {
         guard let last = session.toolCallEvents.last else {
-            return "Waiting for Claude tool calls"
+            return String(localized: "Waiting for Claude tool calls", bundle: .kookyResources)
         }
-        let identifierLabel = last.identifier.isEmpty ? "no identifier" : last.identifier
+        let identifierLabel = last.identifier.isEmpty ? String(localized: "no identifier", bundle: .kookyResources) : last.identifier
         return "\(last.toolName), \(identifierLabel), \(Self.durationLabel(for: last)), \(last.state.presentation.accessibleName)"
     }
 }
@@ -346,18 +346,26 @@ private struct ToolCallHistoryPopover: View {
     }
 
     private func counterSegment(icon: String, count: Int, label: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 5) {
+        let localizedLabel = String(
+            localized: String.LocalizationValue(label),
+            bundle: .kookyResources
+        )
+        return HStack(alignment: .firstTextBaseline, spacing: 5) {
             Image(systemName: icon)
                 .imageScale(.small)
                 .foregroundStyle(Theme.chromeMuted)
             Text("\(count)")
                 .font(Theme.mono(11, weight: .medium))
                 .foregroundStyle(Theme.chromeForeground)
-            Text(label)
+            Text(verbatim: localizedLabel)
                 .font(Theme.mono(10, weight: .regular))
                 .foregroundStyle(Theme.chromeMuted)
         }
-        .accessibilityLabel("\(label) count: \(count)")
+        .accessibilityLabel(String.localizedStringWithFormat(
+            String(localized: "%@ count: %d", bundle: .kookyResources),
+            localizedLabel,
+            count
+        ))
     }
 
     private var sessionElapsedLabel: String {
@@ -376,7 +384,7 @@ private struct ToolCallHistoryPopover: View {
             Image(systemName: "hourglass")
                 .imageScale(.medium)
                 .foregroundStyle(Theme.chromeMuted)
-            Text("waiting for tool calls")
+            Text(String(localized: "waiting for tool calls", bundle: .kookyResources))
                 .font(Theme.mono(11, weight: .regular))
                 .foregroundStyle(Theme.chromeMuted)
         }

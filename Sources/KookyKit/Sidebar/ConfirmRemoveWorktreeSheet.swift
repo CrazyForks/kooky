@@ -72,7 +72,7 @@ struct ConfirmRemoveWorktreeSheet: View {
     }
 
     private var statusLabel: some View {
-        Text("CLOSE-WORKTREE")
+        Text(String(localized: "CLOSE-WORKTREE", bundle: .kookyResources))
             .font(Theme.mono(10, weight: .medium))
             .tracking(1.6)
             .foregroundStyle(Theme.chromeMuted.opacity(0.85))
@@ -95,7 +95,7 @@ struct ConfirmRemoveWorktreeSheet: View {
     /// Native SwiftUI `Toggle` styled to fit brutalist chrome.
     private var alsoDeleteCheckbox: some View {
         Toggle(isOn: $alsoDelete) {
-            Text("also delete worktree directory and branch")
+            Text(String(localized: "also delete worktree directory and branch", bundle: .kookyResources))
                 .font(Theme.mono(11.5))
                 .foregroundStyle(alsoDelete ? Theme.chromeForeground : Theme.chromeMuted)
         }
@@ -104,8 +104,20 @@ struct ConfirmRemoveWorktreeSheet: View {
     }
 
     private var buttonLabel: String {
-        if isWorking { return alsoDelete ? "deleting…" : "closing…" }
-        return alsoDelete ? "close & delete" : "close"
+        if isWorking {
+            return String(
+                localized: String.LocalizationValue(
+                    alsoDelete ? "deleting…" : "closing…"
+                ),
+                bundle: .kookyResources
+            )
+        }
+        return String(
+            localized: String.LocalizationValue(
+                alsoDelete ? "close & delete" : "close"
+            ),
+            bundle: .kookyResources
+        )
     }
 
     private var worktreePath: URL { workspace.diskPath }

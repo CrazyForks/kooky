@@ -20,7 +20,7 @@ struct CodexUsagePill: View {
         .popover(isPresented: $detailOpen, arrowEdge: .top) {
             CodexUsageDetailPopover(usage: usage)
         }
-        .help("Codex usage remaining")
+        .help(String(localized: "Codex usage remaining", bundle: .kookyResources))
         .accessibilityLabel(accessibilityLabel)
     }
 
@@ -133,7 +133,13 @@ struct CodexUsagePill: View {
     }
 
     private var accessibilityLabel: String {
-        presentWindows.map { "\($0.label) \(Self.percentText($0.remaining)) left" }.joined(separator: ", ")
+        presentWindows.map {
+            String.localizedStringWithFormat(
+                String(localized: "%@ %@ left", bundle: .kookyResources),
+                $0.label,
+                Self.percentText($0.remaining)
+            )
+        }.joined(separator: ", ")
     }
 
     // MARK: - Pure formatters (also used by the popover + tests)
@@ -218,7 +224,7 @@ private struct CodexUsageDetailPopover: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
                 AgentIconView(asset: AgentTemplate.codex.iconAsset, fallbackSymbol: "chevron.left.forwardslash.chevron.right", size: 16)
-                Text("usage remaining")
+                Text(String(localized: "usage remaining", bundle: .kookyResources))
                     .font(Theme.mono(12, weight: .medium))
                     .foregroundStyle(Theme.chromeForeground)
                 Spacer()
@@ -238,11 +244,21 @@ private struct CodexUsageDetailPopover: View {
             TimelineView(.periodic(from: .now, by: 60)) { context in
                 VStack(alignment: .leading, spacing: 14) {
                     if let p = usage.primaryUsedPercent {
-                        windowRow(title: usage.primaryWindowMinutes.flatMap(CodexUsagePill.windowLabel).map { "\($0) window" } ?? "5h window",
+                        windowRow(title: usage.primaryWindowMinutes.flatMap(CodexUsagePill.windowLabel).map {
+                            String.localizedStringWithFormat(
+                                String(localized: "%@ window", bundle: .kookyResources),
+                                $0
+                            )
+                        } ?? String(localized: "5h window", bundle: .kookyResources),
                                   remaining: CodexUsagePill.remaining(p), resetsAt: usage.primaryResetsAt, now: context.date)
                     }
                     if let s = usage.secondaryUsedPercent {
-                        windowRow(title: usage.secondaryWindowMinutes.flatMap(CodexUsagePill.windowLabel).map { "\($0) window" } ?? "7d window",
+                        windowRow(title: usage.secondaryWindowMinutes.flatMap(CodexUsagePill.windowLabel).map {
+                            String.localizedStringWithFormat(
+                                String(localized: "%@ window", bundle: .kookyResources),
+                                $0
+                            )
+                        } ?? String(localized: "7d window", bundle: .kookyResources),
                                   remaining: CodexUsagePill.remaining(s), resetsAt: usage.secondaryResetsAt, now: context.date)
                     }
                 }
@@ -268,7 +284,7 @@ private struct CodexUsageDetailPopover: View {
         let percent = total.map { CodexUsagePill.contextUsedPercent(used: used, window: $0) }
         return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
-                Text("context window")
+                Text(String(localized: "context window", bundle: .kookyResources))
                     .font(Theme.mono(11))
                     .foregroundStyle(Theme.chromeMuted)
                 Spacer()
@@ -276,7 +292,7 @@ private struct CodexUsageDetailPopover: View {
                     Text("\(percent)%")
                         .font(Theme.mono(12, weight: .medium))
                         .foregroundStyle(Theme.chromeForeground)
-                    Text("used")
+                    Text(String(localized: "used", bundle: .kookyResources))
                         .font(Theme.mono(9))
                         .foregroundStyle(Theme.chromeMuted)
                 }
@@ -284,8 +300,16 @@ private struct CodexUsageDetailPopover: View {
             if let percent {
                 UsageBar(percent: Double(percent), color: Theme.activityRunning)
             }
-            Text(total.map { "\(CodexUsagePill.tokensText(used)) / \(CodexUsagePill.tokensText($0)) tokens" }
-                ?? "\(CodexUsagePill.tokensText(used)) tokens")
+            Text(total.map {
+                String.localizedStringWithFormat(
+                    String(localized: "%@ / %@ tokens", bundle: .kookyResources),
+                    CodexUsagePill.tokensText(used),
+                    CodexUsagePill.tokensText($0)
+                )
+            } ?? String.localizedStringWithFormat(
+                String(localized: "%@ tokens", bundle: .kookyResources),
+                CodexUsagePill.tokensText(used)
+            ))
                 .font(Theme.mono(10))
                 .foregroundStyle(Theme.chromeMuted)
         }
@@ -302,7 +326,7 @@ private struct CodexUsageDetailPopover: View {
                 Text(CodexUsagePill.percentText(remaining))
                     .font(Theme.mono(12, weight: .medium))
                     .foregroundStyle(color)
-                Text("left")
+                Text(String(localized: "left", bundle: .kookyResources))
                     .font(Theme.mono(9))
                     .foregroundStyle(Theme.chromeMuted)
             }

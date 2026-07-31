@@ -102,16 +102,24 @@ fi
 # SPM ships the resource bundle as a flat directory, but its `.bundle` suffix
 # triggers codesign's bundle validator → "bundle format invalid". Promote it
 # to the canonical macOS bundle layout (Contents/Info.plist +
-# Contents/Resources/*) so codesign accepts it. Bundle.module still resolves
-# fonts/icons via its standard resourcePath lookup.
+# Contents/Resources/*) so codesign accepts it. Move every processed resource,
+# including localization `.lproj` directories, rather than only fonts/icons.
 RES_BUNDLE="${APP}/Contents/Resources/Kooky_KookyKit.bundle"
 mkdir -p "${RES_BUNDLE}/Contents/Resources"
-mv "${RES_BUNDLE}"/*.ttf "${RES_BUNDLE}"/*.png "${RES_BUNDLE}/Contents/Resources/" 2>/dev/null || true
+find "${RES_BUNDLE}" -mindepth 1 -maxdepth 1 ! -name Contents \
+    -exec mv {} "${RES_BUNDLE}/Contents/Resources/" \;
 cat > "${RES_BUNDLE}/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>en</string>
+        <string>zh-Hans</string>
+    </array>
     <key>CFBundleIdentifier</key>
     <string>${BUNDLE_ID}.resources</string>
     <key>CFBundleName</key>
@@ -138,6 +146,11 @@ cat > "${APP}/Contents/Info.plist" <<PLIST
 <dict>
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>en</string>
+        <string>zh-Hans</string>
+    </array>
     <key>CFBundleExecutable</key>
     <string>${APP_NAME}</string>
     <key>CFBundleIdentifier</key>

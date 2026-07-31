@@ -37,21 +37,33 @@ final class AgentMonitor {
         case running     // working
         case idle        // alive but quiet
 
+        @MainActor
         var label: String {
+            let key: String
             switch self {
-            case .attention: return "waiting"
-            case .failed: return "failed"
-            case .running: return "running"
-            case .idle: return "idle"
+            case .attention: key = "waiting"
+            case .failed: key = "failed"
+            case .running: key = "running"
+            case .idle: key = "idle"
             }
+            return String(
+                localized: String.LocalizationValue(key),
+                bundle: .kookyResources
+            )
         }
+        @MainActor
         var help: String {
+            let key: String
             switch self {
-            case .attention: return "waiting on you"
-            case .failed: return "command failed"
-            case .running: return "running"
-            case .idle: return "idle"
+            case .attention: key = "waiting on you"
+            case .failed: key = "command failed"
+            case .running: key = "running"
+            case .idle: key = "idle"
             }
+            return String(
+                localized: String.LocalizationValue(key),
+                bundle: .kookyResources
+            )
         }
     }
 
@@ -104,6 +116,7 @@ final class AgentMonitor {
         /// Takes the tag the row is actually showing rather than reading
         /// `self.tag`, so the setting that hides the stripe hides the `#name`
         /// with it — the caller resolves that once and both follow.
+        @MainActor
         func hoverText(tag: WorkspaceTag?) -> String {
             let head = "\(singleLine(agent.title)) · \(singleLine(tabTitle)) · \(state.help)"
             guard let label = tag?.hashLabel else { return "\(head)\n\(locationLabel)" }
@@ -209,7 +222,7 @@ struct RightPanelHeader<Trailing: View>: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 7) {
-                Text(title)
+                Text(LocalizedStringKey(title), bundle: .kookyResources)
                     .font(Theme.mono(13, weight: .semibold))
                     .foregroundStyle(Theme.chromeForeground)
                 if count > 0 {
@@ -244,7 +257,7 @@ struct PanelEmptyState: View {
             Image(systemName: symbol)
                 .font(.system(size: 18, weight: .light))
                 .foregroundStyle(Theme.chromeMuted.opacity(0.4))
-            Text(message)
+            Text(LocalizedStringKey(message), bundle: .kookyResources)
                 .font(Theme.mono(11))
                 .foregroundStyle(Theme.chromeMuted)
             Spacer(minLength: 0)

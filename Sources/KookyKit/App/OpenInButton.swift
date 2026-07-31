@@ -58,7 +58,7 @@ struct OpenInButton: View {
             .buttonStyle(.plain)
             .disabled(visible.isEmpty)
             .onHover { chevronHovered = $0 }
-            .help("Open in…")
+            .help(String(localized: "Open in…", bundle: .kookyResources))
             .popover(isPresented: $isMenuOpen, arrowEdge: .bottom) {
                 picker(visible: visible, dir: dir)
             }
@@ -75,14 +75,14 @@ struct OpenInButton: View {
     private func picker(visible: [OpenInApp], dir: URL?) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             if visible.isEmpty {
-                Text("No supported apps found")
+                Text(String(localized: "No supported apps found", bundle: .kookyResources))
                     .font(Theme.display(12.5, weight: .regular))
                     .foregroundStyle(Theme.chromeMuted)
                     .padding(.horizontal, Theme.space2 + 2)
                     .padding(.vertical, 8)
             } else {
                 ForEach(visible) { app in
-                    KookyMenuRow(title: app.title) {
+                    KookyMenuRow(title: app.title, localizesTitle: false) {
                         OpenInAppIcon(app: app, size: 16)
                     } action: {
                         isMenuOpen = false

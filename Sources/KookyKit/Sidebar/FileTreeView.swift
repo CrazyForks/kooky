@@ -313,7 +313,7 @@ private struct FileTreeRowView: View {
     private func placeholderRow() -> some View {
         rowShell {
             Color.clear.frame(width: Self.chevronColumn, height: 1)
-            Text("no access")
+            Text(String(localized: "no access", bundle: .kookyResources))
                 .font(Theme.display(11.5))
                 .foregroundStyle(Theme.chromeFaint)
                 .lineLimit(1)

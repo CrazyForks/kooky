@@ -374,16 +374,28 @@ extension View {
 /// Plain-text `[bracketed]` button. Hairline border, mono, sharp corners.
 struct BracketButton: View {
     let title: String
+    let localizesTitle: Bool
     let action: () -> Void
 
-    init(_ title: String, action: @escaping () -> Void) {
+    init(
+        _ title: String,
+        localizesTitle: Bool = true,
+        action: @escaping () -> Void
+    ) {
         self.title = title
+        self.localizesTitle = localizesTitle
         self.action = action
     }
 
     var body: some View {
         Button(action: action) {
-            Text(title)
+            Group {
+                if localizesTitle {
+                    Text(LocalizedStringKey(title), bundle: .kookyResources)
+                } else {
+                    Text(verbatim: title)
+                }
+            }
                 .font(Theme.mono(11.5, weight: .medium))
                 .foregroundStyle(Theme.chromeForeground)
                 .padding(.horizontal, 10)
@@ -417,22 +429,41 @@ enum KookyFonts {
     private static var registered = false
 }
 
-/// Replaces SPM's auto-generated `Bundle.module`, which `fatalError`s on
-/// first access inside a `.app` (it only checks `Bundle.main.bundleURL` —
-/// the .app root — but resources canonically ship in `Contents/Resources/`).
-@MainActor
-func bundleResourceURL(name: String, ext: String, subdirectory: String) -> URL? {
+/// Replaces SPM's auto-generated `Bundle.module` as the first lookup inside a
+/// packaged `.app` (the generated accessor checks the .app root, while
+/// resources canonically ship in `Contents/Resources/`). The SPM accessor is
+/// still the final fallback for `swift run` and xctest, where its absolute
+/// build path is valid.
+func kookyResourceBundle() -> Bundle? {
     let bundleName = "Kooky_KookyKit"
     let candidates: [URL] = [
         Bundle.main.resourceURL,
         Bundle.main.bundleURL,
     ].compactMap { $0?.appendingPathComponent("\(bundleName).bundle") }
     for candidate in candidates {
-        guard let bundle = Bundle(url: candidate) else { continue }
-        if let url = bundle.url(forResource: name, withExtension: ext, subdirectory: subdirectory) { return url }
-        if let url = bundle.url(forResource: name, withExtension: ext) { return url }
+        if let bundle = Bundle(url: candidate) { return bundle }
     }
+    #if SWIFT_PACKAGE
+    return Bundle.module
+    #else
     return nil
+    #endif
+}
+
+extension Bundle {
+    /// The package resource bundle in both `swift run`/xctest and assembled
+    /// `.app` layouts. Localization still uses Foundation/SwiftUI's native
+    /// APIs; this only resolves where SwiftPM placed the resources.
+    static var kookyResources: Bundle {
+        kookyResourceBundle() ?? .main
+    }
+}
+
+@MainActor
+func bundleResourceURL(name: String, ext: String, subdirectory: String) -> URL? {
+    guard let bundle = kookyResourceBundle() else { return nil }
+    if let url = bundle.url(forResource: name, withExtension: ext, subdirectory: subdirectory) { return url }
+    return bundle.url(forResource: name, withExtension: ext)
 }
 
 /// Parses `#RRGGBB` / `RRGGBB` into sRGB components, or nil for malformed

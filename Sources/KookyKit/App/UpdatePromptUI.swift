@@ -68,7 +68,7 @@ struct UpdatePromptView: View {
         switch outcome {
         case .newer(_, _, let notes) where !notes.isEmpty:
             VStack(alignment: .leading, spacing: 10) {
-                Text("release-notes")
+                Text(String(localized: "release-notes", bundle: .kookyResources))
                     .font(Theme.mono(10, weight: .medium))
                     .tracking(1.2)
                     .foregroundStyle(Theme.chromeMuted.opacity(0.85))
@@ -105,25 +105,34 @@ struct UpdatePromptView: View {
     // MARK: Copy
 
     private var statusText: String {
+        let key: String
         switch outcome {
-        case .newer: return "UPDATE-AVAILABLE"
-        case .upToDate: return "UP-TO-DATE"
-        case .failed: return "CHECK-FAILED"
+        case .newer: key = "UPDATE-AVAILABLE"
+        case .upToDate: key = "UP-TO-DATE"
+        case .failed: key = "CHECK-FAILED"
         }
+        return String(
+            localized: String.LocalizationValue(key),
+            bundle: .kookyResources
+        )
     }
 
     private var headlineText: String {
         switch outcome {
         case .newer(let latest, _, _): return latest
         case .upToDate(let current): return current
-        case .failed: return "couldn't reach github"
+        case .failed: return String(localized: "couldn't reach github", bundle: .kookyResources)
         }
     }
 
     private var subtitleText: String {
         switch outcome {
-        case .newer: return "current \(currentVersion)"
-        case .upToDate: return "you're on the latest release."
+        case .newer:
+            return String.localizedStringWithFormat(
+                String(localized: "current %@", bundle: .kookyResources),
+                currentVersion
+            )
+        case .upToDate: return String(localized: "you're on the latest release.", bundle: .kookyResources)
         case .failed(let reason): return reason
         }
     }
@@ -164,7 +173,7 @@ final class UpdatePromptWindowController: NSWindowController {
             window.contentViewController = host
         } else {
             let new = NSWindow(contentViewController: host)
-            new.title = "Update"
+            new.title = String(localized: "Update", bundle: .kookyResources)
             new.styleMask = [.titled, .closable]
             new.isReleasedWhenClosed = false
             new.appearance = Theme.windowAppearance
