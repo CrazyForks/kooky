@@ -327,6 +327,15 @@ enum Theme {
     static let space4: CGFloat = 16
     static let space5: CGFloat = 24
 
+    /// The left section title, every pane tab strip, and the full right-panel
+    /// title share one baseline. Keeping this in the theme prevents the three
+    /// independently-owned surfaces from drifting apart again.
+    static let contentHeaderHeight: CGFloat = 40
+
+    /// Shared vertical breathing room for the left workspace rows and the
+    /// right agent-panel rows so the two sidebars keep the same density.
+    static let sidebarRowVerticalPadding: CGFloat = 11
+
     // MARK: Motion
     /// Standard transition for chrome state changes (sidebar collapse,
     /// drag-reorder commit). One source so timings can't drift across sites.

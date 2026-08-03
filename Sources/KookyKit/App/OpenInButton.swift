@@ -33,7 +33,7 @@ struct OpenInButton: View {
                     }
                 }
                 .frame(width: 24, height: 26)
-                .background(iconHovered ? Color.white.opacity(0.12) : .clear)
+                .background(iconHovered ? Theme.chromeHover : .clear)
                 .clipShape(RoundedRectangle(cornerRadius: 5))
                 .contentShape(Rectangle())
             }
@@ -51,7 +51,7 @@ struct OpenInButton: View {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .semibold))
                     .frame(width: 15, height: 26)
-                    .background(chevronHovered ? Color.white.opacity(0.12) : .clear)
+                    .background(chevronHovered ? Theme.chromeHover : .clear)
                     .clipShape(RoundedRectangle(cornerRadius: 5))
                     .contentShape(Rectangle())
             }

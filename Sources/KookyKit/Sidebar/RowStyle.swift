@@ -20,9 +20,9 @@ extension View {
     }
 
     /// Menu rows are single-state: hover === selected, so they use the active
-    /// alpha (0.10) instead of the lighter hover (0.05).
+    /// theme token instead of the quieter row-hover token.
     func menuRowHover(_ isHovered: Bool) -> some View {
-        background(isHovered ? Color.white.opacity(0.10) : Color.clear)
+        background(isHovered ? Theme.chromeActive : Color.clear)
     }
 }
 

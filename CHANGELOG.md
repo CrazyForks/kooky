@@ -2,6 +2,12 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.47.1 — 2026-08-03
+
+- Refined the main-window layout so the workspace header, pane tab bar, and Agent panel header share one aligned 40pt content baseline.
+- Matched workspace and Agent panel row density with 11pt vertical padding, and clarified worktree hierarchy with indented child rows and an always-discoverable disclosure control.
+- Made toolbar, Open In, and popover hover states theme-aware for consistent contrast across light and dark appearances.
+
 ## v0.47.0 — 2026-07-31
 
 - New: native Simplified Chinese localization across kooky's settings, menus, sheets, popovers, notifications, status bar, command palette, and other app chrome; English remains the development language.

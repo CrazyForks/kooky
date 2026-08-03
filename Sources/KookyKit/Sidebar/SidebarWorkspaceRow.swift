@@ -370,8 +370,9 @@ struct SidebarWorkspaceRow: View {
                         action: disclosure.toggle,
                         rotation: disclosure.isCollapsed ? 0 : 90
                     )
-                    .opacity(isHovered ? 1 : 0)
-                    .allowsHitTesting(isHovered)
+                    // Hierarchy is a primary interaction, so keep the
+                    // disclosure affordance discoverable even off-hover.
+                    .opacity(isHovered ? 1 : 0.48)
                 }
                 if let onCreateWorktree {
                     HoverableIconButton(
@@ -404,7 +405,7 @@ struct SidebarWorkspaceRow: View {
             .frame(minWidth: trailingHoverMinWidth, alignment: .trailing)
         }
         .padding(.horizontal, Theme.space3)
-        .padding(.vertical, 11)
+        .padding(.vertical, Theme.sidebarRowVerticalPadding)
     }
 
     private func compactBody(agents: [AgentTemplate], dotColor: Color?) -> some View {

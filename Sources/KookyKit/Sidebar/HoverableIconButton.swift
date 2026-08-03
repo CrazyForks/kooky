@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// Square chrome button with a hover-state background tint — the single
-/// source for the top-strip / sidebar / tab-bar hover affordance (28pt-ish
-/// square, white-0.12 hover, radius 5). The generic form takes any label
+/// Square chrome button with a semantic hover-state background tint — the
+/// single source for the top-strip / sidebar / tab-bar hover affordance
+/// (28pt-ish square, radius 5). The generic form takes any label
 /// (KeepAwakeButton's breathing dot); the `systemName` convenience covers
 /// the common SF-symbol case and keeps its call sites tiny.
 struct HoverableIconButton<Label: View>: View {
@@ -38,12 +38,13 @@ struct HoverableIconButton<Label: View>: View {
                 .rotationEffect(.degrees(rotation))
                 .animation(.easeOut(duration: 0.15), value: rotation)
                 .frame(width: size, height: size)
-                .background(isHovered ? Color.white.opacity(0.12) : .clear)
+                .background(isHovered ? Theme.chromeHover : .clear)
                 .clipShape(RoundedRectangle(cornerRadius: 5))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
         .help(help.map {
             String(
                 localized: String.LocalizationValue($0),

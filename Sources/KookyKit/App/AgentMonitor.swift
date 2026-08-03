@@ -211,9 +211,10 @@ private func agentAccent(_ state: AgentMonitor.State) -> Color {
 
 // MARK: - Right sidebar
 
-/// Shared 32pt title row + hairline for the right panel's two pages, so
-/// "agents" and "session history" stay pixel-identical by construction.
-/// The height matches the top strip so left/right chrome aligns.
+/// Shared title row + hairline for the right panel's two pages, so "agents"
+/// and "session history" stay pixel-identical by construction. Its height
+/// matches the pane tab strip and left sidebar header, forming one continuous
+/// content baseline below the window drag strip.
 struct RightPanelHeader<Trailing: View>: View {
     let title: String
     let count: Int
@@ -234,7 +235,7 @@ struct RightPanelHeader<Trailing: View>: View {
                 trailing()
             }
             .padding(.horizontal, 14)
-            .frame(height: 32)
+            .frame(height: Theme.contentHeaderHeight)
             Rectangle().fill(Theme.chromeHairline).frame(height: 1)
         }
     }
@@ -390,7 +391,7 @@ private struct AgentOverviewRow: View {
                 .foregroundStyle(entry.state == .idle ? Theme.chromeMuted.opacity(0.7) : agentAccent(entry.state))
         }
         .padding(.horizontal, 14)
-        .frame(height: 46)
+        .padding(.vertical, Theme.sidebarRowVerticalPadding)
         .background((isHovered ? Theme.chromeHover : Color.clear).workspaceTagStripe(shownTag))
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }

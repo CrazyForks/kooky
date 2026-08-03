@@ -452,8 +452,8 @@ final class CommandPaletteWindowController: NSWindowController, DismissablePanel
 /// the surrounding empty area still move the window. The ordered
 /// `ViewThatFits` presentations retain a useful trigger while progressively
 /// condensing from full to truncated to icon + shortcut to icon-only; only
-/// the final fallback disappears. Visually minimal — just a faint white wash
-/// that brightens on hover.
+/// the final fallback disappears. Visually minimal — just a faint
+/// theme-derived wash that brightens on hover.
 struct SearchTriggerPill: View {
     /// 28pt icon-only pill plus the 15pt safety gap on each side.
     static let minimumContainerWidth: CGFloat = 58

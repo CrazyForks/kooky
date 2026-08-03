@@ -373,23 +373,8 @@ struct SidebarView: View {
 
     @ViewBuilder
     private func brand(isCompact: Bool) -> some View {
-        if isCompact {
-            HoverableIconButton(
-                systemName: "plus",
-                fontSize: 12,
-                size: 28,
-                help: "New workspace"
-            ) {
-                store.addWorkspace()
-            }
-            .padding(.top, Theme.space3)
-            .padding(.bottom, Theme.space2)
-        } else {
-            HStack(spacing: 0) {
-                Text("kooky")
-                    .font(Theme.display(15, weight: .medium))
-                    .foregroundStyle(Theme.chromeForeground)
-                Spacer()
+        Group {
+            if isCompact {
                 HoverableIconButton(
                     systemName: "plus",
                     fontSize: 12,
@@ -398,11 +383,26 @@ struct SidebarView: View {
                 ) {
                     store.addWorkspace()
                 }
+            } else {
+                HStack(spacing: 0) {
+                    Text("kooky")
+                        .font(Theme.display(15, weight: .medium))
+                        .foregroundStyle(Theme.chromeForeground)
+                    Spacer()
+                    HoverableIconButton(
+                        systemName: "plus",
+                        fontSize: 12,
+                        size: 28,
+                        help: "New workspace"
+                    ) {
+                        store.addWorkspace()
+                    }
+                }
+                .padding(.horizontal, Theme.space4)
             }
-            .padding(.horizontal, Theme.space4)
-            .padding(.top, Theme.space3)
-            .padding(.bottom, Theme.space2)
         }
+        .frame(maxWidth: .infinity)
+        .frame(height: Theme.contentHeaderHeight)
     }
 
     /// Pinned bottom bar, full mode only — compact hides it since a 52pt
@@ -527,6 +527,10 @@ struct SidebarView: View {
                     onSetTag: { store.setTag($0, for: worktree) },
                     onGoToSource: { store.activateWorkspace(parent) }
                 )
+                // Source-list hierarchy should be visible without decoding a
+                // badge: worktree children sit one rhythm step inside their
+                // source workspace while keeping the row itself lightweight.
+                .padding(.leading, Theme.space3)
             }
         }
     }
