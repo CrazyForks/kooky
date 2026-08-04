@@ -2121,6 +2121,12 @@ enum KookyShellIntegration {
         _kooky_title_pwd() { printf '\\e]2;%s\\a' "$PWD"; }
         \(envStatusBlock)
 
+        # No command-line reporting here on purpose: bash gets no OSC 133 from
+        # kooky (only the zsh and fish integrations emit it), so there is no
+        # command RESULT for the text to label — it would cost a subshell plus
+        # a hook spawn per prompt to feed a row that can never render. Giving
+        # bash 133 is its own item: the `C` marker needs PS0, which stock
+        # macOS bash 3.2 doesn't have, so it needs a version gate like fish's.
         PROMPT_COMMAND="_kooky_title_pwd;_kooky_osc7_pwd;_kooky_env_status${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
         _kooky_osc7_pwd
         _kooky_env_status
@@ -2350,6 +2356,18 @@ enum KookyShellIntegration {
         end
     end
 
+    # The accepted command line, for the Session Info inspector. Deliberately
+    # OUTSIDE the OSC 133 version gate below: fish 4 emits the prompt/command
+    # boundaries natively, so this marker is what kooky needs on every fish.
+    # Control characters are flattened first — a raw BEL or ESC inside the
+    # command would terminate the OSC string early and let the rest of the
+    # command render as terminal output.
+    function __kooky_command_marker --on-event fish_preexec
+        set -l _kooky_cmd (string join ' ' -- $argv | string replace -ra '[[:cntrl:]]' ' ' | string trim | string sub -l \(CommandMarker.maxLength))
+        test -n "$_kooky_cmd"; or return
+        printf '\\e]2;\(CommandMarker.titlePrefix)%s\\a' $_kooky_cmd
+    end
+
     # OSC 133 prompt/command markers — fish 4+ emits these natively, so only add
     # them on fish 3.x to avoid double-marking. Gives kooky per-command exit
     # status (the failed-command red dot), duration, and jump-to-prompt.
@@ -2537,7 +2555,24 @@ enum KookyShellIntegration {
             # precmd hooks may sample.
             return 0
         }
-        __kooky_133_preexec() { printf '\e]133;C\a' }
+        __kooky_133_preexec() {
+            printf '\e]133;C\a'
+            # The accepted command line, for the Session Info inspector. It
+            # rides this same stream as the `D` result above precisely so it
+            # can never arrive after the exit status it labels. Control
+            # characters are flattened first: a raw BEL or ESC inside the
+            # command would terminate the OSC string early and let the rest of
+            # the command render as terminal output.
+            #
+            # Not `_kooky_cmd`: the agent-launch block below uses that name at
+            # top level, and shadowing a global with a same-named local is a
+            # trap for whoever edits either block next.
+            local _kooky_preexec_cmd=${1//[[:cntrl:]]/ }
+            if [[ -n "${_kooky_preexec_cmd//[[:space:]]/}" ]]; then
+                printf '\e]2;\#(CommandMarker.titlePrefix)%s\a' "${_kooky_preexec_cmd:0:\#(CommandMarker.maxLength)}"
+            fi
+            return 0
+        }
         add-zsh-hook precmd __kooky_133_precmd
         add-zsh-hook preexec __kooky_133_preexec
         """#

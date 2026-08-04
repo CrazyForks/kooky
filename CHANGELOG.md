@@ -2,6 +2,11 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.48.0 — 2026-08-05
+
+- New: Session Info panel — a third page in the right sidebar inspecting the active tab: workspace, directory, remote host, git branch/repo/diff, Python venv, Node version, proxy, a live process tree showing what's running and which ports it listens on, the last completed command with its exit code and duration (zsh/fish), and the terminal title. Sections collapse, and everything updates live as you work. Command lines are kept in memory only and never written to disk.
+- Fixed: on dark themes, the tab restored at app launch silently lost its shell integration — no failed-command red dot, no title or directory tracking, no agent detection — until it was closed and reopened. Restored tabs now spawn with their integration intact.
+
 ## v0.47.2 — 2026-08-04
 
 - Fixed split-pane Composer focus: clicking or focusing a Composer now activates its pane immediately, while each tab keeps its own draft and sends to the correct session.

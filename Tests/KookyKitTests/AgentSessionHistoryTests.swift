@@ -675,14 +675,14 @@ final class AgentSessionResumeTests: XCTestCase {
         let persistence = InMemoryPersistence()
         let store = WorkspaceStore(persistence: persistence, engineFactory: { TestEngine() })
         store.addWorkspace(workingDirectory: FileManager.default.temporaryDirectory)
-        store.setRightSidebarContent(.history)
+        store.setRightSidebarContent(.info)
         store.flushPersistence()
-        XCTAssertEqual(persistence.saved?.rightSidebarContent, .history)
+        XCTAssertEqual(persistence.saved?.rightSidebarContent, .info)
 
         let restored = WorkspaceStore(
             persistence: InMemoryPersistence(initial: persistence.saved),
             engineFactory: { TestEngine() }
         )
-        XCTAssertEqual(restored.rightSidebarContent, .history)
+        XCTAssertEqual(restored.rightSidebarContent, .info)
     }
 }

@@ -137,14 +137,17 @@ final class AgentMonitor {
                 state: Self.state(of: item.session),
                 tabTitle: item.session.title,
                 directory: item.workspace.diskPath,
-                remoteHost: item.session.sshWorkspaceHost ?? item.session.remoteHost,
+                remoteHost: item.session.effectiveRemoteHost,
                 tag: item.workspace.tag
             )
         }
         .sorted { $0.state < $1.state }
     }
 
-    private static func state(of session: Session) -> State {
+    /// `internal` so the Session Info inspector reports a tab's state with the
+    /// same words and colors the agents list gives it — two derivations would
+    /// drift the moment a state is added.
+    static func state(of session: Session) -> State {
         if session.activityState == .attention { return .attention }
         if let exit = session.lastCommandExit, exit != 0 { return .failed }
         if session.activityState == .running { return .running }
@@ -197,10 +200,10 @@ final class AgentMonitor {
     }
 }
 
-/// `Theme.activity*` is @MainActor; resolve the per-state accent here so both
-/// the full and compact rows share one mapping.
+/// `Theme.activity*` is @MainActor; resolve the per-state accent here so the
+/// full row, the compact rail, and the Session Info inspector share one mapping.
 @MainActor
-private func agentAccent(_ state: AgentMonitor.State) -> Color {
+func agentAccent(_ state: AgentMonitor.State) -> Color {
     switch state {
     case .attention: return Theme.activityAttention
     case .failed: return Theme.activityFailure
@@ -209,10 +212,19 @@ private func agentAccent(_ state: AgentMonitor.State) -> Color {
     }
 }
 
+/// The state WORD's color — `agentAccent` with idle lifted to the slightly
+/// brighter muted that text needs. The agents row and the Session Info
+/// identity row both render this word; the exception lives here so it can't
+/// fork between them (the compact rail's dot keeps raw `agentAccent`).
+@MainActor
+func agentStateWordColor(_ state: AgentMonitor.State) -> Color {
+    state == .idle ? Theme.chromeMuted.opacity(0.7) : agentAccent(state)
+}
+
 // MARK: - Right sidebar
 
-/// Shared title row + hairline for the right panel's two pages, so "agents"
-/// and "session history" stay pixel-identical by construction. Its height
+/// Shared title row + hairline for every right-panel page, so their headers
+/// stay pixel-identical by construction. Its height
 /// matches the pane tab strip and left sidebar header, forming one continuous
 /// content baseline below the window drag strip.
 struct RightPanelHeader<Trailing: View>: View {
@@ -247,7 +259,7 @@ extension RightPanelHeader where Trailing == EmptyView {
     }
 }
 
-/// Shared empty placeholder for the right panel's two pages.
+/// Shared empty placeholder for the right panel's pages.
 struct PanelEmptyState: View {
     let symbol: String
     let message: String
@@ -285,16 +297,19 @@ struct AgentOverviewSidebar: View {
         .glassChromeBackground()
     }
 
-    // Full: content (live agents or session history) + the footer toggle.
+    // Full: selected page + the footer toggle.
     // Compact never shows the footer — a 44pt rail can't host the history
     // list, so it pins to the agents rail (mirrors the left sidebar's
     // full-mode-only files toggle).
     private var fullBody: some View {
         VStack(spacing: 0) {
-            if store.rightSidebarContent == .history {
-                SessionHistoryView(store: store)
-            } else {
+            switch store.rightSidebarContent {
+            case .agents:
                 agentsBody
+            case .history:
+                SessionHistoryView(store: store)
+            case .info:
+                SessionInfoView(store: store)
             }
             footer
         }
@@ -328,6 +343,7 @@ struct AgentOverviewSidebar: View {
         HStack(spacing: 2) {
             footerSegment(.agents, systemName: "sparkles", help: "Agents")
             footerSegment(.history, systemName: "clock", help: "Session History")
+            footerSegment(.info, systemName: "info.circle", help: "Session Info")
             Spacer(minLength: 0)
         }
         .padding(.horizontal, Theme.space2)
@@ -388,7 +404,7 @@ private struct AgentOverviewRow: View {
             // The colored state word does the work the left accent bar used to.
             Text(entry.state.label)
                 .font(Theme.mono(9.5, weight: .medium))
-                .foregroundStyle(entry.state == .idle ? Theme.chromeMuted.opacity(0.7) : agentAccent(entry.state))
+                .foregroundStyle(agentStateWordColor(entry.state))
         }
         .padding(.horizontal, 14)
         .padding(.vertical, Theme.sidebarRowVerticalPadding)

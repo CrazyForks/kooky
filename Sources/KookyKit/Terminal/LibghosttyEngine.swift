@@ -45,6 +45,29 @@ final class LibghosttyApp {
         currentConfig = config
         refreshHostConfig()
         reportColorScheme()
+        // Immediately re-apply the SAME config handle now that the color
+        // scheme above has seeded the app's conditional state.
+        // `ghostty_app_new` stores the config with its BUILT-AT conditional
+        // state (light); on a dark theme the set_color_scheme flips the app
+        // state, and the next `ghostty_surface_new` — the restore-spawned
+        // first tab — detects the mismatch and REBUILDS its per-surface
+        // config from the original parse. That rebuild drops everything
+        // kooky injected via the surface-config env_vars (ZDOTDIR,
+        // KOOKY_SURFACE_ID, …): the first tab's shell spawns with no kooky
+        // integration at all — no shell hooks, no OSC 7/133, dead
+        // red-dot/title/cwd tracking (the "restored tab is silent" bug). The
+        // core's own corrective RELOAD_CONFIG action is coalesced onto the
+        // next runloop turn, which is too late — restore wins the race.
+        // Re-applying synchronously here puts the conditional-applied config
+        // in place before any surface can exist. Deliberately NOT a full
+        // `reloadConfig()`: the config was built microseconds ago (a rebuild
+        // re-reads the ghostty config + settings.json from disk for an
+        // identical result), nothing host-side changed, and `currentConfig`
+        // stays this same still-alive handle — the core deep-copies what it
+        // keeps.
+        if let app = self.app {
+            ghostty_app_update_config(app, config)
+        }
 
         // Input-source switches (US → Pinyin → Dvorak…) must invalidate the
         // core's cached keymap — `ghostty_surface_key_translation_mods` and

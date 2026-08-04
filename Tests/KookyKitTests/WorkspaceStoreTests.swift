@@ -1383,6 +1383,110 @@ final class WorkspaceStoreTests: XCTestCase {
         XCTAssertEqual(tabB.conversationId, "convo-b")
     }
 
+    /// Collapse lives on the store because the page unmounts on every panel
+    /// switch — the same reason the history filter does.
+    func testInfoSectionCollapseTogglesAndStartsFullyExpanded() {
+        let store = makeStore()
+
+        XCTAssertTrue(
+            store.collapsedInfoSections.isEmpty,
+            "every section opens by default — collapsing is the user's call"
+        )
+
+        store.toggleInfoSection("Context")
+        XCTAssertEqual(store.collapsedInfoSections, ["Context"])
+
+        store.toggleInfoSection("Runtime")
+        XCTAssertEqual(store.collapsedInfoSections, ["Context", "Runtime"])
+
+        store.toggleInfoSection("Context")
+        XCTAssertEqual(store.collapsedInfoSections, ["Runtime"])
+    }
+
+    func testCommandMarkerRecordsTextWithoutBecomingAVisibleTitle() {
+        let store = makeStore()
+        let ws = store.addWorkspace(workingDirectory: projectA)
+        let tabA = store.addTab(in: ws, template: .terminal)
+        let tabB = store.addTab(in: ws, template: .terminal)
+
+        engine(tabA).emitTitle(CommandMarker.titlePrefix + "  git status --short  ")
+        engine(tabA).emitCommandFinished(exit: 0, duration: 0.25)
+
+        XCTAssertEqual(tabA.lastCommandText, "git status --short")
+        XCTAssertNil(
+            tabA.terminalTitle,
+            "a command marker is consumed, never shown as the tab title"
+        )
+        XCTAssertNil(tabB.lastCommandText, "the marker rides one session's own stream")
+    }
+
+    /// The pairing of text with exit code depends on this: the keystroke that
+    /// starts the next command clears the previous pair, and the marker for the
+    /// new command arrives afterwards on the same stream.
+    func testUserInputClearsThePreviousCommandPair() {
+        let store = makeStore()
+        let ws = store.addWorkspace(workingDirectory: projectA)
+        let tab = store.addTab(in: ws, template: .terminal)
+
+        engine(tab).emitTitle(CommandMarker.titlePrefix + "ls")
+        engine(tab).emitCommandFinished(exit: 0, duration: 0.25)
+        XCTAssertEqual(tab.lastCommandText, "ls")
+
+        engine(tab).emitUserInput()
+        XCTAssertNil(tab.lastCommandText, "typing the next command must clear stale command text")
+        XCTAssertNil(tab.lastCommandExit)
+        XCTAssertNil(tab.lastCommandDuration)
+    }
+
+    /// The inspector's snapshot lives on the other side of that clear: it
+    /// survives input and is only replaced when the NEXT command completes.
+    func testCompletedCommandSnapshotSurvivesInputUntilReplaced() {
+        let store = makeStore()
+        let ws = store.addWorkspace(workingDirectory: projectA)
+        let tab = store.addTab(in: ws, template: .terminal)
+
+        engine(tab).emitTitle(CommandMarker.titlePrefix + "make build")
+        engine(tab).emitCommandFinished(exit: 2, duration: 3.5)
+        engine(tab).emitUserInput()
+
+        XCTAssertNil(tab.lastCommandExit, "precondition: the red-dot pair cleared")
+        XCTAssertEqual(tab.lastCompletedCommand?.text, "make build")
+        XCTAssertEqual(tab.lastCompletedCommand?.exit, 2)
+        XCTAssertEqual(tab.lastCompletedCommand?.duration, 3.5)
+
+        engine(tab).emitTitle(CommandMarker.titlePrefix + "make test")
+        engine(tab).emitCommandFinished(exit: 0, duration: 1.0)
+        XCTAssertEqual(tab.lastCompletedCommand?.text, "make test")
+        XCTAssertEqual(tab.lastCompletedCommand?.exit, 0)
+    }
+
+    /// A shell that omits the 133;D exit field never showed a Last-command
+    /// row before the snapshot existed; keep that gate.
+    func testExitlessCommandResultDoesNotSnapshot() {
+        let store = makeStore()
+        let ws = store.addWorkspace(workingDirectory: projectA)
+        let tab = store.addTab(in: ws, template: .terminal)
+
+        engine(tab).emitTitle(CommandMarker.titlePrefix + "ls")
+        engine(tab).emitCommandFinished(exit: nil, duration: 0.2)
+        XCTAssertNil(tab.lastCompletedCommand)
+    }
+
+    func testRemoteLoginMarkerDropsTheLocalSshCommandLabel() {
+        let store = makeStore()
+        let ws = store.addWorkspace(workingDirectory: projectA)
+        let tab = store.addTab(in: ws, template: .terminal)
+
+        engine(tab).emitTitle(CommandMarker.titlePrefix + "ssh build-box")
+        engine(tab).emitTitle(RemoteLoginMarker.titlePrefix + "build-box")
+
+        XCTAssertEqual(tab.remoteHost, "build-box")
+        XCTAssertNil(
+            tab.lastCommandText,
+            "OSC 133 results after this marker belong to remote commands, not `ssh build-box`"
+        )
+    }
+
     func testConversationIdSurvivesPersistenceRoundTrip() throws {
         let persistence = InMemoryPersistence()
         let store = WorkspaceStore(persistence: persistence, engineFactory: { TestEngine() })

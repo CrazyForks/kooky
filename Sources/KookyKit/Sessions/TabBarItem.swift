@@ -149,7 +149,11 @@ struct TabBarItem: View {
         )
     }
 
-    private static func formatDuration(_ seconds: TimeInterval) -> String {
+    /// Internal: the Session Info inspector renders the same OSC 133;D
+    /// duration — one formatter, or the tab tooltip and the inspector drift
+    /// on the next tier tweak. (`ToolCallActivityPill.formatElapsed` stays a
+    /// deliberately distinct style — see M5.bbbb.)
+    static func formatDuration(_ seconds: TimeInterval) -> String {
         if seconds < 1 { return "\(Int((seconds * 1000).rounded()))ms" }
         if seconds < 60 { return String(format: "%.1fs", seconds) }
         let minutes = Int(seconds / 60)

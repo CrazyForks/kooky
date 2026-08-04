@@ -106,6 +106,33 @@ final class Session: Identifiable {
     /// Wall-clock duration of the most recent command in seconds. Same source
     /// as `lastCommandExit`; `nil` until first OSC 133;D arrives.
     var lastCommandDuration: TimeInterval?
+    /// Shell-reported command line paired with `lastCommandExit`. The zsh/fish
+    /// preexec hooks emit it as a `CommandMarker` on the same byte stream as
+    /// the OSC 133 result, so the text is captured at the shell boundary
+    /// (history expansion and edits included) and can never arrive after the
+    /// result it labels. Runtime only — commands may carry credentials or
+    /// other sensitive arguments and are never persisted.
+    var lastCommandText: String?
+
+    /// The host this session's shell is on, when remote: the spawn-pinned
+    /// SSH-workspace host, else the ssh wrapper's login-marker host. The one
+    /// derivation for every surface that names a session's location (agent
+    /// panel, Session Info) — two spellings had already diverged once.
+    var effectiveRemoteHost: String? { sshWorkspaceHost ?? remoteHost }
+
+    /// The most recently COMPLETED command, for the Session Info inspector.
+    /// `lastCommandExit`/`lastCommandText` above are the red-dot pairing
+    /// buffer — cleared the moment the user types, so a stale failure dot
+    /// can't linger. An inspector that read them directly vanished its
+    /// "Last command" row on the first keystroke; this snapshot survives
+    /// input and is only ever REPLACED by the next completed command.
+    /// Runtime only for the same credential reason as the text above.
+    struct CompletedCommand {
+        let text: String?
+        let exit: Int
+        let duration: TimeInterval
+    }
+    var lastCompletedCommand: CompletedCommand?
 
     /// Per-session search state mirrored from libghostty's `start_search` /
     /// `search:<text>` / `navigate_search` / `end_search` action_cbs. Each

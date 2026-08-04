@@ -78,13 +78,14 @@ enum SidebarContent: String, Codable, Equatable, Sendable {
     case files
 }
 
-/// What the right sidebar shows in full mode — the live agent overview or the
-/// on-disk session history. Mirrors `SidebarContent`'s footer-toggle model.
-/// Compact mode always renders agents: a 44pt icon rail can't say anything
-/// useful about a history row.
-enum RightSidebarContent: String, Codable, Equatable, Sendable {
+/// What the right sidebar shows in full mode — live agents, on-disk history,
+/// or details for the active tab. Mirrors `SidebarContent`'s footer-toggle
+/// model. Compact mode always renders agents: a 44pt icon rail can't express
+/// either of the detail pages usefully.
+enum RightSidebarContent: String, Codable, Equatable, Sendable, CaseIterable {
     case agents
     case history
+    case info
 }
 
 @MainActor
@@ -105,7 +106,8 @@ final class WorkspaceStore {
     /// Left sidebar's middle content — workspace list or file tree. Persisted
     /// like `sidebarMode`; the footer toggle in `SidebarView` flips it.
     var sidebarContent: SidebarContent = .workspaces
-    /// Right sidebar's full-mode content — live agents or session history.
+    /// Right sidebar's full-mode content — live agents, history, or active
+    /// session information.
     /// Persisted like `sidebarContent`; the panel's own footer toggle flips it.
     var rightSidebarContent: RightSidebarContent = .agents
     /// History pane's agent filter + search text. Runtime-only, but owned by
@@ -114,6 +116,22 @@ final class WorkspaceStore {
     /// defaults on every reopen.
     var historyFilterAgentId: String?
     var historySearchQuery = ""
+    /// Session Info's collapsed sections, keyed by section title. Runtime-only
+    /// and owned by the store for exactly the reason above — the page unmounts
+    /// whenever the panel switches, so `@State` in the view would forget every
+    /// collapse the moment the user glanced at the agents list.
+    ///
+    /// Empty by default: every section opens, and collapsing is the user's
+    /// call to make (and keep).
+    var collapsedInfoSections: Set<String> = []
+
+    func toggleInfoSection(_ title: String) {
+        if collapsedInfoSections.contains(title) {
+            collapsedInfoSections.remove(title)
+        } else {
+            collapsedInfoSections.insert(title)
+        }
+    }
     /// Full-mode sidebar width, user-draggable from the trailing edge.
     /// `SidebarView.fullWidth` is the floor (the design width — the sidebar
     /// can only grow); compact stays fixed at `compactWidth` and hidden is
@@ -1783,6 +1801,15 @@ final class WorkspaceStore {
         }
         engine.onTitleChange = { [weak self, weak session] title in
             guard let session else { return }
+            // A `kooky-command:*` title is the preexec-reported command line,
+            // not a visible title. Checked first: it's by far the most frequent
+            // marker (one per command). Riding this stream rather than the
+            // socket is what guarantees it lands before the OSC 133;D result it
+            // labels — see `CommandMarker`.
+            if let command = CommandMarker.parseTitle(title) {
+                session.lastCommandText = command
+                return
+            }
             // A `kooky-remote-login:*` title is an ssh-destination marker, not
             // a visible title — record the host and stop before it reaches
             // `terminalTitle`. Cleared ONLY by the wrapper's logout marker
@@ -1790,6 +1817,11 @@ final class WorkspaceStore {
             // integration emits it per remote command, through the wire).
             if let host = RemoteLoginMarker.parseTitle(title) {
                 session.remoteHost = host
+                // The local preexec reported `ssh host`, but OSC 133 results
+                // arriving after this marker belong to commands inside the
+                // remote shell. Drop the local command label rather than pair
+                // it with an unrelated remote exit code.
+                session.lastCommandText = nil
                 return
             }
             if RemoteLoginMarker.isLogoutTitle(title) {
@@ -1852,6 +1884,17 @@ final class WorkspaceStore {
             self?.kiroConversationMonitor.stop(sessionId: session.id, removeRecord: true)
             session.lastCommandExit = exit
             session.lastCommandDuration = duration
+            // Inspector snapshot — taken here (completion), NOT cleared on
+            // input like the pair above. Exit-less results (a shell that
+            // omits the 133;D field) are skipped, matching the old
+            // `lastCommandExit != nil` display gate.
+            if let exit {
+                session.lastCompletedCommand = .init(
+                    text: session.lastCommandText,
+                    exit: exit,
+                    duration: duration
+                )
+            }
             // A non-zero exit on a backgrounded tab is worth a nudge;
             // AppDelegate gates on visibility + the notifications setting.
             if let exit, exit != 0 { self?.onSessionAlert(session.id, .failure) }
@@ -1868,6 +1911,10 @@ final class WorkspaceStore {
             guard let session, session.lastCommandExit != nil else { return }
             session.lastCommandExit = nil
             session.lastCommandDuration = nil
+            // Do not let a failed/missing command hook pair the next OSC 133
+            // result with stale text from the previous command. Its preexec
+            // report will repopulate this before the new result arrives.
+            session.lastCommandText = nil
         }
         engine.onProcessExitedCleanly = { [weak self, weak session, weak workspace] in
             guard let self, let session, let workspace else { return }

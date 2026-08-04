@@ -79,6 +79,10 @@ final class TestEngine: TerminalEngine {
         onCommandFinished?(exit, duration)
     }
 
+    func emitUserInput() {
+        onUserInput?()
+    }
+
     func emitTitle(_ title: String) {
         onTitleChange?(title)
     }

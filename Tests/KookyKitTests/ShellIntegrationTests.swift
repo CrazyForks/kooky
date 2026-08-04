@@ -656,6 +656,52 @@ final class ShellIntegrationTests: XCTestCase {
         XCTAssertTrue(s.contains(#"printf '\e]133;D;%s\a' $status"#), "the 3.x path must report command exit status")
     }
 
+    /// The marker must sit OUTSIDE the fish 3.x OSC 133 gate — fish 4 emits the
+    /// boundaries natively but never the command text kooky needs.
+    func testFishInitScriptEmitsCommandMarkerOnEverySupportedVersion() {
+        let s = KookyShellIntegration.fishInitScript
+        XCTAssertTrue(s.contains("function __kooky_command_marker --on-event fish_preexec"))
+        XCTAssertTrue(s.contains(#"printf '\e]2;\#(CommandMarker.titlePrefix)%s\a' $_kooky_cmd"#))
+        XCTAssertTrue(
+            s.contains("string replace -ra '[[:cntrl:]]' ' '"),
+            "a raw BEL/ESC would terminate the OSC string early"
+        )
+        XCTAssertTrue(s.contains("string sub -l \(CommandMarker.maxLength)"))
+
+        // The gate below it must still be version-scoped, not swallowed by the
+        // marker function landing in the same block.
+        XCTAssertTrue(s.contains(#"if test "$__kooky_major" -lt 4"#))
+    }
+
+    func testZshPreexecEmitsCommandMarkerAlongsideThe133Boundary() throws {
+        let dir = try XCTUnwrap(KookyShellIntegration.zshDirectory)
+        let s = try String(
+            contentsOfFile: (dir as NSString).appendingPathComponent(".zshrc"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(s.contains(#"printf '\e]2;\#(CommandMarker.titlePrefix)%s\a'"#))
+        XCTAssertTrue(
+            s.contains("${1//[[:cntrl:]]/ }"),
+            "a raw BEL/ESC would terminate the OSC string early"
+        )
+        XCTAssertTrue(s.contains(":0:\(CommandMarker.maxLength)}"))
+        XCTAssertFalse(
+            s.contains(#""$KOOKY_HOOK_BIN" command"#),
+            "reporting rides the byte stream — no fork on the pre-command path"
+        )
+    }
+
+    /// bash gets no OSC 133 from kooky, so there is no result for command text
+    /// to label. Reporting it would cost a subshell + a hook spawn per prompt
+    /// to feed a row that can never render.
+    func testBashDoesNotPayForCommandReportingItCannotDisplay() throws {
+        _ = try XCTUnwrap(KookyShellIntegration.bashLauncherPath)
+        let rcfile = NSTemporaryDirectory().appending("kooky-bashrc-\(getpid())")
+        let s = try String(contentsOfFile: rcfile, encoding: .utf8)
+        XCTAssertFalse(s.contains(CommandMarker.titlePrefix))
+        XCTAssertTrue(s.contains(#"PROMPT_COMMAND="_kooky_title_pwd;"#))
+    }
+
     func testFishInitScriptAutoLaunchesAgentAsOneShotPromptHook() {
         let s = KookyShellIntegration.fishInitScript
         // Agent launch defers to the first prompt (after config.fish) and removes
@@ -1040,6 +1086,7 @@ final class ShellIntegrationTests: XCTestCase {
         let rcPath = (dir as NSString).appendingPathComponent(".zshrc")
         XCTAssertTrue(fm.fileExists(atPath: rcPath))
         let original = try String(contentsOfFile: rcPath, encoding: .utf8)
+        XCTAssertTrue(original.contains(CommandMarker.titlePrefix), "zsh preexec must report the accepted command line")
 
         // The issue's second-scale repro: delete just the rc.
         try fm.removeItem(atPath: rcPath)

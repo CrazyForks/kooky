@@ -256,6 +256,7 @@
 "Workspaces" = "工作区";
 "Files" = "文件";
 "Session History" = "会话历史";
+"Session Info" = "会话信息";
 "Rescan sessions" = "重新扫描会话";
 "Compose (⌘L)" = "编写（⌘L）";
 "Open" = "打开";
@@ -276,6 +277,7 @@
 "Git repo" = "Git 仓库";
 "Git branch" = "Git 分支";
 "Git diff" = "Git 变更";
+"Worktree of" = "工作树来自";
 "unset %@" = "取消设置 %@";
 "▸ Ask %@" = "▸ 询问 %@";
 "Ask %@" = "询问 %@";
@@ -285,7 +287,9 @@
 "type prompt or command here" = "在此输入提示词或命令";
 "agents" = "智能体";
 "session history" = "会话历史";
+"session info" = "会话信息";
 "no agents running" = "没有正在运行的智能体";
+"no active session" = "没有活动会话";
 "scanning…" = "正在扫描…";
 "no sessions found" = "未找到会话";
 "search sessions" = "搜索会话";
@@ -354,6 +358,15 @@
 "Hide sidebar" = "隐藏侧边栏";
 "Show sidebar" = "显示侧边栏";
 "idle" = "空闲";
+"Context" = "上下文";
+"Source" = "源代码";
+"Runtime" = "运行时";
+"Processes" = "进程";
+"Workspace" = "工作区";
+"Directory" = "目录";
+"Remote" = "远程";
+"Last command" = "上一条命令";
+"Terminal title" = "终端标题";
 "waiting on you" = "正在等待你的操作";
 "command failed" = "命令执行失败";
 "Exit zoom (⌘⇧E)" = "退出缩放（⌘⇧E）";

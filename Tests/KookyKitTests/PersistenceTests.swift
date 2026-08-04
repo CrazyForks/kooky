@@ -136,11 +136,13 @@ final class PersistenceTests: XCTestCase {
     }
 
     func testRightSidebarContentRoundtrips() throws {
-        var state = makeState()
-        state.rightSidebarContent = .history
-        let data = try JSONEncoder().encode(state)
-        let decoded = try JSONDecoder().decode(PersistedState.self, from: data)
-        XCTAssertEqual(decoded.rightSidebarContent, .history)
+        for content in RightSidebarContent.allCases {
+            var state = makeState()
+            state.rightSidebarContent = content
+            let data = try JSONEncoder().encode(state)
+            let decoded = try JSONDecoder().decode(PersistedState.self, from: data)
+            XCTAssertEqual(decoded.rightSidebarContent, content)
+        }
     }
 
     func testRightSidebarContentDecodesNilFromPreHistoryStateFiles() throws {
