@@ -905,6 +905,7 @@ final class WorkspaceStoreTests: XCTestCase {
 
         store.closeTab(session, in: ws)
         XCTAssertEqual(firstPane(ws).tabs.count, 1)
+        XCTAssertTrue(store.canReopenClosedTab)
 
         let reopened = store.reopenLastClosedTab()
         let pane = firstPane(ws)
@@ -914,6 +915,7 @@ final class WorkspaceStoreTests: XCTestCase {
         XCTAssertEqual(reopened?.currentDirectory.path, projectB.path)
         XCTAssertEqual(reopened?.customTitle, "release prep")
         XCTAssertEqual(pane.activeTabId, reopened?.id)
+        XCTAssertFalse(store.canReopenClosedTab)
     }
 
     func testReopenIsLifoStack() {
@@ -936,6 +938,7 @@ final class WorkspaceStoreTests: XCTestCase {
 
     func testReopenWithEmptyStackReturnsNil() {
         let store = makeStore()
+        XCTAssertFalse(store.canReopenClosedTab)
         XCTAssertNil(store.reopenLastClosedTab())
     }
 

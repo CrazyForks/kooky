@@ -409,8 +409,17 @@ final class InboxWindowController: NSWindowController, DismissablePanel {
         // the top-right corner regardless of how tall it ended up.
         let size = panel.frame.size
         let ref = anchor?.frame ?? NSScreen.main?.visibleFrame ?? .zero
-        let x = ref.maxX - size.width - 16
-        let y = ref.maxY - 44 - size.height
-        panel.setFrameOrigin(NSPoint(x: x, y: y))
+        let preferred = NSPoint(
+            x: ref.maxX - size.width - 16,
+            y: ref.maxY - 44 - size.height
+        )
+        let visibleFrame = anchor?.screen?.visibleFrame
+            ?? NSScreen.main?.visibleFrame
+            ?? ref
+        panel.setFrameOrigin(PanelPlacement.clampedOrigin(
+            preferred: preferred,
+            panelSize: size,
+            visibleFrame: visibleFrame
+        ))
     }
 }

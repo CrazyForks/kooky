@@ -15,7 +15,7 @@ private enum MenuTag {
 }
 
 @MainActor
-public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemValidation {
     /// AppKit's supported system-appearance signal. Windows carry an explicit
     /// Aqua/Dark Aqua appearance for stable Liquid Glass rendering, so observe
     /// the application (which remains system-owned) rather than any window.
@@ -106,6 +106,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         // writes settings.json. Reload so first-launch imports are reflected
         // in the windows created below.
         settings.load()
+        // Keep the observable settings model independent of NSApplication.
+        // These are the only two imperative app-wide effects a save needs;
+        // wiring narrow callbacks here leaves AppDelegate as the owner of
+        // windows/stores and keeps standalone model tests AppKit-free.
+        settings.onAgentTemplatesChanged = { [weak self] in
+            self?.refreshAgentTemplates()
+        }
+        settings.onThemeAppearanceChanged = { [weak self] in
+            self?.refreshThemeAppearances()
+        }
         systemAppearanceObservation = NSApp.observe(
             \.effectiveAppearance,
             options: [.new]
@@ -1096,6 +1106,111 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 item.isHidden = MenuTag.workspaceIndex(from: item.tag) >= workspaceCount
             }
         }
+    }
+
+    /// App-scoped File/Window actions remain available while Settings or
+    /// another auxiliary window is key. Terminal-scoped actions do not: a
+    /// shortcut pressed in Settings must never mutate the last terminal
+    /// window hidden behind it. AppKit asks this for both menu display and
+    /// key-equivalent routing, which keeps the responder boundary in one
+    /// native validation hook instead of duplicating guards in every action.
+    public func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItemMatches(menuItem, #selector(handleCloseTab)) {
+            if let auxiliary = keyAuxiliaryWindow {
+                return auxiliary.windowController is DismissablePanel
+                    || auxiliary is NSSavePanel
+                    || auxiliary.sheetParent != nil
+                    || auxiliary.styleMask.contains(.closable)
+            }
+            return activeStore?.active?.activeSession != nil
+        }
+
+        let terminalWindowIsKey = keyAuxiliaryWindow == nil
+
+        if menuItemMatches(
+            menuItem,
+            #selector(handleFind),
+            #selector(handleFindNext),
+            #selector(handleFindPrevious),
+            #selector(handleComposePrompt),
+            #selector(handleRenameTab),
+            #selector(handleIncreaseFontSize),
+            #selector(handleDecreaseFontSize),
+            #selector(handleResetFontSize),
+            #selector(handleClearScrollback),
+            #selector(handleJumpToPreviousPrompt),
+            #selector(handleJumpToNextPrompt)
+        ) {
+            return terminalWindowIsKey && activeStore?.active?.activeSession != nil
+        }
+
+        if menuItemMatches(
+            menuItem,
+            #selector(handleSplitRight),
+            #selector(handleSplitDown)
+        ) {
+            return terminalWindowIsKey && activeStore?.active?.activePane != nil
+        }
+
+        if menuItemMatches(menuItem, #selector(handleToggleZoom)) {
+            return terminalWindowIsKey && (activeStore?.active?.canZoom ?? false)
+        }
+
+        if menuItemMatches(
+            menuItem,
+            #selector(handleFocusPreviousPane),
+            #selector(handleFocusNextPane)
+        ) {
+            return terminalWindowIsKey
+                && (activeStore?.active?.root.allPanes.count ?? 0) > 1
+        }
+
+        if menuItemMatches(
+            menuItem,
+            #selector(handleNextTab),
+            #selector(handlePreviousTab)
+        ) {
+            return terminalWindowIsKey
+                && (activeStore?.active?.activePane?.tabs.count ?? 0) > 1
+        }
+
+        if menuItemMatches(menuItem, #selector(handleSwitchTab(_:))) {
+            let index = MenuTag.tabIndex(from: menuItem.tag)
+            let count = activeStore?.active?.activePane?.tabs.count ?? 0
+            return terminalWindowIsKey && index >= 0 && index < count
+        }
+
+        if menuItemMatches(menuItem, #selector(handleSwitchWorkspace(_:))) {
+            let index = MenuTag.workspaceIndex(from: menuItem.tag)
+            let count = activeStore?.workspaces.count ?? 0
+            return terminalWindowIsKey && index >= 0 && index < count
+        }
+
+        if menuItemMatches(
+            menuItem,
+            #selector(handleToggleSidebar),
+            #selector(handleCloseWorkspace),
+            #selector(handleRenameWorkspace)
+        ) {
+            return terminalWindowIsKey && activeStore?.active != nil
+        }
+
+        if menuItemMatches(menuItem, #selector(handleReopenClosedTab)) {
+            return terminalWindowIsKey && (activeStore?.canReopenClosedTab ?? false)
+        }
+
+        #if DEBUG
+        if menuItemMatches(menuItem, #selector(handleCycleActivity)) {
+            return terminalWindowIsKey && activeStore?.active?.activeSession != nil
+        }
+        #endif
+
+        return true
+    }
+
+    private func menuItemMatches(_ item: NSMenuItem, _ selectors: Selector...) -> Bool {
+        guard let action = item.action else { return false }
+        return selectors.contains(action)
     }
 
     @objc private func handleIncreaseFontSize() {

@@ -89,7 +89,7 @@ private struct PaneView: View {
                         if active.searchActive {
                             PaneSearchBar(
                                 session: active,
-                                onFocusGained: { store.activateTab(active, in: workspace) }
+                                onFocusGained: { store.focusPane(pane, in: workspace) }
                             )
                             .padding(.top, Theme.space3)
                             .padding(.trailing, Theme.space3)
@@ -101,7 +101,9 @@ private struct PaneView: View {
                         if active.composerActive {
                             PaneComposerBar(
                                 session: active,
-                                onFocusGained: { store.activateTab(active, in: workspace) }
+                                pane: pane,
+                                workspace: workspace,
+                                store: store
                             )
                             .padding(.horizontal, Theme.space3)
                             .padding(.bottom, Theme.space3)
@@ -1352,13 +1354,18 @@ private struct PaneSearchBar: View {
 /// send, Shift+Return = newline — same as ChatGPT / Claude.ai / Slack).
 private struct PaneComposerBar: View {
     @Bindable var session: Session
-    let onFocusGained: () -> Void
+    let pane: Pane
+    let workspace: Workspace
+    let store: WorkspaceStore
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             ComposerTextView(
                 text: $session.composerDraft,
                 remotePasteHost: session.sshWorkspaceHost,
+                pane: pane,
+                workspace: workspace,
+                store: store,
                 onSend: send,
                 onCancel: close
             )
@@ -1397,7 +1404,11 @@ private struct PaneComposerBar: View {
                 .shadow(color: .black.opacity(0.3), radius: 12, y: 3)
         )
         .frame(maxWidth: .infinity)
-        .onAppear { onFocusGained() }
+        .contentShape(Rectangle())
+        .simultaneousGesture(TapGesture().onEnded {
+            store.focusPane(pane, in: workspace)
+        })
+        .onAppear { store.focusPane(pane, in: workspace) }
     }
 
     private func hint(_ key: String, _ label: String) -> some View {
@@ -1443,11 +1454,24 @@ private struct PaneComposerBar: View {
 /// them. Plain text falls through to NSTextView's native paste, keeping undo
 /// coalescing + smart behaviors.
 private final class ComposerNSTextView: NSTextView {
+    var onFocusGained: (() -> Void)?
+
     /// Session's spawn-pinned SSH host — same paste routing signal the
     /// surface's ⌘V uses (see `TerminalEngine.pasteUploadHostProvider`).
     /// A plain value, set once at construction: it never changes for a
     /// session's lifetime and the composer is `.id(session.id)`-scoped.
     var remotePasteHost: String?
+
+    override func becomeFirstResponder() -> Bool {
+        let became = super.becomeFirstResponder()
+        if became { onFocusGained?() }
+        return became
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        onFocusGained?()
+        super.mouseDown(with: event)
+    }
 
     override func paste(_ sender: Any?) {
         let pb = NSPasteboard.general
@@ -1478,11 +1502,16 @@ private final class ComposerNSTextView: NSTextView {
 private struct ComposerTextView: NSViewRepresentable {
     @Binding var text: String
     var remotePasteHost: String?
+    let pane: Pane
+    let workspace: Workspace
+    let store: WorkspaceStore
     var onSend: () -> Void
     var onCancel: () -> Void
 
     func makeNSView(context: Context) -> NSScrollView {
         let tv = ComposerNSTextView(frame: .zero)
+        let coordinator = context.coordinator
+        tv.onFocusGained = { [weak coordinator] in coordinator?.activatePane() }
         tv.remotePasteHost = remotePasteHost
         tv.minSize = .zero
         tv.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
@@ -1493,9 +1522,7 @@ private struct ComposerTextView: NSViewRepresentable {
         tv.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         tv.delegate = context.coordinator
         tv.string = text
-        tv.font = .monospacedSystemFont(ofSize: 12.5, weight: .regular)
-        tv.textColor = NSColor(Theme.chromeForeground)
-        tv.insertionPointColor = NSColor(Theme.chromeForeground)
+        applyAppearance(to: tv)
         tv.drawsBackground = false
         tv.isRichText = false
         tv.allowsUndo = true
@@ -1516,20 +1543,39 @@ private struct ComposerTextView: NSViewRepresentable {
         scroll.hasVerticalScroller = true
         scroll.borderType = .noBorder
         // Grab focus once the view lands in a window so Return / Esc route here.
-        DispatchQueue.main.async { tv.window?.makeFirstResponder(tv) }
+        DispatchQueue.main.async {
+            coordinator.activatePane()
+            tv.window?.makeFirstResponder(tv)
+        }
         return scroll
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
-        guard let tv = scroll.documentView as? NSTextView else { return }
+        guard let tv = scroll.documentView as? ComposerNSTextView else { return }
+        context.coordinator.parent = self
+        let coordinator = context.coordinator
+        tv.onFocusGained = { [weak coordinator] in coordinator?.activatePane() }
+        tv.remotePasteHost = remotePasteHost
         if tv.string != text { tv.string = text }
+        applyAppearance(to: tv)
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
+    private func applyAppearance(to textView: NSTextView) {
+        textView.font = .monospacedSystemFont(ofSize: 12.5, weight: .regular)
+        textView.textColor = NSColor(Theme.chromeForeground)
+        textView.insertionPointColor = NSColor(Theme.chromeForeground)
+    }
+
     final class Coordinator: NSObject, NSTextViewDelegate {
-        let parent: ComposerTextView
+        var parent: ComposerTextView
+
         init(_ parent: ComposerTextView) { self.parent = parent }
+
+        @MainActor func activatePane() {
+            parent.store.focusPane(parent.pane, in: parent.workspace)
+        }
 
         func textDidChange(_ notification: Notification) {
             guard let tv = notification.object as? NSTextView else { return }
@@ -1743,16 +1789,6 @@ struct DividerHandle: View {
         Rectangle()
             .fill(Color.white.opacity(0.001))
             .contentShape(Rectangle())
-            .onHover { isHovered in
-                if isHovered {
-                    if orientation == .horizontal {
-                        NSCursor.resizeLeftRight.push()
-                    } else {
-                        NSCursor.resizeUpDown.push()
-                    }
-                } else {
-                    NSCursor.pop()
-                }
-            }
+            .hoverCursor(orientation == .horizontal ? .resizeLeftRight : .resizeUpDown)
     }
 }

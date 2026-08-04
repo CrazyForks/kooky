@@ -2,6 +2,12 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.47.2 — 2026-08-04
+
+- Fixed split-pane Composer focus: clicking or focusing a Composer now activates its pane immediately, while each tab keeps its own draft and sends to the correct session.
+- Fixed terminal shortcuts while Settings, About, Quick Open, notifications, or a sheet is in front, so commands no longer mutate a terminal window hidden behind auxiliary UI; Reopen Closed Tab is disabled when there is nothing to reopen.
+- Kept Quick Open and notification panels on-screen near display edges, anchored Settings file and folder pickers to the Settings window, and prevented hover cursors from getting stuck when UI disappears under the pointer.
+
 ## v0.47.1 — 2026-08-03
 
 - Refined the main-window layout so the workspace header, pane tab bar, and Agent panel header share one aligned 40pt content baseline.

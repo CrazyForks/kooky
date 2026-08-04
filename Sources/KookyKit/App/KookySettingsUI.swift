@@ -121,6 +121,12 @@ final class KookySettingsModel {
     /// observe the same instance and react to user edits without a reload.
     static let shared = KookySettingsModel()
 
+    /// Narrow app-boundary callbacks. Tests and standalone model instances
+    /// keep the no-op defaults; AppDelegate wires the shared instance once at
+    /// launch, so persistence never reaches through global NSApp.delegate.
+    @ObservationIgnored var onAgentTemplatesChanged: () -> Void = {}
+    @ObservationIgnored var onThemeAppearanceChanged: () -> Void = {}
+
     /// Stored by macOS in the app preference domain, not settings.json.
     /// `launchedAppLanguage` stays pinned for this process so Settings can
     /// distinguish a pending preference from the language currently in use.
@@ -707,7 +713,7 @@ final class KookySettingsModel {
         // agent (a newly imported logo, a rename) would otherwise only reach
         // tabs opened afterwards. Unconditional: the store gates on an actual
         // template change, and this already runs behind the save debounce.
-        (NSApp.delegate as? AppDelegate)?.refreshAgentTemplates()
+        onAgentTemplatesChanged()
         KookyShellIntegration.refreshSshRemoteAgentDetection(enabled: sshRemoteAgentDetection)
         // Theme, appearance mode, or glass (blur / opacity) diff triggers the chrome /
         // window-appearance refresh — font and cursor changes also flow
@@ -725,7 +731,7 @@ final class KookySettingsModel {
         if terminalChanged || appearanceThemeChanged {
             LibghosttyApp.shared.reloadConfig()
             if themeChanged || glassChanged {
-                (NSApp.delegate as? AppDelegate)?.refreshThemeAppearances()
+                onThemeAppearanceChanged()
             }
         }
     }
@@ -1871,13 +1877,7 @@ private struct AgentReorderList: View {
                 }
             }
         }
-        if let window = NSApp.keyWindow {
-            panel.beginSheetModal(for: window) { response in
-                if response == .OK, let url = panel.url { assign(url) }
-            }
-        } else if panel.runModal() == .OK, let url = panel.url {
-            assign(url)
-        }
+        KookySettingsWindowController.shared.present(panel, onAccept: assign)
     }
 
     /// Binding into a specific custom agent's field. Returns a no-op binding
@@ -2235,6 +2235,20 @@ final class KookySettingsWindowController: NSWindowController {
         self.window = window
     }
 
+    /// Settings-owned open panels always attach to the Settings window, not
+    /// whichever unrelated auxiliary window happens to be globally key when
+    /// the action runs. The modal fallback only covers tests or a future
+    /// programmatic call before the Settings window has been built.
+    func present(_ panel: NSOpenPanel, onAccept: @escaping (URL) -> Void) {
+        if let window {
+            panel.beginSheetModal(for: window) { response in
+                if response == .OK, let url = panel.url { onAccept(url) }
+            }
+        } else if panel.runModal() == .OK, let url = panel.url {
+            onAccept(url)
+        }
+    }
+
     /// Opens `~/.kooky/settings.json` in a new kooky tab via `$EDITOR`
     /// (defaulting to `vi`). Falls back to the system default editor (via
     /// NSWorkspace) when no active workspace exists.
@@ -2379,13 +2393,7 @@ private struct TerminalPresetsList: View {
             guard let idx = model.terminalPresets.firstIndex(where: { $0.id == id }) else { return }
             model.terminalPresets[idx].path = (url.path as NSString).abbreviatingWithTildeInPath
         }
-        if let window = NSApp.keyWindow {
-            panel.beginSheetModal(for: window) { response in
-                if response == .OK, let url = panel.url { assign(url) }
-            }
-        } else if panel.runModal() == .OK, let url = panel.url {
-            assign(url)
-        }
+        KookySettingsWindowController.shared.present(panel, onAccept: assign)
     }
 
     private func toggleVisible(_ id: String) {

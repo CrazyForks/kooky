@@ -208,8 +208,16 @@ final class LibghosttyApp {
         hostConfig = next
     }
 
-    private func get<T>(_ config: ghostty_config_t, _ key: String, _ out: inout T) -> Bool {
-        ghostty_config_get(config, &out, key, UInt(key.utf8.count))
+    /// `ghostty_config_get` writes directly into caller-owned C storage.
+    /// Taking an UnsafeMutablePointer here (rather than accepting `inout` and
+    /// taking `&out` again) both models that ABI accurately and avoids Swift's
+    /// unsafe generic raw-pointer diagnostic.
+    private func get<T>(
+        _ config: ghostty_config_t,
+        _ key: String,
+        _ out: UnsafeMutablePointer<T>
+    ) -> Bool {
+        ghostty_config_get(config, out, key, UInt(key.utf8.count))
     }
 
     func tick() {

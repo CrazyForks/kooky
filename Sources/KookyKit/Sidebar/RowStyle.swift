@@ -24,6 +24,39 @@ extension View {
     func menuRowHover(_ isHovered: Bool) -> some View {
         background(isHovered ? Theme.chromeActive : Color.clear)
     }
+
+    /// Balanced AppKit cursor ownership for SwiftUI hover regions. A view can
+    /// disappear while still hovered (closing a popover, deleting a row), in
+    /// which case `onHover(false)` is not guaranteed; `onDisappear` releases
+    /// the matching push so the process-wide NSCursor stack cannot leak.
+    func hoverCursor(_ cursor: NSCursor) -> some View {
+        modifier(HoverCursorModifier(cursor: cursor))
+    }
+}
+
+private struct HoverCursorModifier: ViewModifier {
+    let cursor: NSCursor
+    @State private var isPushed = false
+
+    func body(content: Content) -> some View {
+        content
+            .onHover { hovering in
+                guard hovering != isPushed else { return }
+                if hovering {
+                    cursor.push()
+                    isPushed = true
+                } else {
+                    popIfNeeded()
+                }
+            }
+            .onDisappear(perform: popIfNeeded)
+    }
+
+    private func popIfNeeded() {
+        guard isPushed else { return }
+        NSCursor.pop()
+        isPushed = false
+    }
 }
 
 /// One row in a kooky popover menu — tab right-click, "+" agent menu, etc.
@@ -191,9 +224,7 @@ struct ReorderHandle: View {
             .foregroundStyle(Theme.chromeMuted.opacity(0.7))
             .frame(width: 22, height: 22)
             .contentShape(Rectangle())
-            .onHover { hovering in
-                if hovering { NSCursor.openHand.push() } else { NSCursor.pop() }
-            }
+            .hoverCursor(.openHand)
             .onDrag {
                 onBeginDrag()
                 return NSItemProvider(object: payload as NSString)

@@ -1136,6 +1136,9 @@ final class WorkspaceStore {
         }
     }
 
+    /// Menu validation uses this instead of exposing the history itself.
+    var canReopenClosedTab: Bool { !recentlyClosed.isEmpty }
+
     /// Pops the most recently closed tab off the history stack and re-spawns
     /// it. Routes back to the original workspace + pane when both still
     /// exist, falling back to the current workspace's active pane otherwise

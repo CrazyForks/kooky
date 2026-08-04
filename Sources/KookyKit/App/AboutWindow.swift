@@ -70,7 +70,7 @@ struct AboutView: View {
                 .foregroundStyle(Theme.chromeForeground)
         }
         .buttonStyle(.plain)
-        .pointingHandCursor()
+        .hoverCursor(.pointingHand)
     }
 }
 
@@ -104,14 +104,5 @@ final class AboutWindowController: NSWindowController {
         window.appearance = Theme.windowAppearance
         window.configureGlassChrome()
         self.window = window
-    }
-}
-
-private extension View {
-    /// Pointing-hand cursor on hover — links should feel clickable.
-    func pointingHandCursor() -> some View {
-        onHover { inside in
-            if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-        }
     }
 }

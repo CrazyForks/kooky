@@ -429,18 +429,30 @@ final class CommandPaletteWindowController: NSWindowController, DismissablePanel
         window?.orderOut(nil)
     }
 
-    /// Centred horizontally over `anchor`, parked ~120pt below its top
-    /// edge (Spotlight-style sweet spot). Uses the explicit `panelSize`
-    /// constant for centering rather than `panel.frame.size` because the
-    /// frame hasn't settled when we measure it right after swapping the
-    /// hostingController — reading observed size off-centers the panel.
+    /// Centred horizontally over `anchor`, parked ~120pt below its top edge
+    /// (Spotlight-style sweet spot), then clamped to the anchor's display so
+    /// a narrow/off-edge window can't strand part of the palette off-screen.
     private func positionAtTop(of anchor: NSWindow?) {
         guard let panel = window else { return }
         panel.setContentSize(Self.panelSize)
         let referenceFrame = anchor?.frame ?? NSScreen.main?.visibleFrame ?? .zero
-        let x = referenceFrame.midX - Self.panelSize.width / 2
-        let y = referenceFrame.maxY - 120 - Self.panelSize.height
-        panel.setFrameOrigin(NSPoint(x: x, y: y))
+        // `frameRect(forContentRect:)` is synchronous and includes any titled
+        // panel chrome without depending on the freshly-swapped host settling.
+        let frameSize = panel.frameRect(
+            forContentRect: NSRect(origin: .zero, size: Self.panelSize)
+        ).size
+        let preferred = NSPoint(
+            x: referenceFrame.midX - frameSize.width / 2,
+            y: referenceFrame.maxY - 120 - frameSize.height
+        )
+        let visibleFrame = anchor?.screen?.visibleFrame
+            ?? NSScreen.main?.visibleFrame
+            ?? referenceFrame
+        panel.setFrameOrigin(PanelPlacement.clampedOrigin(
+            preferred: preferred,
+            panelSize: frameSize,
+            visibleFrame: visibleFrame
+        ))
     }
 }
 
