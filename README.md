@@ -86,6 +86,8 @@ A minimal modern terminal built for AI coding. Sidebar workspaces; horizontal / 
 
 ![Search and resume any past Claude Code or Codex conversation](img/screenshot-5.webp)
 
+**Session Info.** The agent panel's third page — the ⓘ at the bottom — inspects the active tab: workspace, directory, remote host, git branch / repo / diff, Python venv, Node version, proxy, a live process tree showing what's running and which ports it listens on, the last completed command with its exit code and duration (zsh/fish), and the terminal title. Sections collapse, everything updates live as you work, and command lines are kept in memory only — never written to disk.
+
 **Menu bar agent glance.** An optional Kooky item in the macOS menu bar shows the live agent count only while agents are present. Open it to see every active agent tab with its project path, jump straight to one, open Kooky or Settings, change Keep Awake, or quit. Toggle it under Settings → General → `show-in-menu-bar`.
 
 **Open in your editor or terminal.** A split button in the top bar hands the current tab's directory to another app. Click the icon to reopen in your last-used app, or the chevron to pick from any supported app installed on your Mac: VS Code · Cursor · Windsurf · Zed · Sublime Text · Antigravity · Trae · Kiro · Xcode · IntelliJ IDEA · PyCharm · WebStorm · Terminal · iTerm · Ghostty · Warp · Finder. Reorder or hide them under Settings → Open in.

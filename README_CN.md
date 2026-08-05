@@ -86,6 +86,8 @@
 
 ![搜索并恢复任意一条 Claude Code / Codex 历史对话](img/screenshot-5.webp)
 
+**会话信息。** 把 agent 面板翻到第三页（底部的 ⓘ 图标），当前 tab 的一切都在这里：workspace、目录、远程主机、git 分支 / 仓库 / diff、Python venv、Node 版本、代理，一棵实时进程树告诉你正在跑什么、哪个进程在监听哪些端口，还有上一条完成的命令连同退出码和耗时（zsh / fish），以及终端标题。每个 section 都能折叠，内容随操作实时更新；命令行只存在内存里，绝不写盘。
+
 **菜单栏 Agent 概览。** macOS 菜单栏里可以显示一个 Kooky 图标，只有存在 agent 时才带上实时数量。点开即可查看所有活跃 agent 的 tab 标题和项目路径，并直接跳转；菜单还提供 Open Kooky、Settings、Keep Awake 三档切换和 Quit。可在 Settings → General → `show-in-menu-bar` 中开关。
 
 **在编辑器或终端里打开。** 顶栏一个分体按钮，把当前 tab 所在目录交给别的 app 打开。点图标用上次的 app 重新打开，点小箭头从你 Mac 上装了的所有支持 app 里选：VS Code · Cursor · Windsurf · Zed · Sublime Text · Antigravity · Trae · Kiro · Xcode · IntelliJ IDEA · PyCharm · WebStorm · Terminal · iTerm · Ghostty · Warp · Finder。可在 Settings → Open in 里排序或隐藏。

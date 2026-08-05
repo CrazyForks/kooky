@@ -86,6 +86,8 @@ AI コーディングのために作られた、ミニマルでモダンな macO
 
 ![過去の Claude Code / Codex の会話を検索して再開](img/screenshot-5.webp)
 
+**セッション情報。** Agent パネルの 3 ページ目 (下部の ⓘ アイコン) はアクティブな tab のインスペクタです: workspace・ディレクトリ・リモートホスト・git branch / リポジトリ / diff・Python venv・Node バージョン・proxy に加え、実行中のプロセスと各プロセスが listen しているポートを示すライブなプロセスツリー、直前に完了したコマンドとその終了コード・所要時間 (zsh/fish)、ターミナルタイトルまで確認できます。各セクションは折りたたみ可能で、作業に合わせてリアルタイムに更新されます。コマンドラインはメモリ内にのみ保持され、ディスクには書き込まれません。
+
 **メニューバーの Agent 一覧。** macOS のメニューバーに任意で Kooky アイテムを表示でき、agent が存在するときだけリアルタイムの件数が付きます。開くと、すべてのアクティブな agent tab のタイトルとプロジェクトパスを確認して直接ジャンプできるほか、Open Kooky、Settings、Keep Awake の 3 段階切り替え、Quit も利用できます。Settings → General → `show-in-menu-bar` で表示を切り替えられます。
 
 **エディタやターミナルで開く。** 上部 chrome の分割ボタンが、現在の tab のディレクトリを別のアプリに渡します。アイコンをクリックすると直前に使ったアプリで再度開き、シェブロンをクリックすると Mac にインストール済みの対応アプリから選べます: VS Code · Cursor · Windsurf · Zed · Sublime Text · Antigravity · Trae · Kiro · Xcode · IntelliJ IDEA · PyCharm · WebStorm · Terminal · iTerm · Ghostty · Warp · Finder。Settings → Open in で並べ替えや非表示ができます。
