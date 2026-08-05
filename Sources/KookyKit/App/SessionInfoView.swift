@@ -654,7 +654,7 @@ private struct FieldCopyButton: View {
         } label: {
             Text("\(Image(systemName: copied ? "checkmark" : "doc.on.doc"))")
                 .font(.system(size: 9, weight: .medium))
-                .foregroundStyle(copied ? Theme.gitInsertion : Theme.chromeMuted)
+                .foregroundStyle(copied ? Theme.activitySuccess : Theme.chromeMuted)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -767,8 +767,9 @@ private struct LastCommandField: View {
     @State private var isHovered = false
 
     private var command: String? { completed.text }
-    private var failed: Bool { completed.exit != 0 }
-    private var statusColor: Color { failed ? Theme.activityFailure : Theme.gitInsertion }
+    private var statusColor: Color {
+        completed.exit != 0 ? Theme.activityFailure : Theme.activitySuccess
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: SessionInfo.labelGap) {
@@ -780,35 +781,20 @@ private struct LastCommandField: View {
                 Spacer(minLength: 0)
             }
             VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(verbatim: "$")
-                        .foregroundStyle(Theme.chromeMuted)
-                    commandText
+                // One line while it fits — `$ cmd` left, meta right. A command
+                // too wide for that falls back to the stacked form instead of
+                // being truncated just to keep the meta beside it.
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        promptRow(wrapped: false)
+                        Spacer(minLength: 12)
+                        metaRow
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        promptRow(wrapped: true)
+                        metaRow
+                    }
                 }
-                .font(SessionInfo.valueFont)
-
-                HStack(spacing: 5) {
-                    Circle()
-                        .fill(statusColor)
-                        .frame(width: 4, height: 4)
-                    Text(
-                        LocalizedStringKey(failed ? "failed" : "succeeded"),
-                        bundle: .kookyResources
-                    )
-                    .foregroundStyle(statusColor)
-                    Text(verbatim: "·")
-                    Text(
-                        String.localizedStringWithFormat(
-                            String(localized: "exit %d", bundle: .kookyResources),
-                            completed.exit
-                        )
-                    )
-                    Text(verbatim: "·")
-                    Text(verbatim: TabBarItem.formatDuration(completed.duration))
-                    Spacer(minLength: 0)
-                }
-                .font(SessionInfo.stateFont)
-                .foregroundStyle(SessionInfo.labelText)
 
                 // The action gets its own row, not a seat on the meta row —
                 // squeezed beside "exit 1 · 3s" the button read as more meta,
@@ -831,19 +817,57 @@ private struct LastCommandField: View {
         .onHover { isHovered = $0 }
     }
 
+    private func promptRow(wrapped: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(verbatim: "$")
+                .foregroundStyle(Theme.chromeMuted)
+            commandText(wrapped: wrapped)
+        }
+        .font(SessionInfo.valueFont)
+    }
+
+    /// No status word and no dot: the red/green tint on `exit N` carries the
+    /// pass/fail semantics AND the number in one element (the agent panel made
+    /// the same call — colored word over a redundant accent bar).
+    private var metaRow: some View {
+        HStack(spacing: 5) {
+            Text(verbatim: TabBarItem.formatDuration(completed.duration))
+            Text(verbatim: "·")
+            Text(
+                String.localizedStringWithFormat(
+                    String(localized: "exit %d", bundle: .kookyResources),
+                    completed.exit
+                )
+            )
+            .foregroundStyle(statusColor)
+        }
+        .font(SessionInfo.stateFont)
+        .foregroundStyle(SessionInfo.labelText)
+        .fixedSize()
+    }
+
     /// `—` when the shell never reported the text: a remote command, or a
     /// result that arrived before the session's first `CommandMarker`.
+    /// `wrapped: false` is the one-line candidate: fixedSize so a long
+    /// command genuinely overflows — making ViewThatFits pick the stacked
+    /// form — instead of silently truncating to stay on one line. No `.help`
+    /// there: an untruncated line has nothing extra to reveal.
     @ViewBuilder
-    private var commandText: some View {
-        let text = Text(verbatim: command ?? "—")
+    private func commandText(wrapped: Bool) -> some View {
+        let base = Text(verbatim: command ?? "—")
             .foregroundStyle(command == nil ? Theme.chromeMuted : Theme.chromeForeground)
-            .lineLimit(2)
-            .truncationMode(.tail)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        if let command {
-            text.help(command)
+        if wrapped {
+            let text = base
+                .lineLimit(2)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if let command {
+                text.help(command)
+            } else {
+                text
+            }
         } else {
-            text
+            base.fixedSize(horizontal: true, vertical: false)
         }
     }
 }

@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.48.2 — 2026-08-06
+
+- Improved: the Session Info "Last command" card reads tighter — short commands share one line with their duration and exit code, the exit code itself is tinted green or red, and the redundant pass/fail word and status dot are gone.
+
 ## v0.48.1 — 2026-08-05
 
 - New: the Session Info panel is now hands-on — hover a field for a one-click copy of its full value, click a port chip to open it in the browser, and right-click a process to copy its PID or end it (with an in-menu confirm that double-checks the process is still the one you meant). Processes show live CPU and memory with busy rows highlighted, and ports sit on their own line under the process name.

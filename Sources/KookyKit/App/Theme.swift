@@ -290,11 +290,16 @@ enum Theme {
     static let activityRunning = Color(.sRGB, red: 0.41, green: 0.69, blue: 0.86, opacity: 1)
     static let activityAttention = Color(.sRGB, red: 0.91, green: 0.69, blue: 0.40, opacity: 1)
     static let activityFailure = Color(.sRGB, red: 0.91, green: 0.40, blue: 0.40, opacity: 1)
+    /// "Operation succeeded" green — tool-call ✓ glyph, copy feedback,
+    /// exit-0 tint. Named so success indicators can retune independently
+    /// of the git-diff palette if the two ever diverge.
+    static let activitySuccess = Color(.sRGB, red: 0.45, green: 0.78, blue: 0.50, opacity: 1)
 
     /// Git diff colors for the pane's bottom-right status — green for
-    /// insertions, red for deletions. `gitDeletion` reuses the failure red so
-    /// "red == something to look at" stays consistent across signals.
-    static let gitInsertion = Color(.sRGB, red: 0.45, green: 0.78, blue: 0.50, opacity: 1)
+    /// insertions, red for deletions. Both reuse the activity palette so
+    /// "green == good, red == something to look at" stays one hue per
+    /// signal across the app.
+    static let gitInsertion = activitySuccess
     static let gitDeletion = activityFailure
 
     /// Keep-awake status light (top strip). Tuned to read like the MacBook

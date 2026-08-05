@@ -27,7 +27,7 @@ extension ToolCallEventState {
         case .success:
             return Presentation(
                 textColor: Theme.chromeForeground,
-                glyphColor: Theme.gitInsertion,  // DRY reuse — same green as git diff
+                glyphColor: Theme.activitySuccess,
                 glyph: "✓",
                 accessibleName: String(localized: "succeeded", bundle: .kookyResources)
             )
