@@ -4,7 +4,7 @@ Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
 ## v0.48.1 — 2026-08-05
 
-- New: the Session Info panel is now hands-on — hover any field for a one-click copy of its full value, click a port chip to open it in the browser, and right-click a process to copy its PID or end it (with an in-menu confirm that double-checks the process is still the one you meant). Every process shows live CPU and memory with busy rows highlighted, and ports sit on their own line under the process name.
+- New: the Session Info panel is now hands-on — hover a field for a one-click copy of its full value, click a port chip to open it in the browser, and right-click a process to copy its PID or end it (with an in-menu confirm that double-checks the process is still the one you meant). Processes show live CPU and memory with busy rows highlighted, and ports sit on their own line under the process name.
 - New: a failed command gets an "Ask AI" button — one click hands the command, exit code, and directory to an AI agent in a new tab. The button remembers the agent you last picked; its dropdown lists your enabled agents in Settings order.
 - Improved: collapsed Session Info sections survive a relaunch, the process list no longer pops in after the page opens or shows another tab's processes during a switch, and SSH sessions say outright that remote processes aren't visible.
 
