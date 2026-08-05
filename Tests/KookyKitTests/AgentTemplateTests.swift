@@ -163,6 +163,53 @@ final class AgentTemplateTests: XCTestCase {
                        "agents must follow the preset block; Claude is the first builtin agent after Terminal")
     }
 
+    func testAskAgentPrefersLastPickThenDefaultThenFirst() {
+        let model = KookySettingsModel()
+        model.terminalPresets = []
+        model.hiddenAgents = []
+        model.agentOrder = []
+        // Roster is recomputed per assertion — hiddenAgents changes mid-test.
+        func resolved() -> String? {
+            let agents = AgentTemplate.askAgents(model: model)
+            return AgentTemplate.askAgent(in: agents, model: model)?.id
+        }
+
+        // The user's default IS an agent (and not the first one) → it wins.
+        model.defaultAgentId = AgentTemplate.codex.id
+        model.lastAskAgentId = nil
+        XCTAssertEqual(resolved(), AgentTemplate.codex.id)
+
+        // A remembered last pick beats the default.
+        model.lastAskAgentId = AgentTemplate.claudeCodeID
+        XCTAssertEqual(resolved(), AgentTemplate.claudeCodeID)
+
+        // A last pick the user has since hidden must be ignored, not honored.
+        model.hiddenAgents = [AgentTemplate.claudeCodeID]
+        XCTAssertEqual(resolved(), AgentTemplate.codex.id)
+
+        // Default is a shell and nothing remembered → first enabled agent.
+        // (askDefault resolves the id against the non-shell roster, so a
+        // shell default simply isn't found.)
+        model.hiddenAgents = []
+        model.lastAskAgentId = nil
+        model.defaultAgentId = "terminal"
+        XCTAssertEqual(resolved(), AgentTemplate.claudeCodeID)
+    }
+
+    func testAskAgentsAreEnabledAgentsInUserOrder() {
+        let model = KookySettingsModel()
+        model.terminalPresets = [TerminalPreset(id: "preset-a", title: "A", path: "/tmp")]
+        model.hiddenAgents = [AgentTemplate.claudeCodeID]
+        model.agentOrder = [AgentTemplate.gemini.id, AgentTemplate.codex.id]
+
+        let ids = AgentTemplate.askAgents(model: model).map(\.id)
+        XCTAssertEqual(Array(ids.prefix(2)), [AgentTemplate.gemini.id, AgentTemplate.codex.id],
+                       "the picker must follow the user's Settings → Agents order")
+        XCTAssertFalse(ids.contains(AgentTemplate.claudeCodeID), "hidden agents stay out of the picker")
+        XCTAssertFalse(ids.contains("terminal"), "shells have nothing to Ask")
+        XCTAssertFalse(ids.contains("preset-a"), "terminal presets are shells too")
+    }
+
     func testMakeSessionConfigInjectsResumeFlagForClaude() {
         let config = AgentTemplate.claudeCode.makeSessionConfig(resumeId: "abc-123")
         XCTAssertEqual(config.environment["KOOKY_AGENT"], "claude --resume abc-123")

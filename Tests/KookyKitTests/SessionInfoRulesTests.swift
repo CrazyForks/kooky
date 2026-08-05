@@ -124,4 +124,99 @@ final class SessionInfoRulesTests: XCTestCase {
         XCTAssertEqual(SessionInfoRules.abbreviatedPath("\(home)/Github"), "~/Github")
         XCTAssertEqual(SessionInfoRules.abbreviatedPath("/tmp/project"), "/tmp/project")
     }
+
+    // MARK: Section titles
+
+    /// The collapse keys ARE these strings on disk (state.json
+    /// `collapsedInfoSections`) — locked wire format, the M5.bbbbb tag-keys
+    /// lesson: reword a heading and every user's saved collapse state
+    /// silently orphans. Rename only with a migration.
+    func testInfoSectionTitlesAreALockedWireFormat() {
+        XCTAssertEqual(SessionInfoRules.contextTitle, "Context")
+        XCTAssertEqual(SessionInfoRules.sourceTitle, "Source")
+        XCTAssertEqual(SessionInfoRules.environmentTitle, "Environment")
+        XCTAssertEqual(SessionInfoRules.processesTitle, "Processes")
+        XCTAssertEqual(SessionInfoRules.runtimeTitle, "Runtime")
+    }
+
+    // MARK: Process usage label
+
+    /// Always show what was measured — a visibility threshold here made CPU
+    /// pop in and out every poll for a process hovering around the bar.
+    /// Quieting idle rows is the prominence tier's job, not visibility's.
+    func testProcessUsageLabelShowsWhatWasMeasured() {
+        XCTAssertNil(
+            SessionInfoRules.processUsageLabel(cpuPercent: nil, residentMB: nil),
+            "nothing readable (other-uid pid) is the only empty case"
+        )
+        XCTAssertEqual(SessionInfoRules.processUsageLabel(cpuPercent: 0, residentMB: 12), "0% · 12M")
+        XCTAssertEqual(SessionInfoRules.processUsageLabel(cpuPercent: 3, residentMB: 30), "3% · 30M")
+        XCTAssertEqual(
+            SessionInfoRules.processUsageLabel(cpuPercent: nil, residentMB: 313), "313M",
+            "first tick has no CPU window yet — memory alone, no placeholder percent"
+        )
+        XCTAssertEqual(SessionInfoRules.processUsageLabel(cpuPercent: 240, residentMB: 313), "240% · 313M")
+    }
+
+    /// The quiet mechanism: same numbers on every row, but only busy rows get
+    /// the readable tier — this replaced a visibility threshold that made CPU
+    /// blink in and out every poll for a process hovering around the bar.
+    func testProcessUsageProminenceLandsOnBusyRows() {
+        XCTAssertFalse(SessionInfoRules.processUsageIsProminent(cpuPercent: nil))
+        XCTAssertFalse(SessionInfoRules.processUsageIsProminent(cpuPercent: 0))
+        XCTAssertTrue(SessionInfoRules.processUsageIsProminent(cpuPercent: 1))
+    }
+
+    func testProcessUsageLabelFormatsGigabytes() {
+        XCTAssertEqual(SessionInfoRules.processUsageLabel(cpuPercent: nil, residentMB: 1229), "1.2G")
+        XCTAssertEqual(SessionInfoRules.processUsageLabel(cpuPercent: nil, residentMB: 1024), "1.0G")
+        XCTAssertEqual(SessionInfoRules.processUsageLabel(cpuPercent: nil, residentMB: 1023), "1023M")
+    }
+
+    // MARK: Ask-fix
+
+    func testAskFixOnlyOffersAFailedCommandWithText() {
+        XCTAssertEqual(
+            SessionInfoRules.askFixCommand(
+                completed: .init(text: "npm test", exit: 1, duration: 2),
+                sshWorkspaceHost: nil
+            ),
+            "npm test"
+        )
+        XCTAssertNil(
+            SessionInfoRules.askFixCommand(
+                completed: .init(text: "npm test", exit: 0, duration: 2),
+                sshWorkspaceHost: nil
+            ),
+            "a succeeded command has nothing to fix"
+        )
+        XCTAssertNil(
+            SessionInfoRules.askFixCommand(
+                completed: .init(text: nil, exit: 1, duration: 2),
+                sshWorkspaceHost: nil
+            ),
+            "no command text (bash / pre-marker) → the prompt can't say what failed"
+        )
+    }
+
+    /// Not a delivery problem (the spawn path carries prompts to the remote
+    /// fine) — a trust one: the prompt embeds the LOCAL cwd, which is
+    /// meaningless to a fresh remote agent.
+    func testAskFixHidesOnSSHWorkspaces() {
+        XCTAssertNil(
+            SessionInfoRules.askFixCommand(
+                completed: .init(text: "npm test", exit: 1, duration: 2),
+                sshWorkspaceHost: "devbox"
+            )
+        )
+    }
+
+    func testAskFixPromptCarriesCommandExitAndCwd() {
+        let prompt = SessionInfoRules.askFixPrompt(
+            command: "npm test", exit: 127, cwd: "/tmp/project"
+        )
+        XCTAssertTrue(prompt.contains("npm test"))
+        XCTAssertTrue(prompt.contains("127"))
+        XCTAssertTrue(prompt.contains("/tmp/project"))
+    }
 }

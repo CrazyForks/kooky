@@ -68,6 +68,10 @@ struct KookyMenuRow<Leading: View>: View {
     let localizesTitle: Bool
     let shortcut: String?
     let isDisabled: Bool
+    /// nil = the standard foreground. Set for rows whose next click is
+    /// destructive (an armed "Confirm Kill") so the state change is visible
+    /// before the damage, not after.
+    let titleColor: Color?
     let leading: Leading
     let action: () -> Void
 
@@ -78,6 +82,7 @@ struct KookyMenuRow<Leading: View>: View {
         localizesTitle: Bool = true,
         shortcut: String? = nil,
         isDisabled: Bool = false,
+        titleColor: Color? = nil,
         @ViewBuilder leading: () -> Leading,
         action: @escaping () -> Void
     ) {
@@ -85,6 +90,7 @@ struct KookyMenuRow<Leading: View>: View {
         self.localizesTitle = localizesTitle
         self.shortcut = shortcut
         self.isDisabled = isDisabled
+        self.titleColor = titleColor
         self.leading = leading()
         self.action = action
     }
@@ -101,7 +107,7 @@ struct KookyMenuRow<Leading: View>: View {
                     }
                 }
                     .font(Theme.display(12.5, weight: .regular))
-                    .foregroundStyle(isDisabled ? Theme.chromeMuted : Theme.chromeForeground)
+                    .foregroundStyle(isDisabled ? Theme.chromeMuted : (titleColor ?? Theme.chromeForeground))
                 Spacer(minLength: 0)
                 if let shortcut {
                     // System font (SF Pro) — the ⌘⇧⌥⌃ glyphs are designed for
@@ -133,6 +139,7 @@ extension KookyMenuRow where Leading == EmptyView {
         localizesTitle: Bool = true,
         shortcut: String? = nil,
         isDisabled: Bool = false,
+        titleColor: Color? = nil,
         action: @escaping () -> Void
     ) {
         self.init(
@@ -140,6 +147,7 @@ extension KookyMenuRow where Leading == EmptyView {
             localizesTitle: localizesTitle,
             shortcut: shortcut,
             isDisabled: isDisabled,
+            titleColor: titleColor,
             leading: { EmptyView() },
             action: action
         )

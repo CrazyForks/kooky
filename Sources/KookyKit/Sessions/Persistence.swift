@@ -18,6 +18,10 @@ struct PersistedState: Codable, Equatable {
     /// Optional so pre-resizable-sidebar state files decode (nil → the
     /// design width). Clamped on restore, not trusted from disk.
     var sidebarWidth: Double?
+    /// Session Info's collapsed section titles. Optional so state files
+    /// written before the inspector existed decode (nil → nothing collapsed);
+    /// stored sorted so the saved file is byte-stable across saves.
+    var collapsedInfoSections: [String]?
 }
 
 /// Root of the multi-window `state.json`. Each `PersistedWindow` is one

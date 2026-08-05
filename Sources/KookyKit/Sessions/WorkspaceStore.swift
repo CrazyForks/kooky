@@ -116,10 +116,11 @@ final class WorkspaceStore {
     /// defaults on every reopen.
     var historyFilterAgentId: String?
     var historySearchQuery = ""
-    /// Session Info's collapsed sections, keyed by section title. Runtime-only
-    /// and owned by the store for exactly the reason above — the page unmounts
-    /// whenever the panel switches, so `@State` in the view would forget every
-    /// collapse the moment the user glanced at the agents list.
+    /// Session Info's collapsed sections, keyed by section title. Owned by the
+    /// store for exactly the reason above — the page unmounts whenever the
+    /// panel switches, so `@State` in the view would forget every collapse the
+    /// moment the user glanced at the agents list. Persisted per window, so a
+    /// habitual "Processes stays folded" survives a relaunch too.
     ///
     /// Empty by default: every section opens, and collapsing is the user's
     /// call to make (and keep).
@@ -131,6 +132,7 @@ final class WorkspaceStore {
         } else {
             collapsedInfoSections.insert(title)
         }
+        scheduleSave()
     }
     /// Full-mode sidebar width, user-draggable from the trailing edge.
     /// `SidebarView.fullWidth` is the floor (the design width — the sidebar
@@ -1600,6 +1602,7 @@ final class WorkspaceStore {
         sidebarWidth = state.sidebarWidth
             .map { SidebarView.clampWidth(CGFloat($0)) }
             ?? SidebarView.fullWidth
+        collapsedInfoSections = Set(state.collapsedInfoSections ?? [])
     }
 
     private func restorePane(_ persisted: PersistedPaneNode, fm: FileManager, sshRemoteHost: String? = nil) -> PaneNode? {
@@ -2244,7 +2247,10 @@ final class WorkspaceStore {
             rightSidebarMode: rightSidebarMode,
             sidebarContent: sidebarContent,
             rightSidebarContent: rightSidebarContent,
-            sidebarWidth: Double(sidebarWidth)
+            sidebarWidth: Double(sidebarWidth),
+            collapsedInfoSections: collapsedInfoSections.isEmpty
+                ? nil
+                : collapsedInfoSections.sorted()
         )
     }
 

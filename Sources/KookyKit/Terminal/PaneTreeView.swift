@@ -865,8 +865,7 @@ private struct GitRepoStatusSegment: View {
                 Divider()
                 KookyMenuRow(title: "Copy Repo URL") {
                     dismiss()
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(remote.webURL.absoluteString, forType: .string)
+                    writeToGeneralPasteboard(remote.webURL.absoluteString)
                 }
             } else {
                 KookyMenuRow(title: "No remote configured", isDisabled: true) {}
@@ -1007,8 +1006,7 @@ private struct ProxyStatusSegment: View {
             ForEach(entries, id: \.self) { entry in
                 ProxyEntryRow(entry: entry) {
                     // Click entry text → copy raw `name=value` to clipboard.
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(entry, forType: .string)
+                    writeToGeneralPasteboard(entry)
                     dismiss()
                 } onUnset: { name in
                     // `unset` lowercase + uppercase together — corporate
@@ -1125,8 +1123,7 @@ private struct PaneContextMenu: View {
             }
             KookyMenuRow(title: "Copy", shortcut: "⌘C", isDisabled: !hasSelection) {
                 isPresented = false
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(selection, forType: .string)
+                writeToGeneralPasteboard(selection)
             }
             KookyMenuRow(title: "Paste", shortcut: "⌘V", isDisabled: !pasteAvailable) {
                 isPresented = false
@@ -1163,15 +1160,13 @@ private struct PaneContextMenu: View {
     }
 
     private func buildAskRows() -> [(template: AgentTemplate, isDefault: Bool)] {
-        // Shells (default Terminal + presets) have nothing to "Ask".
-        let defaultId = AgentTemplate.defaultLaunchTemplate(model: model)
-            .flatMap { $0.isShell ? nil : $0.id }
-        let visible = AgentTemplate.visibleOrdered(model: model).filter { !$0.isShell }
+        // Same roster + default rule as the Session Info "Ask AI" button —
+        // one derivation, two surfaces, no drift.
+        let visible = AgentTemplate.askAgents(model: model)
+        let def = AgentTemplate.askDefault(in: visible, model: model)
         var rows: [(AgentTemplate, Bool)] = []
-        if let defaultId, let def = visible.first(where: { $0.id == defaultId }) {
-            rows.append((def, true))
-        }
-        for t in visible where t.id != defaultId {
+        if let def { rows.append((def, true)) }
+        for t in visible where t.id != def?.id {
             rows.append((t, false))
         }
         return rows

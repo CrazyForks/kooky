@@ -786,6 +786,39 @@ extension AgentTemplate {
         return visibleOrdered(model: model).first { $0.id == id }
     }
 
+    /// The Ask roster — every surface that offers "ask an agent" (the
+    /// Session Info split button, the right-click "Ask <agent>" menu) starts
+    /// from this: the `+` menu's agents in the user's own Settings → Agents
+    /// order. Hidden agents are already gone via `visibleOrdered`; shells
+    /// (Terminal + presets) are filtered HERE — there's nothing to ask them.
+    @MainActor
+    static func askAgents(model: KookySettingsModel) -> [AgentTemplate] {
+        visibleOrdered(model: model).filter { !$0.isShell }
+    }
+
+    /// The user's default launch template resolved against the ask roster —
+    /// nil when the default is a shell or unknown, because a shell simply
+    /// isn't in the roster. Shared by `askAgent`'s middle clause and the
+    /// right-click menu's "▸ Ask" first row, so the two can't drift.
+    @MainActor
+    static func askDefault(in agents: [AgentTemplate], model: KookySettingsModel) -> AgentTemplate? {
+        guard let id = model.defaultAgentId else { return nil }
+        return agents.first { $0.id == id }
+    }
+
+    /// The agent an "Ask AI" split button's PLAIN click targets: the last one
+    /// the user picked from its menu (if still enabled) > the default launch
+    /// template (if it IS an agent) > the first enabled agent. nil when every
+    /// agent is hidden — the button hides with it. Takes the precomputed
+    /// roster so one body evaluation builds it exactly once.
+    @MainActor
+    static func askAgent(in agents: [AgentTemplate], model: KookySettingsModel) -> AgentTemplate? {
+        if let last = model.lastAskAgentId, let hit = agents.first(where: { $0.id == last }) {
+            return hit
+        }
+        return askDefault(in: agents, model: model) ?? agents.first
+    }
+
     /// Materialises a user-defined custom agent into a runtime `AgentTemplate`.
     /// When `baseAgentId` matches a builtin, the custom inherits that
     /// builtin's `iconAsset` / `symbol` / `tintHex` *and* its `initialCommand`

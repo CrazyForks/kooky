@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Active-tab details for the right sidebar. The view reads the store's
@@ -78,7 +79,7 @@ struct SessionInfoView: View {
     private func fields(session: Session, workspace: Workspace) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                SessionInfoSection(title: "Context", store: store) {
+                SessionInfoSection(title: SessionInfoRules.contextTitle, store: store) {
                     InlineField(label: "Workspace", value: workspace.title)
                     BlockField(label: "Directory", value: abbreviatedPath(session.currentDirectory.path))
                     if let remote = session.effectiveRemoteHost {
@@ -87,7 +88,7 @@ struct SessionInfoView: View {
                 }
 
                 if hasSourceInfo(session: session, workspace: workspace) {
-                    SessionInfoSection(title: "Source", store: store) {
+                    SessionInfoSection(title: SessionInfoRules.sourceTitle, store: store) {
                         if let branch = session.gitStatus.branch {
                             InlineField(label: "Git branch", value: branch)
                         }
@@ -107,7 +108,7 @@ struct SessionInfoView: View {
                 }
 
                 if !session.environment.isEmpty {
-                    SessionInfoSection(title: "Environment", store: store) {
+                    SessionInfoSection(title: SessionInfoRules.environmentTitle, store: store) {
                         if let python = session.environment.pythonVenv {
                             InlineField(label: "Python venv", value: python)
                         }
@@ -120,16 +121,36 @@ struct SessionInfoView: View {
                     }
                 }
 
-                if !processes.isEmpty {
-                    SessionInfoSection(title: SessionInfo.processesTitle, store: store) {
+                // Always mounted: gated on the first scan, the section popped
+                // in a beat after the page and shoved everything below it. The
+                // placeholder holds the frame instead — it is also what shows
+                // while a tab switch clears the previous tab's rows.
+                SessionInfoSection(title: SessionInfoRules.processesTitle, store: store) {
+                    if processes.isEmpty {
+                        Text(verbatim: "—")
+                            .font(SessionInfo.valueFont)
+                            .foregroundStyle(Theme.chromeMuted)
+                    } else {
                         ForEach(processes) { ProcessRow(process: $0) }
+                    }
+                    // The scan is honest but incomplete over SSH: the local
+                    // tty only carries the ssh process itself, so say so
+                    // rather than letting one bare `ssh` row read as "this
+                    // tab is running nothing".
+                    if session.effectiveRemoteHost != nil {
+                        Text("remote processes not visible", bundle: .kookyResources)
+                            .font(SessionInfo.labelFont)
+                            .foregroundStyle(SessionInfo.labelText)
                     }
                 }
 
                 if hasRuntimeInfo(session) {
-                    SessionInfoSection(title: "Runtime", store: store) {
+                    SessionInfoSection(title: SessionInfoRules.runtimeTitle, store: store) {
                         if let completed = session.lastCompletedCommand {
-                            LastCommandField(completed: completed)
+                            LastCommandField(
+                                completed: completed,
+                                askFix: askFix(session: session, workspace: workspace, completed: completed)
+                            )
                         }
                         if let title = visibleTerminalTitle(session) {
                             BlockField(label: "Terminal title", value: title)
@@ -154,25 +175,39 @@ struct SessionInfoView: View {
         // it on a tab switch; unmounting the page cancels it, so nothing polls
         // while another panel page is up.
         .task(id: session.id) {
+            // A tab switch restarts this task: drop the previous tab's rows
+            // right away instead of letting them sit under the new tab's name
+            // until the first scan lands — the inspector must never attribute
+            // another tab's processes to this one.
+            processes = []
+            // Loop-carried, deliberately NOT @State: nothing in body reads
+            // it, and a @State write would invalidate the whole page every
+            // tick (`atNs` never repeats), defeating the equality gate
+            // below. The task restart on a tab switch resets it for free.
+            var previousCPU: SessionProcessScanner.CPUSamples?
             while !Task.isCancelled {
                 // Skip the walk while the section is collapsed — the rows
                 // aren't rendered, and the stale snapshot keeps the section
                 // mounted. Re-checked per tick, so expanding recovers within
                 // one poll interval.
-                if !store.collapsedInfoSections.contains(SessionInfo.processesTitle) {
+                if !store.collapsedInfoSections.contains(SessionInfoRules.processesTitle) {
                     // Off the main thread: the port walk costs one socket-info
                     // call per socket fd, which on a connection-heavy child
                     // (an agent with MCP servers, a loaded dev server)
                     // reaches milliseconds — a poll must never cost a frame.
                     let pid = session.engine.foregroundPid ?? 0
+                    let window = previousCPU
                     let scanned = await Task.detached {
-                        SessionProcessScanner.scan(foregroundPid: pid)
+                        SessionProcessScanner.scan(foregroundPid: pid, previousCPU: window)
                     }.value
+                    previousCPU = scanned.cpu
                     // A detached task doesn't inherit cancellation: a tab
                     // switch mid-scan restarts this loop for the NEW session,
                     // and the old scan would land afterwards, overwriting the
                     // new tab's rows with the old tab's until the next tick.
-                    if !Task.isCancelled, scanned != processes { processes = scanned }
+                    if !Task.isCancelled, scanned.processes != processes {
+                        processes = scanned.processes
+                    }
                 }
                 try? await Task.sleep(for: Self.processPollInterval)
             }
@@ -200,6 +235,42 @@ struct SessionInfoView: View {
         return store.workspaces.first { $0.id == parentId }
     }
 
+    /// The one-click "hand this failure to an agent" affordance, or nil when
+    /// it can't do its job (gates in `SessionInfoRules.askFixCommand`, plus
+    /// "no agent installed/visible"). The prompt is built here, from the same
+    /// snapshot the field renders, so what the agent receives is exactly what
+    /// the row showed. Running remembers the pick (`lastAskAgentId`) so the
+    /// plain click tracks the user's last choice, the Open-in model.
+    private func askFix(
+        session: Session,
+        workspace: Workspace,
+        completed: Session.CompletedCommand
+    ) -> LastCommandField.AskFix? {
+        guard let command = SessionInfoRules.askFixCommand(
+            completed: completed,
+            sshWorkspaceHost: session.sshWorkspaceHost
+        ) else { return nil }
+        let model = KookySettingsModel.shared
+        let agents = AgentTemplate.askAgents(model: model)
+        guard let current = AgentTemplate.askAgent(in: agents, model: model) else { return nil }
+        let prompt = SessionInfoRules.askFixPrompt(
+            command: command,
+            exit: completed.exit,
+            cwd: session.currentDirectory.path
+        )
+        let cwd = session.currentDirectory
+        return LastCommandField.AskFix(current: current, agents: agents) { agent in
+            model.noteAskAgentPicked(agent.id)
+            let tab = store.addTab(
+                in: workspace,
+                template: agent,
+                initialCwd: cwd,
+                initialPrompt: prompt
+            )
+            store.activateTab(tab, in: workspace)
+        }
+    }
+
     private func abbreviatedPath(_ path: String) -> String {
         SessionInfoRules.abbreviatedPath(path)
     }
@@ -217,6 +288,17 @@ struct SessionInfoView: View {
 /// impossible to disagree — and puts them somewhere a test can reach.
 @MainActor
 enum SessionInfoRules {
+    /// Section display titles doubling as the persisted collapse keys
+    /// (state.json `collapsedInfoSections`) — a LOCKED wire format, the
+    /// M5.bbbbb tag-keys lesson: renaming one silently orphans every user's
+    /// saved collapse state. Reword a heading only with a migration;
+    /// `testInfoSectionTitlesAreALockedWireFormat` pins the strings.
+    static let contextTitle = "Context"
+    static let sourceTitle = "Source"
+    static let environmentTitle = "Environment"
+    static let processesTitle = "Processes"
+    static let runtimeTitle = "Runtime"
+
     static func hasSourceInfo(session: Session, worktreeParent: Workspace?) -> Bool {
         session.gitStatus.branch != nil
             || visibleRepoRoot(session) != nil
@@ -247,6 +329,62 @@ enum SessionInfoRules {
 
     static func abbreviatedPath(_ path: String) -> String {
         (path as NSString).abbreviatingWithTildeInPath
+    }
+
+    /// The usage column: whatever was measured, always — a first cut hid
+    /// values below a threshold, and CPU hovering around the bar popped in
+    /// and out every poll, which reads as glitch, not quiet. Quiet is the
+    /// COLOR's job now (`processUsageIsProminent`): idle rows keep their
+    /// numbers but sink to the faint tier. nil only when nothing was
+    /// readable at all (other-uid pid).
+    static func processUsageLabel(cpuPercent: Int?, residentMB: Int?) -> String? {
+        var parts: [String] = []
+        if let cpu = cpuPercent { parts.append("\(cpu)%") }
+        if let mb = residentMB {
+            // C-locale format on purpose: "1.2G" is a unit readout, not prose.
+            parts.append(mb >= 1024 ? String(format: "%.1fG", Double(mb) / 1024) : "\(mb)M")
+        }
+        // The interpunct is the page's one meta-separator (the command status
+        // row uses it too) — without it "47% 1.2G" reads as one blob.
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// Whether a row's usage deserves the readable tier: it's DOING
+    /// something. Everything else stays legible but faint, so a scan of the
+    /// list lands on the busy row without anything blinking in and out.
+    static func processUsageIsProminent(cpuPercent: Int?) -> Bool {
+        (cpuPercent ?? 0) >= 1
+    }
+
+    /// The command an "ask agent to fix" button would quote, or nil when the
+    /// button must hide: the command succeeded, there's no text to quote
+    /// (remote command, bash, pre-marker), or this is an SSH workspace.
+    /// The SSH gate is NOT about delivery — the spawn path carries an
+    /// initial prompt to the remote fine (only the resume id is dropped,
+    /// see `makeSessionConfig`) — it's about truth: the prompt embeds the
+    /// LOCAL `currentDirectory` (a remote's OSC 7 never arrives) and quotes
+    /// a failure from a mixed local/remote context, which would send a
+    /// fresh remote agent chasing a local path.
+    static func askFixCommand(
+        completed: Session.CompletedCommand,
+        sshWorkspaceHost: String?
+    ) -> String? {
+        guard sshWorkspaceHost == nil,
+              completed.exit != 0,
+              let text = completed.text
+        else { return nil }
+        return text
+    }
+
+    /// English on purpose — it's addressed to the agent, not the user.
+    static func askFixPrompt(command: String, exit: Int, cwd: String) -> String {
+        """
+        This command failed with exit code \(exit) (ran in \(cwd)):
+
+        \(command)
+
+        Diagnose why it failed and fix it.
+        """
     }
 
     /// "Blank means absent" is `normalizedTitle`'s one rule — this is just
@@ -332,41 +470,201 @@ private struct SectionDisclosureStyle: ButtonStyle {
 private struct ProcessRow: View {
     let process: SessionProcess
 
+    @State private var contextMenu: PopoverPresentation<SessionProcess>?
+
     var body: some View {
-        HStack(spacing: 6) {
-            // Fixed marker column outside the indent, so nesting reads off one
-            // straight edge instead of stepping with the dot.
-            Circle()
-                .fill(process.isForeground ? Theme.activityRunning : .clear)
-                .frame(width: 4, height: 4)
-            Text(verbatim: process.name)
-                .font(SessionInfo.valueFont)
-                .foregroundStyle(
-                    process.isForeground
-                        ? Theme.chromeForeground
-                        : Theme.chromeForeground.opacity(0.7)
-                )
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .padding(.leading, CGFloat(process.depth) * 6)
-            if !process.ports.isEmpty {
-                // "which port did my dev server take" — worth keeping whole,
-                // so the NAME truncates first when the row runs out of room.
-                Text(verbatim: process.ports.map { ":\($0)" }.joined(separator: " "))
-                    .font(SessionInfo.labelFont)
-                    .foregroundStyle(SessionInfo.labelText)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                // Fixed marker column outside the indent, so nesting reads off
+                // one straight edge instead of stepping with the dot.
+                Circle()
+                    .fill(process.isForeground ? Theme.activityRunning : .clear)
+                    .frame(width: 4, height: 4)
+                Text(verbatim: process.name)
+                    .font(SessionInfo.valueFont)
+                    .foregroundStyle(
+                        process.isForeground
+                            ? Theme.chromeForeground
+                            : Theme.chromeForeground.opacity(0.7)
+                    )
                     .lineLimit(1)
-                    .layoutPriority(1)
+                    .truncationMode(.middle)
+                    .padding(.leading, CGFloat(process.depth) * 6)
+                Spacer(minLength: 8)
+                // Busy rows read, idle rows sink to the faint tier — same
+                // numbers, different weight, nothing blinking in and out.
+                if let usage = SessionInfoRules.processUsageLabel(
+                    cpuPercent: process.cpuPercent,
+                    residentMB: process.residentMB
+                ) {
+                    Text(verbatim: usage)
+                        .font(SessionInfo.labelFont)
+                        .foregroundStyle(
+                            SessionInfoRules.processUsageIsProminent(cpuPercent: process.cpuPercent)
+                                ? SessionInfo.labelText
+                                : Theme.chromeFaint
+                        )
+                        .lineLimit(1)
+                }
+                // Faintest thing on the row, held off the usage column by an
+                // extra step of space: usage is live state worth reading, the
+                // pid is an identifier you only need when you go for it (the
+                // row's right-click copies it).
+                Text(verbatim: "\(process.pid)")
+                    .font(SessionInfo.labelFont)
+                    .foregroundStyle(Theme.chromeFaint)
+                    .padding(.leading, 6)
             }
-            Spacer(minLength: 8)
-            Text(verbatim: "\(process.pid)")
-                .font(SessionInfo.labelFont)
-                .foregroundStyle(SessionInfo.labelText)
+            // Ports get their own line under the name: they're what the
+            // process OFFERS, not what it costs, and a multi-listener dev
+            // server was crowding the name off the row. Indented to the
+            // name's own left edge (marker column + gutter + depth).
+            if !process.ports.isEmpty {
+                HStack(spacing: 4) {
+                    ForEach(process.ports, id: \.self) { PortLink(port: $0) }
+                }
+                .padding(.leading, 10 + CGFloat(process.depth) * 6)
+            }
+        }
+        .contentShape(Rectangle())
+        // The row's own immutable snapshot rides the presentation as the item
+        // (the popover rule); a `.contextMenu` would fight the page's popover
+        // menu language, and the catcher lets left clicks fall through to the
+        // port links.
+        .overlay(RightClickCatcher { _ in
+            contextMenu = PopoverPresentation(value: process)
+        })
+        .popover(item: $contextMenu, arrowEdge: .trailing) { presented in
+            ProcessContextMenu(process: presented.value) { contextMenu = nil }
         }
     }
 }
 
+/// A listening port as a clickable chip: the click opens the local URL, which
+/// is what "my dev server took :3000" wants next. A chip, not bare text — the
+/// row's numbers are all readout, and the one clickable thing must not dress
+/// like them (the Ask-AI pill's rule, one size down).
+private struct PortLink: View {
+    let port: UInt16
+
+    @State private var isHovered = false
+
+    private var urlString: String { "http://localhost:\(port)" }
+
+    var body: some View {
+        Button {
+            if let url = URL(string: urlString) { NSWorkspace.shared.open(url) }
+        } label: {
+            Text(verbatim: ":\(port)")
+                .font(SessionInfo.stateFont)
+                .foregroundStyle(Theme.chromeForeground.opacity(isHovered ? 1 : 0.8))
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(isHovered ? Theme.chromeActive : Theme.chromeHover)
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .hoverCursor(.pointingHand)
+        .help(urlString)
+    }
+}
+
+/// Copy PID / copy port URLs / two-step kill. The kill row arms on the first
+/// click and only sends SIGTERM on the second, recolored as a warning while
+/// armed; `.popover(item:)`'s fresh identity per open means an armed-but-
+/// abandoned kill resets the moment the menu closes.
+private struct ProcessContextMenu: View {
+    let process: SessionProcess
+    let dismiss: () -> Void
+
+    @State private var killArmed = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            KookyMenuRow(title: "Copy PID") {
+                dismiss()
+                writeToGeneralPasteboard("\(process.pid)")
+            }
+            ForEach(process.ports, id: \.self) { port in
+                KookyMenuRow(
+                    title: String.localizedStringWithFormat(
+                        String(localized: "Copy localhost:%d", bundle: .kookyResources),
+                        Int(port)
+                    ),
+                    localizesTitle: false
+                ) {
+                    dismiss()
+                    writeToGeneralPasteboard("http://localhost:\(port)")
+                }
+            }
+            KookyMenuDivider()
+            KookyMenuRow(
+                title: killArmed ? "Confirm Kill" : "Kill Process",
+                titleColor: killArmed ? Theme.activityFailure : nil
+            ) {
+                guard killArmed else {
+                    killArmed = true
+                    return
+                }
+                dismiss()
+                // SIGTERM, not SIGKILL — the polite ask. Identity is
+                // re-verified first: this menu can sit open long after the
+                // target exited, and a recycled pid must never take the hit
+                // (Codex review). A refusal — gone, recycled, or not ours to
+                // signal — beeps instead of failing silently.
+                if !SessionProcessScanner.identityMatches(pid: process.pid, startedAtUs: process.startedAtUs)
+                    || kill(process.pid, SIGTERM) != 0 {
+                    NSSound.beep()
+                }
+            }
+        }
+        .padding(Theme.space1)
+        .frame(minWidth: 200)
+        .background(Theme.chromeBackground)
+    }
+}
+
 // MARK: - Fields
+
+/// Hover-revealed copy affordance shared by every field. Copies the FULL
+/// value — the rendered text is truncated, and dragging a selection across a
+/// middle-truncated path is exactly the fiddliness this exists to remove.
+/// Space is reserved even while hidden so hovering never reflows the row;
+/// `Text(Image(...))` rather than a bare `Image` so the glyph carries a real
+/// text baseline in the baseline-aligned rows.
+private struct FieldCopyButton: View {
+    let value: String
+    let isVisible: Bool
+
+    @State private var copied = false
+    @State private var resetTask: Task<Void, Never>?
+
+    var body: some View {
+        Button {
+            writeToGeneralPasteboard(value)
+            copied = true
+            resetTask?.cancel()
+            resetTask = Task { @MainActor in
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled else { return }
+                copied = false
+            }
+        } label: {
+            Text("\(Image(systemName: copied ? "checkmark" : "doc.on.doc"))")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(copied ? Theme.gitInsertion : Theme.chromeMuted)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        // `copied` keeps the checkmark up if the pointer leaves right after
+        // the click — the feedback must outlive the hover that revealed it.
+        .opacity(isVisible || copied ? 1 : 0)
+        .allowsHitTesting(isVisible)
+        .help(String(localized: "Copy", bundle: .kookyResources))
+    }
+}
 
 /// Label left, value right. For values short enough to sit beside their label —
 /// everything except paths and identifiers, which get `BlockField`.
@@ -374,9 +672,12 @@ private struct InlineField: View {
     let label: String
     let value: String
 
+    @State private var isHovered = false
+
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             FieldLabel(label)
+            FieldCopyButton(value: value, isVisible: isHovered)
             Spacer(minLength: 8)
             Text(verbatim: value)
                 .font(SessionInfo.valueFont)
@@ -386,6 +687,8 @@ private struct InlineField: View {
                 .multilineTextAlignment(.trailing)
                 .help(value)
         }
+        .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
     }
 }
 
@@ -395,9 +698,15 @@ private struct BlockField: View {
     let label: String
     let value: String
 
+    @State private var isHovered = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: SessionInfo.labelGap) {
-            FieldLabel(label)
+            HStack(spacing: 10) {
+                FieldLabel(label)
+                FieldCopyButton(value: value, isVisible: isHovered)
+                Spacer(minLength: 0)
+            }
             Text(verbatim: value)
                 .font(SessionInfo.valueFont)
                 .foregroundStyle(Theme.chromeForeground)
@@ -407,6 +716,8 @@ private struct BlockField: View {
                 .textSelection(.enabled)
                 .help(value)
         }
+        .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
     }
 }
 
@@ -439,7 +750,21 @@ private struct GitDiffField: View {
 /// treatment (`chromeHover`, radius 6) rather than inventing a card: this is
 /// literal terminal content quoted back, so it earns a surface of its own.
 private struct LastCommandField: View {
+    /// Everything the "Ask AI" split button needs, prebuilt by the page —
+    /// the field stays a display component that fires a closure. `current`
+    /// is the plain click's target (its brand mark fronts the button; the
+    /// wordmark stays a constant "Ask AI"); `agents` backs the chevron's
+    /// picker; `run` executes with whichever agent was chosen.
+    struct AskFix {
+        let current: AgentTemplate
+        let agents: [AgentTemplate]
+        let run: (AgentTemplate) -> Void
+    }
+
     let completed: Session.CompletedCommand
+    let askFix: AskFix?
+
+    @State private var isHovered = false
 
     private var command: String? { completed.text }
     private var failed: Bool { completed.exit != 0 }
@@ -447,7 +772,13 @@ private struct LastCommandField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: SessionInfo.labelGap) {
-            FieldLabel("Last command")
+            HStack(spacing: 10) {
+                FieldLabel("Last command")
+                if let command {
+                    FieldCopyButton(value: command, isVisible: isHovered)
+                }
+                Spacer(minLength: 0)
+            }
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(verbatim: "$")
@@ -478,6 +809,17 @@ private struct LastCommandField: View {
                 }
                 .font(SessionInfo.stateFont)
                 .foregroundStyle(SessionInfo.labelText)
+
+                // The action gets its own row, not a seat on the meta row —
+                // squeezed beside "exit 1 · 3s" the button read as more meta,
+                // and the two collided long before the panel got narrow. A
+                // failure is the one state that warrants the extra line.
+                if let askFix {
+                    HStack {
+                        Spacer(minLength: 0)
+                        AskFixButton(askFix: askFix)
+                    }
+                }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 7)
@@ -485,6 +827,8 @@ private struct LastCommandField: View {
             .background(Theme.chromeHover)
             .clipShape(RoundedRectangle(cornerRadius: 6))
         }
+        .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
     }
 
     /// `—` when the shell never reported the text: a remote command, or a
@@ -501,6 +845,104 @@ private struct LastCommandField: View {
         } else {
             text
         }
+    }
+}
+
+/// The failed-command row's escape hatch: hands command + exit + cwd to an
+/// agent in a new tab. A pill, not bare text — everything else on the card is
+/// passive readout, and the one thing you can CLICK must not dress like the
+/// metadata around it. Split like the Open-in control: the main zone runs the
+/// last-picked agent (its brand mark fronts the button; the wordmark stays a
+/// constant "Ask AI", hover names it in full), the chevron opens the picker
+/// of enabled agents in the user's Settings order.
+private struct AskFixButton: View {
+    let askFix: LastCommandField.AskFix
+
+    @State private var mainHovered = false
+    @State private var chevronHovered = false
+    @State private var picker: PopoverPresentation<[AgentTemplate]>?
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Button {
+                askFix.run(askFix.current)
+            } label: {
+                HStack(spacing: 6) {
+                    AgentIconView(
+                        asset: askFix.current.iconAsset,
+                        fallbackSymbol: askFix.current.symbol,
+                        size: 11
+                    )
+                    Text("Ask AI", bundle: .kookyResources)
+                }
+                .font(SessionInfo.stateFont)
+                .foregroundStyle(Theme.chromeForeground.opacity(mainHovered ? 1 : 0.85))
+                .padding(.leading, 7)
+                .padding(.trailing, 6)
+                .padding(.vertical, 3.5)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { mainHovered = $0 }
+            .help(
+                String.localizedStringWithFormat(
+                    String(localized: "ask %@", bundle: .kookyResources),
+                    askFix.current.title
+                )
+            )
+
+            Rectangle()
+                .fill(Theme.chromeHairline)
+                .frame(width: 1, height: 11)
+
+            Button {
+                picker = PopoverPresentation(value: askFix.agents)
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7, weight: .semibold))
+                    .foregroundStyle(Theme.chromeForeground.opacity(chevronHovered ? 1 : 0.6))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 6)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { chevronHovered = $0 }
+            .popover(item: $picker, arrowEdge: .bottom) { presented in
+                AskAgentPicker(agents: presented.value) { agent in
+                    picker = nil
+                    askFix.run(agent)
+                }
+            }
+        }
+        // chromeActive over the card's chromeHover — one step brighter than
+        // its surface, the same relationship every active row has to its
+        // hovered neighbors.
+        .background(Theme.chromeActive)
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .hoverCursor(.pointingHand)
+    }
+}
+
+/// The chevron's agent list — the same rows as the right-click "Ask" menu
+/// (brand mark + name), fed by `AgentTemplate.askAgents`: enabled agents
+/// only, in the user's Settings → Agents order.
+private struct AskAgentPicker: View {
+    let agents: [AgentTemplate]
+    let choose: (AgentTemplate) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(agents, id: \.id) { agent in
+                KookyMenuRow(title: agent.title, localizesTitle: false) {
+                    AgentIconView(asset: agent.iconAsset, fallbackSymbol: agent.symbol, size: 16)
+                } action: {
+                    choose(agent)
+                }
+            }
+        }
+        .padding(Theme.space1)
+        .frame(minWidth: 190)
+        .background(Theme.chromeBackground)
     }
 }
 
@@ -543,10 +985,6 @@ private enum SessionInfo {
     /// Matches `RightPanelHeader` and every right-panel row, so the whole
     /// column shares one left edge.
     static let gutter: CGFloat = 14
-
-    /// Section title doubling as its collapse key — named because the poll
-    /// loop checks it to skip scanning while the section is collapsed.
-    static let processesTitle = "Processes"
 
     static let valueSize: CGFloat = 11
 

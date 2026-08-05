@@ -367,6 +367,13 @@
 "Remote" = "远程";
 "Last command" = "上一条命令";
 "Terminal title" = "终端标题";
+"remote processes not visible" = "远程进程不可见";
+"Copy PID" = "复制 PID";
+"Copy localhost:%d" = "复制 localhost:%d";
+"Kill Process" = "结束进程";
+"Confirm Kill" = "确认结束";
+"ask %@" = "问 %@";
+"Ask AI" = "问 AI";
 "waiting on you" = "正在等待你的操作";
 "command failed" = "命令执行失败";
 "Exit zoom (⌘⇧E)" = "退出缩放（⌘⇧E）";

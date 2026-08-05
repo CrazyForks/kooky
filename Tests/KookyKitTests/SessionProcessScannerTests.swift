@@ -71,15 +71,92 @@ final class SessionProcessScannerTests: XCTestCase {
 
     func testEmptyInputAndDeadPidYieldNothing() {
         XCTAssertTrue(SessionProcessScanner.tree(from: []).isEmpty)
-        XCTAssertTrue(SessionProcessScanner.scan(foregroundPid: 0).isEmpty)
-        XCTAssertTrue(SessionProcessScanner.scan(foregroundPid: -1).isEmpty)
+        XCTAssertTrue(SessionProcessScanner.scan(foregroundPid: 0).processes.isEmpty)
+        XCTAssertTrue(SessionProcessScanner.scan(foregroundPid: -1).processes.isEmpty)
+    }
+
+    // MARK: - CPU percent
+
+    func testCPUPercentIsDeltaOverWindow() {
+        // 0.5s of CPU across a 2s window = 25%.
+        XCTAssertEqual(
+            SessionProcessScanner.cpuPercent(
+                currentNs: 1_500_000_000, previousNs: 1_000_000_000, elapsedNs: 2_000_000_000
+            ),
+            25
+        )
+        // Multi-core can exceed 100, like top.
+        XCTAssertEqual(
+            SessionProcessScanner.cpuPercent(
+                currentNs: 5_000_000_000, previousNs: 0, elapsedNs: 2_000_000_000
+            ),
+            250
+        )
+        XCTAssertEqual(
+            SessionProcessScanner.cpuPercent(currentNs: 100, previousNs: 100, elapsedNs: 2_000_000_000),
+            0
+        )
+    }
+
+    func testCPUPercentRefusesUnusableWindows() {
+        // A recycled pid's counter going backwards must read "unknown", not
+        // a bogus huge number; a zero window has nothing to divide by.
+        XCTAssertNil(SessionProcessScanner.cpuPercent(currentNs: 50, previousNs: 100, elapsedNs: 1_000))
+        XCTAssertNil(SessionProcessScanner.cpuPercent(currentNs: 100, previousNs: 50, elapsedNs: 0))
+    }
+
+    func testTreeCarriesUsageThrough() {
+        var entry = raw(101, 1, "node")
+        entry.cpuPercent = 42
+        entry.residentMB = 313
+        entry.startedAtUs = 1_700_000_000_000_000
+        let tree = SessionProcessScanner.tree(from: [entry])
+        XCTAssertEqual(tree.first?.cpuPercent, 42)
+        XCTAssertEqual(tree.first?.residentMB, 313)
+        XCTAssertEqual(tree.first?.startedAtUs, 1_700_000_000_000_000)
+    }
+
+    // MARK: - Kill identity
+
+    /// (pid, start time) is the durable identity a kill re-verifies — a
+    /// context menu can sit open long after its target exited and the pid
+    /// was recycled, and SIGTERM must never chase a number (Codex review).
+    func testProcessIdentityMatchesOnlyTheSameIncarnation() throws {
+        let mine = try XCTUnwrap(SessionProcessScanner.startTimeUs(of: getpid()))
+        XCTAssertGreaterThan(mine, 0)
+        XCTAssertTrue(SessionProcessScanner.identityMatches(pid: getpid(), startedAtUs: mine))
+        // A different start time IS a recycled pid — refuse.
+        XCTAssertFalse(SessionProcessScanner.identityMatches(pid: getpid(), startedAtUs: mine &+ 1))
+        // The zero sentinel (unknown at scan time) refuses rather than matches.
+        XCTAssertFalse(SessionProcessScanner.identityMatches(pid: getpid(), startedAtUs: 0))
+        // A pid that can't exist (macOS pids top out well below this) refuses.
+        XCTAssertFalse(SessionProcessScanner.identityMatches(pid: 99_999_999, startedAtUs: mine))
+        XCTAssertNil(SessionProcessScanner.startTimeUs(of: 99_999_999))
+    }
+
+    func testScanProducesUsageOnTheSecondSample() throws {
+        // Two real samples over a tiny window: the second must carry CPU%
+        // for this very process (we can always inspect ourselves), keyed off
+        // the first sample's counters.
+        let first = SessionProcessScanner.scan(foregroundPid: getpid())
+        try XCTSkipIf(first.processes.isEmpty, "test runner has no controlling terminal")
+        // Burn a little CPU so the delta is nonzero-able (value not asserted).
+        var acc = 0.0
+        for i in 0..<200_000 { acc += Double(i).squareRoot() }
+        XCTAssertGreaterThan(acc, 0)
+        usleep(20_000)
+        let second = SessionProcessScanner.scan(foregroundPid: getpid(), previousCPU: first.cpu)
+        let me = second.processes.first { $0.pid == getpid() }
+        XCTAssertNotNil(me?.cpuPercent, "a second sample over a real window must yield a percent")
+        XCTAssertNotNil(me?.residentMB, "our own resident size is always readable")
+        XCTAssertGreaterThan(me?.residentMB ?? 0, 0)
     }
 
     /// End-to-end against the kernel: when the test runner has a controlling
     /// terminal, its own tty must list this process. Skipped under a runner
     /// with no tty (CI), where the scan correctly returns nothing.
     func testScansTheRunnersOwnTerminal() throws {
-        let tree = SessionProcessScanner.scan(foregroundPid: getpid())
+        let tree = SessionProcessScanner.scan(foregroundPid: getpid()).processes
         try XCTSkipIf(tree.isEmpty, "test runner has no controlling terminal")
 
         XCTAssertTrue(

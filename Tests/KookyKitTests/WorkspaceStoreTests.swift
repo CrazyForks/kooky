@@ -1227,6 +1227,26 @@ final class WorkspaceStoreTests: XCTestCase {
         XCTAssertEqual(restored.sidebarContent, .files)
     }
 
+    func testCollapsedInfoSectionsPersistAndRestore() throws {
+        let persistence = InMemoryPersistence()
+        let store = WorkspaceStore(persistence: persistence, engineFactory: { TestEngine() })
+        store.addWorkspace(workingDirectory: projectA)
+        store.toggleInfoSection("Processes")
+        store.toggleInfoSection("Runtime")
+        store.flushPersistence()
+        // Sorted on save so the file is byte-stable across saves (Set order
+        // isn't), absent when nothing is collapsed.
+        XCTAssertEqual(persistence.saved?.collapsedInfoSections, ["Processes", "Runtime"])
+
+        let restored = makeStore(initial: persistence.saved)
+        XCTAssertEqual(restored.collapsedInfoSections, ["Processes", "Runtime"])
+
+        store.toggleInfoSection("Processes")
+        store.toggleInfoSection("Runtime")
+        store.flushPersistence()
+        XCTAssertNil(persistence.saved?.collapsedInfoSections)
+    }
+
     func testSidebarWidthPersistsAndRestoresClamped() throws {
         let persistence = InMemoryPersistence()
         let store = WorkspaceStore(persistence: persistence, engineFactory: { TestEngine() })

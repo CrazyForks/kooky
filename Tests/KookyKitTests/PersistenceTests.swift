@@ -170,6 +170,26 @@ final class PersistenceTests: XCTestCase {
         XCTAssertNil(decoded.sidebarContent)
     }
 
+    func testCollapsedInfoSectionsRoundtrip() throws {
+        var state = makeState()
+        state.collapsedInfoSections = ["Processes", "Runtime"]
+        let data = try JSONEncoder().encode(state)
+        let decoded = try JSONDecoder().decode(PersistedState.self, from: data)
+        XCTAssertEqual(decoded.collapsedInfoSections, ["Processes", "Runtime"])
+    }
+
+    func testCollapsedInfoSectionsDecodeNilFromPreInspectorStateFiles() throws {
+        // state.json files written before the Session Info inspector omit the
+        // key — decode must succeed and leave it nil (→ nothing collapsed).
+        let data = try JSONEncoder().encode(makeState())
+        XCTAssertFalse(
+            String(decoding: data, as: UTF8.self).contains("collapsedInfoSections"),
+            "nil must encode as an absent key, or old kooky versions choke on the file"
+        )
+        let decoded = try JSONDecoder().decode(PersistedState.self, from: data)
+        XCTAssertNil(decoded.collapsedInfoSections)
+    }
+
     func testPersistedWorkspaceDecodesNilWhenWorktreeFieldsMissing() throws {
         // Pre-worktree state.json files omit both keys — decode must succeed
         // and leave the fields nil so plain workspaces stay plain on upgrade.

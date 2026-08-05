@@ -231,6 +231,20 @@ final class KookySettingsModel {
     /// false, every agent tab starts fresh — but the persisted conversation
     /// id stays on disk so turning the toggle back on can resume it later.
     var resumeConversations: Bool = true
+    /// Last agent picked from an "Ask AI" control — drives the split button's
+    /// brand mark + plain-click target, the `lastOpenInAppId` model.
+    /// Persisted under `agents.lastAsk`.
+    var lastAskAgentId: String? = nil
+
+    /// Remember an Ask-AI pick so the split button's plain click tracks the
+    /// user's last choice. Imperative save, not the Settings `.onChange`
+    /// autosave chain — that chain is only mounted while the Settings window
+    /// is open, and Ask controls fire with it closed.
+    func noteAskAgentPicked(_ id: String) {
+        guard lastAskAgentId != id else { return }
+        lastAskAgentId = id
+        scheduleSave()
+    }
     /// Opt-in SSH integration for remote agent status. Disabled by default:
     /// when enabled, kooky installs an `ssh` wrapper that injects temporary
     /// marker-emitting agent wrappers into plain interactive `ssh host`
@@ -387,6 +401,7 @@ final class KookySettingsModel {
         agentOptions = (agents["options"] as? [String: String]) ?? [:]
         defaultAgentId = agents["default"] as? String
         resumeConversations = (agents["resumeConversations"] as? Bool) ?? true
+        lastAskAgentId = agents["lastAsk"] as? String
 
         let ssh = parsed["ssh"] as? [String: Any] ?? [:]
         sshRemoteAgentDetection = (ssh["remoteAgentDetection"] as? Bool) ?? false
@@ -588,6 +603,7 @@ final class KookySettingsModel {
             && defaultAgentId == nil
             && serialisedCustom.isEmpty
             && resumeConversations  // default-true is the no-op case
+            && lastAskAgentId == nil
         if allDefaults {
             parsed.removeValue(forKey: "agents")
         } else {
@@ -599,6 +615,7 @@ final class KookySettingsModel {
             agents["custom"] = serialisedCustom.isEmpty ? nil : serialisedCustom
             // Only serialise when non-default to keep settings.json lean.
             agents["resumeConversations"] = resumeConversations ? nil : false
+            agents["lastAsk"] = lastAskAgentId
             parsed["agents"] = agents
         }
 

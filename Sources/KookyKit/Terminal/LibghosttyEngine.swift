@@ -257,10 +257,10 @@ private let kookyWakeupCb: ghostty_runtime_wakeup_cb = { _ in
 
 /// Replaces the general pasteboard's contents. Must run on main so the change
 /// notification reaches clipboard managers (Paste, Maccy, …) — otherwise the
-/// value lands but listeners miss it. Single write site for the OSC 52 allow
-/// branch, the consent-sheet allow, and ⌘C.
+/// value lands but listeners miss it. The single write site app-wide — OSC 52
+/// allow, consent-sheet allow, ⌘C, and every UI "Copy" row/button.
 @MainActor
-private func writeToGeneralPasteboard(_ text: String) {
+func writeToGeneralPasteboard(_ text: String) {
     let pb = NSPasteboard.general
     pb.clearContents()
     pb.setString(text, forType: .string)

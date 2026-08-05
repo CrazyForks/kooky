@@ -288,9 +288,7 @@ private struct FileTreeRowView: View {
             KookyMenuDivider()
             KookyMenuRow(title: "Copy Path") {
                 isContextMenuOpen = false
-                let pb = NSPasteboard.general
-                pb.clearContents()
-                pb.setString(node.url.path, forType: .string)
+                writeToGeneralPasteboard(node.url.path)
             }
             // Same escape + paste path as dropping a file from Finder onto a
             // pane, so the two can't drift.
