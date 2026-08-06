@@ -117,7 +117,6 @@ final class ToolCallActivityPillTests: XCTestCase {
     }
 
     func testDurationLabelUsesCompletedAtWhenAvailable() {
-        let session = makeSession()
         let start = Date(timeIntervalSinceNow: -10)
         let end = Date(timeIntervalSinceNow: -8)
         let resolved = event(tool: "Bash", state: .success, startedAt: start, completedAt: end)
@@ -125,14 +124,63 @@ final class ToolCallActivityPillTests: XCTestCase {
         XCTAssertEqual(label, "2s")
     }
 
-    func testDurationLabelUsesNowForRunning() {
-        // Running event with no completedAt — duration measured against now
-        let session = makeSession()
+    func testDurationLabelUsesStableStatusForRunning() {
         let start = Date(timeIntervalSinceNow: -3)
         let running = event(tool: "Bash", state: .running, startedAt: start, completedAt: nil)
-        let label = ToolCallActivityPill.durationLabel(for: running)
-        // Should be ~3s — allow small float drift
-        XCTAssertTrue(label == "3s" || label == "2s" || label == "4s", "Expected ~3s, got \(label)")
+        XCTAssertEqual(
+            ToolCallActivityPill.durationLabel(for: running),
+            String(localized: "running", bundle: .kookyResources)
+        )
+    }
+
+    func testHistoryElapsedLabelUsesStableStatusWhileAnyToolRuns() {
+        let start = Date(timeIntervalSinceReferenceDate: 1_000)
+        let events = [
+            event(tool: "Read", state: .success, startedAt: start, completedAt: start.addingTimeInterval(2)),
+            event(tool: "Bash", state: .running, startedAt: start.addingTimeInterval(3)),
+        ]
+        XCTAssertEqual(
+            ToolCallActivityPill.historyElapsedLabel(for: events),
+            String(localized: "running", bundle: .kookyResources)
+        )
+    }
+
+    func testHistoryElapsedLabelUsesFinalDurationAfterCompletion() {
+        let start = Date(timeIntervalSinceReferenceDate: 1_000)
+        let events = [
+            event(tool: "Read", state: .success, startedAt: start, completedAt: start.addingTimeInterval(2)),
+            event(
+                tool: "Bash",
+                state: .success,
+                startedAt: start.addingTimeInterval(3),
+                completedAt: start.addingTimeInterval(8)
+            ),
+        ]
+        XCTAssertEqual(ToolCallActivityPill.historyElapsedLabel(for: events), "8s")
+    }
+
+    // MARK: Accessibility
+
+    func testRunningAccessibilityLabelDoesNotRepeatStatus() {
+        let running = event(tool: "Bash", state: .running, completedAt: nil)
+        XCTAssertEqual(
+            ToolCallActivityPill.accessibilityLabel(for: running),
+            "Bash, x, \(running.state.presentation.accessibleName)"
+        )
+    }
+
+    func testCompletedAccessibilityLabelIncludesDurationAndState() {
+        let start = Date(timeIntervalSinceReferenceDate: 1_000)
+        let completed = event(
+            tool: "Bash",
+            state: .success,
+            startedAt: start,
+            completedAt: start.addingTimeInterval(2)
+        )
+        XCTAssertEqual(
+            ToolCallActivityPill.accessibilityLabel(for: completed),
+            "Bash, x, 2s, \(completed.state.presentation.accessibleName)"
+        )
     }
 
     // MARK: Tool kind → SF Symbol icon

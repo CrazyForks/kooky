@@ -49,27 +49,24 @@ extension ToolCallEventState {
     }
 }
 
-/// SwiftUI Text that refreshes once per second while `event.state == .running`
-/// (so the pill's duration label actually ticks instead of freezing on first
-/// render). Completed / stalled / failed events have a stable `completedAt`,
-/// so no TimelineView wrap is needed — they render as plain Text.
-private struct LiveDurationText: View {
+/// Layout-stable duration label for the current tool call. A running call uses
+/// a fixed status string; once it finishes, the label switches to its final
+/// elapsed time. Do not put a per-second `TimelineView` here: this view lives
+/// inside `ViewThatFits`, and every tick makes SwiftUI remeasure the complete
+/// hosting tree (`CA commit -> NSHostingView.layout`), pegging a CPU core while
+/// an agent tool is running (issue #49).
+private struct ToolDurationText: View {
     let event: ToolCallEvent
 
     var body: some View {
-        if event.state == .running, event.completedAt == nil {
-            TimelineView(.periodic(from: .now, by: 1.0)) { context in
-                Text(ToolCallActivityPill.formatElapsed(context.date.timeIntervalSince(event.startedAt)))
-                    .font(Theme.mono(11, weight: .regular))
-                    .foregroundStyle(event.state.presentation.textColor)
-                    .fixedSize(horizontal: true, vertical: false)
-            }
-        } else {
-            Text(ToolCallActivityPill.durationLabel(for: event))
-                .font(Theme.mono(11, weight: .regular))
-                .foregroundStyle(event.state.presentation.textColor)
-                .fixedSize(horizontal: true, vertical: false)
-        }
+        Text(label)
+            .font(Theme.mono(11, weight: .regular))
+            .foregroundStyle(event.state.presentation.textColor)
+            .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var label: String {
+        ToolCallActivityPill.durationLabel(for: event)
     }
 }
 
@@ -187,7 +184,7 @@ struct ToolCallActivityPill: View {
     }
 
     private func duration(for event: ToolCallEvent) -> some View {
-        LiveDurationText(event: event)
+        ToolDurationText(event: event)
     }
 
     private func glyph(for event: ToolCallEvent) -> some View {
@@ -231,9 +228,31 @@ struct ToolCallActivityPill: View {
     }
 
     static func durationLabel(for event: ToolCallEvent) -> String {
-        let elapsed: TimeInterval = event.completedAt.map { $0.timeIntervalSince(event.startedAt) }
-            ?? Date().timeIntervalSince(event.startedAt)
-        return formatElapsed(elapsed)
+        guard let completedAt = event.completedAt else {
+            return String(localized: "running", bundle: .kookyResources)
+        }
+        return formatElapsed(completedAt.timeIntervalSince(event.startedAt))
+    }
+
+    static func accessibilityLabel(for event: ToolCallEvent) -> String {
+        let identifierLabel = event.identifier.isEmpty
+            ? String(localized: "no identifier", bundle: .kookyResources)
+            : event.identifier
+        var components = [event.toolName, identifierLabel]
+        if event.completedAt != nil {
+            components.append(durationLabel(for: event))
+        }
+        components.append(event.state.presentation.accessibleName)
+        return components.joined(separator: ", ")
+    }
+
+    static func historyElapsedLabel(for events: [ToolCallEvent]) -> String {
+        guard let first = events.first else { return "—" }
+        guard !events.contains(where: { $0.state == .running }) else {
+            return String(localized: "running", bundle: .kookyResources)
+        }
+        let end = events.compactMap(\.completedAt).max() ?? first.startedAt
+        return formatElapsed(end.timeIntervalSince(first.startedAt))
     }
 
     static func formatElapsed(_ elapsed: TimeInterval) -> String {
@@ -286,8 +305,7 @@ struct ToolCallActivityPill: View {
         guard let last = session.toolCallEvents.last else {
             return String(localized: "Waiting for Claude tool calls", bundle: .kookyResources)
         }
-        let identifierLabel = last.identifier.isEmpty ? String(localized: "no identifier", bundle: .kookyResources) : last.identifier
-        return "\(last.toolName), \(identifierLabel), \(Self.durationLabel(for: last)), \(last.state.presentation.accessibleName)"
+        return Self.accessibilityLabel(for: last)
     }
 }
 
@@ -369,14 +387,7 @@ private struct ToolCallHistoryPopover: View {
     }
 
     private var sessionElapsedLabel: String {
-        guard let first = session.toolCallEvents.first else { return "—" }
-        let end: Date
-        if session.toolCallEvents.contains(where: { $0.state == .running }) {
-            end = Date()
-        } else {
-            end = session.toolCallEvents.compactMap(\.completedAt).max() ?? Date()
-        }
-        return ToolCallActivityPill.formatElapsed(end.timeIntervalSince(first.startedAt))
+        ToolCallActivityPill.historyElapsedLabel(for: session.toolCallEvents)
     }
 
     private var emptyState: some View {
@@ -408,9 +419,7 @@ private struct ToolCallHistoryPopover: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Text(ToolCallActivityPill.durationLabel(for: event))
-                .font(Theme.mono(11, weight: .regular))
-                .foregroundStyle(event.state.presentation.textColor)
+            ToolDurationText(event: event)
                 .frame(width: 56, alignment: .trailing)
             Text(event.state.presentation.glyph)
                 .font(Theme.mono(11, weight: .medium))

@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.48.3 — 2026-08-06
+
+- Fixed: running Claude and Pi tool calls no longer drive a per-second SwiftUI layout loop that could peg a CPU core. The status-bar pill and history popover now show a stable running state, then switch to the final duration when the tool finishes; VoiceOver also avoids repeating the running status. (#49)
+
 ## v0.48.2 — 2026-08-06
 
 - Improved: the Session Info "Last command" card reads tighter — short commands share one line with their duration and exit code, the exit code itself is tinted green or red, and the redundant pass/fail word and status dot are gone.
