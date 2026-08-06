@@ -121,6 +121,13 @@ final class KookySettingsModelTests: XCTestCase {
         )
     }
 
+    func testKookyResourceBundleIsProcessCached() throws {
+        let first = try XCTUnwrap(kookyResourceBundle())
+        let second = try XCTUnwrap(kookyResourceBundle())
+        XCTAssertTrue(first === second)
+        XCTAssertTrue(first === Bundle.kookyResources)
+    }
+
     private func languageBundle(_ identifier: String) throws -> Bundle {
         let resourceURL = try XCTUnwrap(Bundle.kookyResources.resourceURL)
         let candidates = [identifier, identifier.lowercased()]

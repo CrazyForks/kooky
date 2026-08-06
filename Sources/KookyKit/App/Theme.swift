@@ -443,25 +443,36 @@ enum KookyFonts {
     private static var registered = false
 }
 
+/// Resolves the resource bundle once per process. `.kookyResources` sits on
+/// every localization hot path; repeatedly rebuilding candidate URLs and
+/// opening the same bundle is pure overhead after the app layout is fixed.
+private enum KookyResourceBundleCache {
+    static let resolved: Bundle? = {
+        let bundleName = "Kooky_KookyKit"
+        let candidates: [URL] = [
+            Bundle.main.resourceURL,
+            Bundle.main.bundleURL,
+        ].compactMap { $0?.appendingPathComponent("\(bundleName).bundle") }
+        for candidate in candidates {
+            if let bundle = Bundle(url: candidate) { return bundle }
+        }
+        #if SWIFT_PACKAGE
+        return Bundle.module
+        #else
+        return nil
+        #endif
+    }()
+
+    static let effective = resolved ?? .main
+}
+
 /// Replaces SPM's auto-generated `Bundle.module` as the first lookup inside a
 /// packaged `.app` (the generated accessor checks the .app root, while
 /// resources canonically ship in `Contents/Resources/`). The SPM accessor is
 /// still the final fallback for `swift run` and xctest, where its absolute
 /// build path is valid.
 func kookyResourceBundle() -> Bundle? {
-    let bundleName = "Kooky_KookyKit"
-    let candidates: [URL] = [
-        Bundle.main.resourceURL,
-        Bundle.main.bundleURL,
-    ].compactMap { $0?.appendingPathComponent("\(bundleName).bundle") }
-    for candidate in candidates {
-        if let bundle = Bundle(url: candidate) { return bundle }
-    }
-    #if SWIFT_PACKAGE
-    return Bundle.module
-    #else
-    return nil
-    #endif
+    KookyResourceBundleCache.resolved
 }
 
 extension Bundle {
@@ -469,7 +480,7 @@ extension Bundle {
     /// `.app` layouts. Localization still uses Foundation/SwiftUI's native
     /// APIs; this only resolves where SwiftPM placed the resources.
     static var kookyResources: Bundle {
-        kookyResourceBundle() ?? .main
+        KookyResourceBundleCache.effective
     }
 }
 

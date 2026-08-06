@@ -1,18 +1,161 @@
 import AppKit
 import SwiftUI
 
+/// Width contract shared by SwiftUI content and the AppKit window boundary.
+/// Sidebar views own their concrete full/compact widths; this policy adds the
+/// visible pieces and reserves a genuinely usable terminal column between them.
+@MainActor
+enum KookyWindowLayout {
+    /// Smallest width that keeps the fixed top-chrome controls plus the 28pt
+    /// search trigger and its 15pt safety gap on both sides.
+    static let minimumChromeWidth: CGFloat = 301
+    /// Keeps one terminal useful at the narrowest supported window size while
+    /// still leaving the status bar enough room to wrap inside its own pane.
+    static let minimumTerminalWidth: CGFloat = 200
+    static let separatorWidth: CGFloat = 1
+
+    /// Width required by the current pane tree. Side-by-side children both
+    /// need a full pane and a divider, while stacked children reuse the same
+    /// horizontal span. This mirrors `SplitContainer`'s rendering recursion.
+    static func minimumTerminalTreeWidth(for node: PaneNode?) -> CGFloat {
+        guard let node else { return minimumTerminalWidth }
+        switch node.content {
+        case .pane:
+            return minimumTerminalWidth
+        case .split(let orientation, let first, let second, _):
+            let firstWidth = minimumTerminalTreeWidth(for: first)
+            let secondWidth = minimumTerminalTreeWidth(for: second)
+            switch orientation {
+            case .horizontal:
+                return firstWidth + separatorWidth + secondWidth
+            case .vertical:
+                return max(firstWidth, secondWidth)
+            }
+        }
+    }
+
+    /// Rebalances only horizontal splits on the root→target path after a
+    /// leaf is split. Without this, repeatedly splitting the rightmost pane
+    /// leaves every ancestor at 50/50, producing 1/2, 1/4, 1/8… widths even
+    /// when sibling panes have abundant space. Unrelated branches — including
+    /// user-adjusted dividers elsewhere — are untouched.
+    @discardableResult
+    static func rebalanceHorizontalSplits(in node: PaneNode, alongPathTo target: PaneNode) -> Bool {
+        if node === target {
+            rebalanceHorizontalSplit(node)
+            return true
+        }
+        guard case .split(let orientation, let first, let second, let fraction) = node.content else {
+            return false
+        }
+        let targetIsBelow = rebalanceHorizontalSplits(in: first, alongPathTo: target)
+            || rebalanceHorizontalSplits(in: second, alongPathTo: target)
+        guard targetIsBelow else { return false }
+        if orientation == .horizontal {
+            let balanced = balancedFraction(first: first, second: second)
+            if abs(balanced - fraction) > .ulpOfOne {
+                node.content = .split(
+                    orientation: orientation,
+                    first: first,
+                    second: second,
+                    fraction: balanced
+                )
+            }
+        }
+        return true
+    }
+
+    private static func rebalanceHorizontalSplit(_ node: PaneNode) {
+        guard case .split(.horizontal, let first, let second, let fraction) = node.content else { return }
+        let balanced = balancedFraction(first: first, second: second)
+        guard abs(balanced - fraction) > .ulpOfOne else { return }
+        node.content = .split(
+            orientation: .horizontal,
+            first: first,
+            second: second,
+            fraction: balanced
+        )
+    }
+
+    private static func balancedFraction(first: PaneNode, second: PaneNode) -> Double {
+        let firstWidth = minimumTerminalTreeWidth(for: first)
+        let secondWidth = minimumTerminalTreeWidth(for: second)
+        return Double(firstWidth / (firstWidth + secondWidth))
+    }
+
+    static func minimumWindowWidth(
+        leftMode: SidebarMode,
+        expandedLeftWidth: CGFloat,
+        rightMode: SidebarMode,
+        terminalWidth: CGFloat = minimumTerminalWidth
+    ) -> CGFloat {
+        let leftWidth: CGFloat
+        switch leftMode {
+        case .full: leftWidth = SidebarView.clampWidth(expandedLeftWidth)
+        case .compact: leftWidth = SidebarView.compactWidth
+        case .hidden: leftWidth = 0
+        }
+
+        let rightWidth: CGFloat
+        switch rightMode {
+        case .full: rightWidth = AgentOverviewSidebar.fullWidth
+        case .compact: rightWidth = AgentOverviewSidebar.compactWidth
+        case .hidden: rightWidth = 0
+        }
+
+        let separators = (leftMode == .hidden ? 0 : separatorWidth)
+            + (rightMode == .hidden ? 0 : separatorWidth)
+        return max(
+            minimumChromeWidth,
+            leftWidth + separators + terminalWidth + rightWidth
+        )
+    }
+
+    static func screenBoundMinimumWindowWidth(
+        desiredWidth: CGFloat,
+        visibleScreenWidth: CGFloat?
+    ) -> CGFloat {
+        guard let visibleScreenWidth, visibleScreenWidth > 0 else { return desiredWidth }
+        return min(desiredWidth, visibleScreenWidth)
+    }
+
+    /// Clamps a divider to the usable size required by both child trees.
+    /// A side-by-side subtree may itself contain several terminal columns,
+    /// so a fixed 10% bound is not enough to keep every leaf usable. When the
+    /// current screen is physically too narrow for all requested minima, pin
+    /// the divider to the proportional split instead of allowing one branch
+    /// to absorb all of the compression.
+    static func clampedSplitFraction(
+        _ proposed: Double,
+        orientation: SplitOrientation,
+        first: PaneNode,
+        second: PaneNode,
+        usableLength: CGFloat
+    ) -> Double {
+        guard usableLength > 0 else { return 0.5 }
+        guard orientation == .horizontal else {
+            return min(max(proposed, 0.1), 0.9)
+        }
+
+        let firstMinimum = minimumTerminalTreeWidth(for: first)
+        let secondMinimum = minimumTerminalTreeWidth(for: second)
+        let required = firstMinimum + secondMinimum
+        guard usableLength >= required else {
+            return Double(firstMinimum / required)
+        }
+
+        let minimumFraction = Double(firstMinimum / usableLength)
+        let maximumFraction = 1 - Double(secondMinimum / usableLength)
+        return min(max(proposed, minimumFraction), maximumFraction)
+    }
+}
+
 /// One kooky window: an `NSWindow` paired with its own `WorkspaceStore`.
 /// `AppDelegate` keeps an array of these — every window is fully
 /// independent (own sidebar, own workspaces, own persisted slice keyed by
 /// `windowId`).
 @MainActor
 final class KookyWindowController: NSWindowController, NSWindowDelegate {
-    /// Smallest width that keeps the fixed top-chrome controls plus the
-    /// 28pt search trigger and its 15pt safety gap on both sides. Pinning the
-    /// window itself avoids compact/hidden sidebars exposing a narrower layout
-    /// range than the full sidebar.
-    private static let minimumWindowWidth: CGFloat = 301
-
     let windowId: UUID
     let store: WorkspaceStore
     /// Set by `AppDelegate`. Fires from `windowWillClose` so the delegate
@@ -29,13 +172,12 @@ final class KookyWindowController: NSWindowController, NSWindowDelegate {
         self.store = store
         super.init(window: Self.makeWindow())
         window?.delegate = self
-        window?.contentView = NSHostingView(rootView: ContentView(store: store))
-        if let window {
-            window.minSize = NSSize(
-                width: Self.minimumWindowWidth,
-                height: window.minSize.height
-            )
-        }
+        window?.contentView = NSHostingView(
+            rootView: ContentView(store: store) { [weak self] animateExpansion in
+                self?.updateMinimumWindowSize(expandIfNeeded: true, animate: animateExpansion)
+            }
+        )
+        updateMinimumWindowSize(expandIfNeeded: true, animate: false)
         // The last workspace closing leaves an empty window — close it.
         store.onBecameEmpty = { [weak self] in self?.close() }
     }
@@ -82,10 +224,49 @@ final class KookyWindowController: NSWindowController, NSWindowDelegate {
         onDidBecomeKey?(self)
     }
 
+    func windowDidChangeScreen(_ notification: Notification) {
+        updateMinimumWindowSize(expandIfNeeded: true, animate: false)
+    }
+
     func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
         NSSize(
-            width: max(frameSize.width, Self.minimumWindowWidth),
+            width: max(frameSize.width, minimumWindowWidth(on: sender.screen)),
             height: frameSize.height
         )
+    }
+
+    private var desiredMinimumWindowWidth: CGFloat {
+        KookyWindowLayout.minimumWindowWidth(
+            leftMode: store.sidebarMode,
+            expandedLeftWidth: store.sidebarWidth,
+            rightMode: store.rightSidebarMode,
+            terminalWidth: KookyWindowLayout.minimumTerminalTreeWidth(for: store.active?.root)
+        )
+    }
+
+    private func minimumWindowWidth(on screen: NSScreen?) -> CGFloat {
+        KookyWindowLayout.screenBoundMinimumWindowWidth(
+            desiredWidth: desiredMinimumWindowWidth,
+            visibleScreenWidth: (screen ?? NSScreen.main)?.visibleFrame.width
+        )
+    }
+
+    /// `NSWindow.minSize` does not follow observable sidebar/pane-tree state,
+    /// so mirror the current layout policy here. If the required width grows,
+    /// expand up to the current screen's visible width; beyond that physical
+    /// limit, the balanced split fractions let every pane shrink together.
+    private func updateMinimumWindowSize(expandIfNeeded: Bool, animate: Bool) {
+        guard let window else { return }
+        let screen = window.screen ?? NSScreen.main
+        let width = minimumWindowWidth(on: screen)
+        window.minSize = NSSize(width: width, height: window.minSize.height)
+        guard expandIfNeeded, window.frame.width < width else { return }
+
+        var target = window.frame
+        target.size.width = width
+        if let screen {
+            target = window.constrainFrameRect(target, to: screen)
+        }
+        window.setFrame(target, display: true, animate: animate)
     }
 }

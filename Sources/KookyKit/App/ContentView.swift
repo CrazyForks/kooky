@@ -3,6 +3,11 @@ import SwiftUI
 
 struct ContentView: View {
     @Bindable var store: WorkspaceStore
+    /// Narrow AppKit seam: the store remains the source of truth for sidebar
+    /// state; the owning window controller only mirrors those widths into
+    /// `NSWindow.minSize`. `true` asks it to animate a required expansion
+    /// after a mode toggle; drag-driven width changes stay immediate.
+    var onWindowLayoutChange: (Bool) -> Void = { _ in }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -24,6 +29,22 @@ struct ContentView: View {
         .glassWindowBackground(fallback: chromeBackground)
         .preferredColorScheme(Theme.chromeColorScheme)
         .ignoresSafeArea(.all)
+        .onChange(of: store.sidebarMode) { _, _ in
+            onWindowLayoutChange(true)
+        }
+        .onChange(of: store.rightSidebarMode) { _, _ in
+            onWindowLayoutChange(true)
+        }
+        .onChange(of: store.sidebarWidth) { _, _ in
+            onWindowLayoutChange(false)
+        }
+        .onChange(of: minimumTerminalTreeWidth) { _, _ in
+            // Split/close/workspace-switch is discrete. Expand immediately:
+            // unlike sidebar mode changes, split creation does not suspend
+            // existing engines for an animation-wide SIGWINCH burst.
+            // A smaller tree only relaxes the future resize limit.
+            onWindowLayoutChange(false)
+        }
     }
 
     /// Top 32pt strip. `window.isMovable = false` is set globally, so the
@@ -92,6 +113,10 @@ struct ContentView: View {
     private var chromeBackground: Color {
         let color = store.active?.activeSession?.engine.backgroundColor ?? Theme.terminalSurface
         return Color(nsColor: color)
+    }
+
+    private var minimumTerminalTreeWidth: CGFloat {
+        KookyWindowLayout.minimumTerminalTreeWidth(for: store.active?.root)
     }
 
     private var sidebarTooltip: String {

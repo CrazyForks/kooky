@@ -574,29 +574,66 @@ private struct StatusSegment<Content: View>: View {
 /// Wrap-on-overflow flow layout. Each row picks subviews greedily; when a
 /// subview won't fit, it starts a new row. `alignment` shifts each row
 /// within the parent's available width — `.trailing` mirrors the
-/// right-aligned single-row look when nothing wraps. One pass per layout
-/// invocation (no candidate-row probing like `ViewThatFits`), so this stays
-/// cheap during animated parent-width changes.
+/// right-aligned single-row look when nothing wraps. Intrinsic subview sizes
+/// and the last width's placement plan live in the Layout cache, so SwiftUI's
+/// `sizeThatFits` → `placeSubviews` pair does not measure and plan twice.
 private struct FlowLayout: Layout {
     var alignment: HorizontalAlignment = .leading
     var spacing: CGFloat = 8
     var rowSpacing: CGFloat = 4
 
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    struct Cache {
+        var sizes: [CGSize]
+        var plan: Plan?
+    }
+
+    struct Plan {
+        let width: CGFloat
+        let alignment: HorizontalAlignment
+        let spacing: CGFloat
+        let rowSpacing: CGFloat
+        let positions: [CGPoint]
+        let height: CGFloat
+        let contentWidth: CGFloat
+    }
+
+    func makeCache(subviews: Subviews) -> Cache {
+        Cache(sizes: subviews.map { $0.sizeThatFits(.unspecified) })
+    }
+
+    func updateCache(_ cache: inout Cache, subviews: Subviews) {
+        cache.sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        cache.plan = nil
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGSize {
         let width = proposal.width ?? .infinity
-        let plan = plan(width: width, subviews: subviews)
+        let plan = resolvedPlan(width: width, cache: &cache)
         return CGSize(width: proposal.width ?? plan.contentWidth, height: plan.height)
     }
 
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let plan = plan(width: bounds.width, subviews: subviews)
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) {
+        let plan = resolvedPlan(width: bounds.width, cache: &cache)
         for (i, p) in plan.positions.enumerated() {
             subviews[i].place(at: CGPoint(x: bounds.minX + p.x, y: bounds.minY + p.y), proposal: .unspecified)
         }
     }
 
-    private func plan(width: CGFloat, subviews: Subviews) -> (positions: [CGPoint], height: CGFloat, contentWidth: CGFloat) {
-        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+    private func resolvedPlan(width: CGFloat, cache: inout Cache) -> Plan {
+        if let plan = cache.plan,
+           plan.width == width,
+           plan.alignment == alignment,
+           plan.spacing == spacing,
+           plan.rowSpacing == rowSpacing {
+            return plan
+        }
+
+        let plan = makePlan(width: width, sizes: cache.sizes)
+        cache.plan = plan
+        return plan
+    }
+
+    private func makePlan(width: CGFloat, sizes: [CGSize]) -> Plan {
         var rows: [[Int]] = [[]]
         var rowWidth: CGFloat = 0
         for (i, size) in sizes.enumerated() {
@@ -609,7 +646,7 @@ private struct FlowLayout: Layout {
                 rowWidth = needed
             }
         }
-        var positions = [CGPoint](repeating: .zero, count: subviews.count)
+        var positions = [CGPoint](repeating: .zero, count: sizes.count)
         var y: CGFloat = 0
         var maxRowWidth: CGFloat = 0
         for row in rows {
@@ -631,7 +668,15 @@ private struct FlowLayout: Layout {
             }
             y += rowHeight + rowSpacing
         }
-        return (positions, max(0, y - rowSpacing), maxRowWidth)
+        return Plan(
+            width: width,
+            alignment: alignment,
+            spacing: spacing,
+            rowSpacing: rowSpacing,
+            positions: positions,
+            height: max(0, y - rowSpacing),
+            contentWidth: maxRowWidth
+        )
     }
 }
 
@@ -1614,10 +1659,8 @@ private struct SplitContainer: View {
     /// teardown and leave the refcount stuck > 0 (issue #29 review).
     @State private var dividerSuspendedEngines: [any TerminalEngine] = []
 
-    private static let dividerThickness: CGFloat = 1
+    private static let dividerThickness = KookyWindowLayout.separatorWidth
     private static let handleHitSize: CGFloat = 6
-    private static let minFraction: Double = 0.1
-    private static let maxFraction: Double = 0.9
 
     var body: some View {
         guard case .split(let orientation, let first, let second, let storedFraction) = node.content else {
@@ -1632,16 +1675,22 @@ private struct SplitContainer: View {
         let firstContainsZoom = workspace.zoomedPaneId.map { first.contains(paneId: $0) } ?? false
         let secondContainsZoom = !firstContainsZoom
             && (workspace.zoomedPaneId.map { second.contains(paneId: $0) } ?? false)
-        let fraction: Double = {
-            if firstContainsZoom { return 1.0 }
-            if secondContainsZoom { return 0.0 }
-            return storedFraction
-        }()
         let isZoomedAcrossThisSplit = firstContainsZoom || secondContainsZoom
         return AnyView(
             GeometryReader { geo in
                 let total: CGFloat = orientation == .horizontal ? geo.size.width : geo.size.height
                 let usable = max(total - Self.dividerThickness, 0)
+                let fraction: Double = {
+                    if firstContainsZoom { return 1.0 }
+                    if secondContainsZoom { return 0.0 }
+                    return KookyWindowLayout.clampedSplitFraction(
+                        storedFraction,
+                        orientation: orientation,
+                        first: first,
+                        second: second,
+                        usableLength: usable
+                    )
+                }()
                 let firstSize = max(0, usable * fraction)
                 let secondSize = max(0, usable - firstSize)
                 let handleOffset = firstSize - Self.handleHitSize / 2 + Self.dividerThickness / 2
@@ -1681,7 +1730,13 @@ private struct SplitContainer: View {
                             .offset(x: handleOffset, y: 0)
                             .opacity(chromeVisible)
                             .allowsHitTesting(!isZoomedAcrossThisSplit)
-                            .gesture(dragGesture(orientation: orientation, total: total))
+                            .gesture(dragGesture(
+                                orientation: orientation,
+                                usableLength: usable,
+                                first: first,
+                                second: second,
+                                renderedFraction: fraction
+                            ))
                     } else {
                         VStack(spacing: 0) {
                             PaneTreeView(node: first, workspace: workspace, store: store)
@@ -1701,7 +1756,13 @@ private struct SplitContainer: View {
                             .offset(x: 0, y: handleOffset)
                             .opacity(chromeVisible)
                             .allowsHitTesting(!isZoomedAcrossThisSplit)
-                            .gesture(dragGesture(orientation: orientation, total: total))
+                            .gesture(dragGesture(
+                                orientation: orientation,
+                                usableLength: usable,
+                                first: first,
+                                second: second,
+                                renderedFraction: fraction
+                            ))
                     }
                 }
                 .clipped()
@@ -1730,15 +1791,27 @@ private struct SplitContainer: View {
         )
     }
 
-    private func dragGesture(orientation: SplitOrientation, total: CGFloat) -> some Gesture {
+    private func dragGesture(
+        orientation: SplitOrientation,
+        usableLength: CGFloat,
+        first: PaneNode,
+        second: PaneNode,
+        renderedFraction: Double
+    ) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
                 guard case .split(let orient, let f, let s, let current) = node.content else { return }
-                if dragStartFraction == nil { dragStartFraction = current }
+                if dragStartFraction == nil { dragStartFraction = renderedFraction }
                 let translation = orientation == .horizontal ? value.translation.width : value.translation.height
-                let delta = total > 0 ? Double(translation) / Double(total) : 0
+                let delta = usableLength > 0 ? Double(translation) / Double(usableLength) : 0
                 let proposed = (dragStartFraction ?? current) + delta
-                let clamped = min(max(proposed, Self.minFraction), Self.maxFraction)
+                let clamped = KookyWindowLayout.clampedSplitFraction(
+                    proposed,
+                    orientation: orientation,
+                    first: first,
+                    second: second,
+                    usableLength: usableLength
+                )
                 guard abs(clamped - current) > .ulpOfOne else { return }
                 // A real fraction change re-lays out every pane under this split on
                 // each frame → a SIGWINCH-per-frame burst (conda scrollback-wipe /

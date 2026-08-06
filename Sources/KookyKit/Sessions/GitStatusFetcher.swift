@@ -91,6 +91,11 @@ final class GitStatusFetcher {
     /// stands in for the dropped call (same cwd, same disk state).
     private var lastDispatch: [String: (cwdPath: String, at: DispatchTime)] = [:]
 
+    /// Test-visible count of real status subprocess batches admitted past
+    /// the coalescing gate. File-tree numstat fetches intentionally do not
+    /// contribute: this probe pins the same-repo tab fan-in invariant.
+    private(set) var statusDispatchCount = 0
+
     /// Bounded git worker pool. `runGit` blocks its thread on the exit
     /// semaphore (plus one drain block per call), so dispatching every fetch
     /// onto the unbounded global queue let a same-repo fan-out pin a dozen
@@ -106,7 +111,9 @@ final class GitStatusFetcher {
     /// Schedules a fetch for `cwd`. `completion` fires on main with the
     /// freshest result; older in-flight results are silently dropped.
     func fetch(id: String, cwd: URL, completion: @MainActor @escaping (GitStatus) -> Void) {
-        fetchTokened(id: id, cwd: cwd, work: Self.run, completion: completion)
+        if fetchTokened(id: id, cwd: cwd, work: Self.run, completion: completion) {
+            statusDispatchCount += 1
+        }
     }
 
     /// Per-file companion to `fetch`: `git diff --numstat HEAD` is the same
@@ -141,19 +148,20 @@ final class GitStatusFetcher {
     /// Shared dispatch shape for both fetches: bump the caller's generation
     /// token, run `work` on the bounded git queue, drop the result on main
     /// unless a newer fetch superseded it.
+    @discardableResult
     private func fetchTokened<T: Sendable>(
         id: String,
         cwd: URL,
         work: @escaping @Sendable (String) -> T,
         completion: @MainActor @escaping (T) -> Void
-    ) {
+    ) -> Bool {
         let path = cwd.path
         // Dropping the call (not just its result) is safe because callers
         // only ever write the fetched value into observable state — the
         // in-flight twin delivers the same bytes moments later.
         if let last = lastDispatch[id], last.cwdPath == path,
            DispatchTime.now().uptimeNanoseconds - last.at.uptimeNanoseconds < 50_000_000 {
-            return
+            return false
         }
         lastDispatch[id] = (path, .now())
         let token = (generation[id] ?? 0) + 1
@@ -166,6 +174,7 @@ final class GitStatusFetcher {
                 completion(result)
             }
         }
+        return true
     }
 
     nonisolated private static func runFileDiffs(cwd: String) -> [String: GitFileDiff] {

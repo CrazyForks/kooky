@@ -63,6 +63,8 @@ struct FileTreeView: View {
     private var content: some View {
         if store.active == nil {
             emptyState("square.dashed", "No active workspace")
+        } else if model.isLoading {
+            loadingState
         } else if model.rootError {
             emptyState("folder.badge.questionmark", "Folder unavailable")
         } else if model.rows.isEmpty {
@@ -84,6 +86,12 @@ struct FileTreeView: View {
             // the previous workspace's tree are meaningless here.
             .id(model.rootURL?.path)
         }
+    }
+
+    private var loadingState: some View {
+        ProgressView()
+            .controlSize(.small)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func emptyState(_ symbol: String, _ message: String) -> some View {

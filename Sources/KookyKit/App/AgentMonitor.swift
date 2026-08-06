@@ -281,6 +281,9 @@ struct PanelEmptyState: View {
 }
 
 struct AgentOverviewSidebar: View {
+    static let fullWidth: CGFloat = 230
+    static let compactWidth: CGFloat = 44
+
     let store: WorkspaceStore
     var monitor = AgentMonitor.shared
     /// Reading the model here registers the observation, so flipping the
@@ -313,7 +316,7 @@ struct AgentOverviewSidebar: View {
             }
             footer
         }
-        .frame(width: 230)
+        .frame(width: Self.fullWidth)
     }
 
     private var agentsBody: some View {
@@ -373,7 +376,7 @@ struct AgentOverviewSidebar: View {
             }
             .padding(.vertical, 8)
         }
-        .frame(width: 44)
+        .frame(width: Self.compactWidth)
     }
 }
 

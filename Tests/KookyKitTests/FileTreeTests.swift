@@ -152,9 +152,9 @@ final class FileTreeModelTests: XCTestCase {
         FileManager.default.createFile(atPath: src.appendingPathComponent("main.swift").path, contents: Data())
         FileManager.default.createFile(atPath: root.appendingPathComponent("readme.md").path, contents: Data())
         let model = FileTreeModel()
-        // Synchronous expand cascade — production hops it off-main, but the
-        // tests assert rows immediately after toggleExpanded.
-        model.expandListingRunner = { work, apply in apply(work()) }
+        // Production hops every listing off-main; model tests inject a
+        // synchronous runner so row assertions stay deterministic.
+        model.listingRunner = { work, apply in apply(work()) }
         addTeardownBlock {
             await model.cancel()
             try? FileManager.default.removeItem(at: root)
@@ -178,6 +178,64 @@ final class FileTreeModelTests: XCTestCase {
         // Lazy: `src`'s contents stay unlisted until it's expanded.
         XCTAssertEqual(model.rows.map(\.id), [src.path, root.appendingPathComponent("readme.md").path])
         XCTAssertEqual(model.rows.map(\.depth), [0, 0])
+    }
+
+    func testActivateSchedulesRootListingThroughRunner() throws {
+        let (root, src, model) = try makeFixture()
+        var pending: (() -> Void)?
+        model.listingRunner = { work, apply in
+            pending = { apply(work()) }
+        }
+
+        model.activate(root: root)
+
+        XCTAssertTrue(model.isLoading)
+        XCTAssertTrue(model.rows.isEmpty)
+        XCTAssertNotNil(pending)
+
+        pending?()
+        XCTAssertFalse(model.isLoading)
+        XCTAssertEqual(model.rows.map(\.id), [src.path, root.appendingPathComponent("readme.md").path])
+    }
+
+    func testNewerRootRefreshSkipsQueuedOlderListing() throws {
+        let (root, src, model) = try makeFixture()
+        var pending: [() -> Void] = []
+        var listedCounts: [Int] = []
+        model.listingRunner = { work, apply in
+            pending.append {
+                let result = work()
+                listedCounts.append(result.listed.count)
+                apply(result)
+            }
+        }
+
+        model.activate(root: root)
+        model.refresh(dirPath: root.path)
+        XCTAssertEqual(pending.count, 2)
+
+        pending[0]()
+        XCTAssertEqual(listedCounts, [0], "the superseded queued walk must bail before touching disk")
+        XCTAssertTrue(model.isLoading)
+        XCTAssertTrue(model.rows.isEmpty)
+
+        pending[1]()
+        XCTAssertFalse(model.isLoading)
+        XCTAssertEqual(model.rows.map(\.id), [src.path, root.appendingPathComponent("readme.md").path])
+    }
+
+    func testDeactivateSkipsQueuedListingBeforeDiskWalk() throws {
+        let (root, _, model) = try makeFixture()
+        var pending: (() -> FileTreeLister.SubtreeListing)?
+        model.listingRunner = { work, _ in pending = work }
+
+        let token = model.activate(root: root)
+        model.deactivate(token: token)
+
+        let listing = try XCTUnwrap(pending)()
+        XCTAssertTrue(listing.listed.isEmpty)
+        XCTAssertTrue(listing.failed.isEmpty)
+        XCTAssertFalse(model.isLoading)
     }
 
     func testSymlinkedRootListsThroughTheLink() throws {
@@ -233,9 +291,15 @@ final class FileTreeModelTests: XCTestCase {
         // Capture the cascade instead of applying inline: `work()` runs NOW
         // (listing src before the extra file exists), the apply is parked.
         var pendingApply: (() -> Void)?
-        model.expandListingRunner = { work, apply in
+        var listingCount = 0
+        model.listingRunner = { work, apply in
             let result = work()
-            pendingApply = { apply(result) }
+            listingCount += 1
+            if listingCount == 1 {
+                pendingApply = { apply(result) }
+            } else {
+                apply(result)
+            }
         }
         let srcNode = try entryNode(id: src.path, in: model)
         model.toggleExpanded(srcNode)
@@ -261,7 +325,7 @@ final class FileTreeModelTests: XCTestCase {
         model.activate(root: root)
 
         var pending: [() -> Void] = []
-        model.expandListingRunner = { work, apply in
+        model.listingRunner = { work, apply in
             let result = work()
             pending.append { apply(result) }
         }

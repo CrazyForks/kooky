@@ -2,6 +2,11 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.48.4 — 2026-08-06
+
+- Faster: the sidebar file tree now performs every directory listing off the main thread and cancels queued work when hidden; Session Info refreshes only its process section; status-bar layout measurements and bundled-resource lookup are cached; and tabs in the same repository share Git status queries.
+- Fixed: terminal panes now target a 200pt minimum width across window resizing, repeated splits, restored layouts, and divider dragging. The window expands only up to the current screen, nested pane trees reserve the correct space, and physically constrained layouts compress panes proportionally instead of pushing the rightmost pane off-screen.
+
 ## v0.48.3 — 2026-08-06
 
 - Fixed: running Claude and Pi tool calls no longer drive a per-second SwiftUI layout loop that could peg a CPU core. The status-bar pill and history popover now show a stable running state, then switch to the final duration when the tool finishes; VoiceOver also avoids repeating the running status. (#49)

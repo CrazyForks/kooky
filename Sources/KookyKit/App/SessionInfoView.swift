@@ -7,16 +7,6 @@ import SwiftUI
 struct SessionInfoView: View {
     let store: WorkspaceStore
 
-    /// Polled, not observed — see `processPolling`. Owned here rather than in
-    /// `ProcessesSection` because that section renders nothing until the first
-    /// scan lands, and a view whose first frame is empty cannot be trusted to
-    /// receive the appearance callback that would start the scan.
-    @State private var processes: [SessionProcess] = []
-
-    /// Slow enough to be free, fast enough that a command you just started
-    /// shows up before you go looking for it.
-    private static let processPollInterval = Duration.seconds(2)
-
     var body: some View {
         VStack(spacing: 0) {
             RightPanelHeader(title: "session info", count: 0)
@@ -121,28 +111,7 @@ struct SessionInfoView: View {
                     }
                 }
 
-                // Always mounted: gated on the first scan, the section popped
-                // in a beat after the page and shoved everything below it. The
-                // placeholder holds the frame instead — it is also what shows
-                // while a tab switch clears the previous tab's rows.
-                SessionInfoSection(title: SessionInfoRules.processesTitle, store: store) {
-                    if processes.isEmpty {
-                        Text(verbatim: "—")
-                            .font(SessionInfo.valueFont)
-                            .foregroundStyle(Theme.chromeMuted)
-                    } else {
-                        ForEach(processes) { ProcessRow(process: $0) }
-                    }
-                    // The scan is honest but incomplete over SSH: the local
-                    // tty only carries the ssh process itself, so say so
-                    // rather than letting one bare `ssh` row read as "this
-                    // tab is running nothing".
-                    if session.effectiveRemoteHost != nil {
-                        Text("remote processes not visible", bundle: .kookyResources)
-                            .font(SessionInfo.labelFont)
-                            .foregroundStyle(SessionInfo.labelText)
-                    }
-                }
+                SessionProcessesSection(store: store, session: session)
 
                 if hasRuntimeInfo(session) {
                     SessionInfoSection(title: SessionInfoRules.runtimeTitle, store: store) {
@@ -166,51 +135,6 @@ struct SessionInfoView: View {
                 // to hand-select.
             }
             .padding(.bottom, Theme.space5)
-        }
-        // Anchored on the scroll view, which always has content: this is the
-        // one thing on the page that no observation can drive
-        // (`engine.foregroundPid` reads libghostty through a
-        // non-`@Observable` engine and no kernel signal reaches SwiftUI), so
-        // if this task fails to start there is no second chance. `id:` restarts
-        // it on a tab switch; unmounting the page cancels it, so nothing polls
-        // while another panel page is up.
-        .task(id: session.id) {
-            // A tab switch restarts this task: drop the previous tab's rows
-            // right away instead of letting them sit under the new tab's name
-            // until the first scan lands — the inspector must never attribute
-            // another tab's processes to this one.
-            processes = []
-            // Loop-carried, deliberately NOT @State: nothing in body reads
-            // it, and a @State write would invalidate the whole page every
-            // tick (`atNs` never repeats), defeating the equality gate
-            // below. The task restart on a tab switch resets it for free.
-            var previousCPU: SessionProcessScanner.CPUSamples?
-            while !Task.isCancelled {
-                // Skip the walk while the section is collapsed — the rows
-                // aren't rendered, and the stale snapshot keeps the section
-                // mounted. Re-checked per tick, so expanding recovers within
-                // one poll interval.
-                if !store.collapsedInfoSections.contains(SessionInfoRules.processesTitle) {
-                    // Off the main thread: the port walk costs one socket-info
-                    // call per socket fd, which on a connection-heavy child
-                    // (an agent with MCP servers, a loaded dev server)
-                    // reaches milliseconds — a poll must never cost a frame.
-                    let pid = session.engine.foregroundPid ?? 0
-                    let window = previousCPU
-                    let scanned = await Task.detached {
-                        SessionProcessScanner.scan(foregroundPid: pid, previousCPU: window)
-                    }.value
-                    previousCPU = scanned.cpu
-                    // A detached task doesn't inherit cancellation: a tab
-                    // switch mid-scan restarts this loop for the NEW session,
-                    // and the old scan would land afterwards, overwriting the
-                    // new tab's rows with the old tab's until the next tick.
-                    if !Task.isCancelled, scanned.processes != processes {
-                        processes = scanned.processes
-                    }
-                }
-                try? await Task.sleep(for: Self.processPollInterval)
-            }
         }
     }
 
@@ -273,6 +197,68 @@ struct SessionInfoView: View {
 
     private func abbreviatedPath(_ path: String) -> String {
         SessionInfoRules.abbreviatedPath(path)
+    }
+}
+
+/// The only periodically-changing part of Session Info. Keeping the process
+/// snapshot and polling task in this dedicated view means each 2-second sample
+/// invalidates only the Processes section, not the identity/context/source/
+/// environment/runtime inspector around it.
+private struct SessionProcessesSection: View {
+    let store: WorkspaceStore
+    let session: Session
+
+    @State private var processes: [SessionProcess] = []
+
+    /// Slow enough to be free, fast enough that a command you just started
+    /// shows up before you go looking for it.
+    private static let pollInterval = Duration.seconds(2)
+
+    var body: some View {
+        SessionInfoSection(title: SessionInfoRules.processesTitle, store: store) {
+            if processes.isEmpty {
+                Text(verbatim: "—")
+                    .font(SessionInfo.valueFont)
+                    .foregroundStyle(Theme.chromeMuted)
+            } else {
+                ForEach(processes) { ProcessRow(process: $0) }
+            }
+            // The scan is honest but incomplete over SSH: the local tty only
+            // carries the ssh process itself, so say so rather than letting
+            // one bare `ssh` row read as "this tab is running nothing".
+            if session.effectiveRemoteHost != nil {
+                Text("remote processes not visible", bundle: .kookyResources)
+                    .font(SessionInfo.labelFont)
+                    .foregroundStyle(SessionInfo.labelText)
+            }
+        }
+        // Always mounted because the placeholder above gives the section a
+        // first frame. `id:` restarts on a tab switch; unmounting Session Info
+        // cancels the loop, so other right-panel pages never pay for polling.
+        .task(id: session.id) {
+            processes = []
+            // Loop-carried, deliberately not @State: nothing renders this
+            // sample window, so changing it must not invalidate the section.
+            var previousCPU: SessionProcessScanner.CPUSamples?
+            while !Task.isCancelled {
+                if !store.collapsedInfoSections.contains(SessionInfoRules.processesTitle) {
+                    // The port walk can cost milliseconds on a connection-
+                    // heavy child; keep every kernel query off the main actor.
+                    let pid = session.engine.foregroundPid ?? 0
+                    let window = previousCPU
+                    let scanned = await Task.detached {
+                        SessionProcessScanner.scan(foregroundPid: pid, previousCPU: window)
+                    }.value
+                    previousCPU = scanned.cpu
+                    // Detached work does not inherit cancellation. Never let
+                    // an old tab's late scan overwrite the new tab's section.
+                    if !Task.isCancelled, scanned.processes != processes {
+                        processes = scanned.processes
+                    }
+                }
+                try? await Task.sleep(for: Self.pollInterval)
+            }
+        }
     }
 }
 

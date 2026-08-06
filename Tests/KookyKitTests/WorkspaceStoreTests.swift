@@ -1023,6 +1023,28 @@ final class WorkspaceStoreTests: XCTestCase {
         XCTAssertEqual(new?.tabs.count, 1)
     }
 
+    func testRepeatedRightSplitsRebalanceTheAncestorPath() {
+        let store = makeStore()
+        let ws = store.workspaces[0]
+        let first = firstPane(ws)
+        let second = store.splitPane(first, orientation: .horizontal, in: ws)!
+        let third = store.splitPane(second, orientation: .horizontal, in: ws)!
+        _ = store.splitPane(third, orientation: .horizontal, in: ws)
+
+        guard case .split(.horizontal, _, let right, let rootFraction) = ws.root.content else {
+            return XCTFail("root should remain horizontal")
+        }
+        XCTAssertEqual(rootFraction, 0.25, accuracy: 0.001)
+        guard case .split(.horizontal, _, let deepRight, let rightFraction) = right.content else {
+            return XCTFail("right subtree should remain horizontal")
+        }
+        XCTAssertEqual(rightFraction, 1.0 / 3.0, accuracy: 0.001)
+        guard case .split(.horizontal, _, _, let deepFraction) = deepRight.content else {
+            return XCTFail("deep right subtree should remain horizontal")
+        }
+        XCTAssertEqual(deepFraction, 0.5, accuracy: 0.001)
+    }
+
     func testSplitPaneInheritsActiveTabAgentAndCwd() {
         let store = makeStore()
         let ws = store.addWorkspace(workingDirectory: projectA)
@@ -2669,6 +2691,53 @@ extension WorkspaceStoreTests {
         XCTAssertEqual(store.gitWatchHubStats.watchers, base.watchers + 1,
                        "the shared watcher survives while any subscriber remains")
         XCTAssertEqual(store.gitWatchHubStats.subscriptions, base.subscriptions + 2)
+    }
+
+    func testSameRepoTabSpawnMergesGitStatusFetches() async throws {
+        let repo = try makeGitRepo()
+        defer { try? FileManager.default.removeItem(at: repo) }
+        let store = makeStore()
+        let baseline = store.gitStatusDispatchCount
+
+        let ws = store.addWorkspace(workingDirectory: repo)
+        store.addTab(in: ws)
+        store.addTab(in: ws)
+
+        XCTAssertEqual(store.gitStatusDispatchCount, baseline,
+                       "the shared repo refresh should remain queued while tabs join")
+        try await Task.sleep(for: .milliseconds(180))
+        XCTAssertEqual(store.gitStatusDispatchCount, baseline + 1,
+                       "three same-repo tabs must dispatch one shared git status batch")
+    }
+
+    func testDiffSnapshotInvalidatesOnlyTheClickedSessionLane() throws {
+        let repo = try makeGitRepo()
+        defer { try? FileManager.default.removeItem(at: repo) }
+        let store = makeStore()
+        let workspace = store.addWorkspace(workingDirectory: repo)
+        let session = try XCTUnwrap(workspace.activeSession)
+        session.gitStatus = GitStatus(
+            branch: "main",
+            repoRoot: repo.path,
+            filesChanged: 1,
+            insertions: 1,
+            deletions: 0
+        )
+        let before = store.gitStatusLaneTokens(for: session)
+
+        store.applyDiffSnapshot(
+            GitDiffSnapshot(
+                repoRoot: repo.path,
+                entries: [GitDiffFileEntry(path: "changed.swift", insertions: 2, deletions: 1)]
+            ),
+            for: session,
+            cwdPath: repo.path
+        )
+
+        let after = store.gitStatusLaneTokens(for: session)
+        XCTAssertEqual(after.session, before.session + 1)
+        XCTAssertEqual(after.shared, before.shared,
+                       "a local snapshot must not cancel the repo-wide broadcast")
     }
 
     func testCdAcrossRepoBoundaryMovesTheSubscription() throws {

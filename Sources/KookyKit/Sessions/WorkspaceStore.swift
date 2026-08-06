@@ -310,9 +310,17 @@ final class WorkspaceStore {
     private final class GitWatch {
         let watcher: GitWatcher
         var subscribers: Set<UUID> = []
+        /// Prompt/spawn bursts from same-repo tabs collapse into one shared
+        /// status fetch. The watcher already debounces disk events; this task
+        /// covers UI-originated triggers that otherwise arrive per session.
+        var pendingStatusRefresh: Task<Void, Never>?
         init(watcher: GitWatcher) { self.watcher = watcher }
     }
     private var gitWatches: [String: GitWatch] = [:]
+    /// Slightly wider than GitStatusFetcher's 50ms same-lane coalescing
+    /// window: a trigger arriving just after dispatch gets a guaranteed
+    /// follow-up fetch instead of being swallowed by the previous batch.
+    private static let sharedGitRefreshDelay = Duration.milliseconds(60)
     /// Per-session (cwd → resolved gitdir) cache so the per-prompt hub call
     /// skips the findGitDir directory walk while the cwd is unchanged.
     private var sessionGitWatch: [UUID: (cwdPath: String, gitDir: String?)] = [:]
@@ -1291,6 +1299,12 @@ final class WorkspaceStore {
         let firstChild = PaneNode(pane: existing)
         let secondChild = PaneNode(pane: newPane)
         leafNode.content = .split(orientation: orientation, first: firstChild, second: secondChild, fraction: 0.5)
+        if orientation == .horizontal {
+            KookyWindowLayout.rebalanceHorizontalSplits(
+                in: workspace.root,
+                alongPathTo: leafNode
+            )
+        }
         workspace.activePaneId = newPane.id
         // Splitting while zoomed = "I want to see what I'm creating". Drop
         // zoom so the new pane is visible. Guarded so a no-op write
@@ -1535,7 +1549,10 @@ final class WorkspaceStore {
                 }
             }
         }
-        for entry in gitWatches.values { entry.watcher.cancel() }
+        for entry in gitWatches.values {
+            entry.pendingStatusRefresh?.cancel()
+            entry.watcher.cancel()
+        }
         gitWatches.removeAll()
         sessionGitWatch.removeAll()
         codexUsageMonitor.stopAll()
@@ -1742,9 +1759,9 @@ final class WorkspaceStore {
         // Initial refresh — without these, the status bar stays empty until
         // the user `cd`s or runs a command. Both fetchers silently hide
         // results for non-applicable cwds, so the calls are harmless.
+        updateGitWatch(for: session)
         refreshGitStatus(for: session)
         refreshEnvironment(for: session)
-        updateGitWatch(for: session)
         startCodexUsageIfNeeded(
             for: session,
             resumingConversationId: codexRolloutId
@@ -1788,8 +1805,8 @@ final class WorkspaceStore {
             //    (`git init` / `clone .`) with no cd. Gating it would strand
             //    that case (issue #29 review). Unchanged-cwd prompts inside a
             //    repo cost two dictionary hits, no filesystem walk.
-            self?.refreshGitStatus(for: session)
             self?.updateGitWatch(for: session)
+            self?.refreshGitStatus(for: session)
             // Environment + persistence DO only move with the cwd. venv / node
             // changes are pushed by the separate `_kooky_env_status` precmd IPC
             // (which updates shellEnvironment → refreshEnvironment), and the only
@@ -1978,9 +1995,14 @@ final class WorkspaceStore {
     }
 
     private func refreshGitStatus(for session: Session) {
-        gitStatusFetcher.fetch(id: session.id.uuidString, cwd: session.currentDirectory) { [weak session] status in
-            guard let session, session.gitStatus != status else { return }
-            session.gitStatus = status
+        if let gitDir = sessionGitWatch[session.id]?.gitDir,
+           gitWatches[gitDir]?.subscribers.contains(session.id) == true {
+            scheduleGitStatusRefresh(for: gitDir)
+        } else {
+            gitStatusFetcher.fetch(id: session.id.uuidString, cwd: session.currentDirectory) { [weak session] status in
+                guard let session, session.gitStatus != status else { return }
+                session.gitStatus = status
+            }
         }
         // Piggyback the file tree's per-file diff on the SAME triggers that
         // refresh the status bar (spawn / every prompt / command finished /
@@ -2037,12 +2059,10 @@ final class WorkspaceStore {
         refreshed.insertions = diff.insertions
         refreshed.deletions = diff.deletions
         if refreshed != session.gitStatus {
+            // Shared broadcasts snapshot this lane and skip only this session
+            // when the token moves; the other subscribers must still receive
+            // the in-flight repo result.
             gitStatusFetcher.invalidateInFlight(id: session.id.uuidString)
-            // The shared-gitdir broadcast fetch is a second in-flight lane
-            // that could also overwrite this fresher click-time result.
-            if let gitDir = sessionGitWatch[session.id]?.gitDir {
-                gitStatusFetcher.invalidateInFlight(id: gitDir)
-            }
             session.gitStatus = refreshed
         }
         // Outside the totals gate: the file-level distribution can change
@@ -2115,6 +2135,10 @@ final class WorkspaceStore {
             unsubscribeGitWatch(sessionId: session.id, from: previous)
         }
         if let gitDir, let resolved {
+            // A direct non-repo fetch may still be in flight from the old
+            // cwd. Moving onto the shared repo lane must make that result
+            // stale, otherwise a late EMPTY status can erase the repo state.
+            gitStatusFetcher.invalidateInFlight(id: session.id.uuidString)
             subscribeGitWatch(session: session, to: gitDir, resolvedGitDir: resolved)
         }
     }
@@ -2125,7 +2149,7 @@ final class WorkspaceStore {
             entry = existing
         } else {
             let watcher = GitWatcher { [weak self] in
-                self?.gitDirChanged(gitDir)
+                self?.scheduleGitStatusRefresh(for: gitDir)
             }
             watcher.watch(cwd: session.currentDirectory, resolvedGitDir: resolvedGitDir)
             entry = GitWatch(watcher: watcher)
@@ -2138,7 +2162,9 @@ final class WorkspaceStore {
         guard let entry = gitWatches[gitDir] else { return }
         entry.subscribers.remove(sessionId)
         if entry.subscribers.isEmpty {
-            gitWatches.removeValue(forKey: gitDir)?.watcher.cancel()
+            let removed = gitWatches.removeValue(forKey: gitDir)
+            removed?.pendingStatusRefresh?.cancel()
+            removed?.watcher.cancel()
         }
     }
 
@@ -2146,6 +2172,20 @@ final class WorkspaceStore {
     /// gitdir, subscriber counting) have no UI-observable surface.
     var gitWatchHubStats: (watchers: Int, subscriptions: Int) {
         (gitWatches.count, gitWatches.values.reduce(0) { $0 + $1.subscribers.count })
+    }
+
+    /// Test-only probe for the number of actual status fetch batches (after
+    /// both the shared-repo fan-in and fetcher's same-lane coalescing).
+    var gitStatusDispatchCount: Int { gitStatusFetcher.statusDispatchCount }
+
+    /// Test-only probe for the two freshness lanes touched by a click-time
+    /// diff snapshot. The session lane must advance; the shared lane must not.
+    func gitStatusLaneTokens(for session: Session) -> (session: Int, shared: Int?) {
+        let sessionToken = gitStatusFetcher.currentToken(id: session.id.uuidString)
+        let sharedToken = sessionGitWatch[session.id]?.gitDir.map {
+            gitStatusFetcher.currentToken(id: $0)
+        }
+        return (sessionToken, sharedToken)
     }
 
     /// Close-site teardown: drops the session's subscription, and the shared
@@ -2167,15 +2207,29 @@ final class WorkspaceStore {
         if !keepForTransfer { session.engine.terminate() }
     }
 
-    /// Shared-watcher fan-out. ONE git run per repo event, its result
+    /// Collects prompt/spawn/watcher triggers for one gitdir. Keeping the
+    /// pending task on the shared entry makes fan-in explicit: N tabs can
+    /// request refresh independently while only one batch reaches git.
+    private func scheduleGitStatusRefresh(for gitDir: String) {
+        guard let entry = gitWatches[gitDir], entry.pendingStatusRefresh == nil else { return }
+        entry.pendingStatusRefresh = Task { @MainActor [weak self, weak entry] in
+            try? await Task.sleep(for: Self.sharedGitRefreshDelay)
+            guard !Task.isCancelled, let self, let entry,
+                  self.gitWatches[gitDir] === entry else { return }
+            entry.pendingStatusRefresh = nil
+            self.performSharedGitStatusRefresh(gitDir)
+        }
+    }
+
+    /// Shared-watcher fan-out. ONE git run per repo event/prompt burst, its result
     /// broadcast to every subscribed session — same gitdir means same HEAD
     /// and same working tree, so their statuses are identical by
     /// construction. This is what turns "ten tabs on one repo, one commit"
     /// from ten fetches (twenty forks) into one fetch. The gitdir path
-    /// doubles as the fetch lane key. Coalescing note: back-to-back events
-    /// on one gitdir arrive ≥200ms apart (GitWatcher's debounce), so the
-    /// fetcher's 50ms poll window can never swallow a distinct disk state.
-    private func gitDirChanged(_ gitDir: String) {
+    /// doubles as the fetch lane key. Every new trigger waits 60ms after the
+    /// prior dispatch, beyond the fetcher's 50ms coalescing window, so a
+    /// genuinely later burst cannot be swallowed by the previous batch.
+    private func performSharedGitStatusRefresh(_ gitDir: String) {
         guard let entry = gitWatches[gitDir] else { return }
         var anchor: Session?
         for id in entry.subscribers {
@@ -2187,25 +2241,24 @@ final class WorkspaceStore {
             if isDirectory(session.currentDirectory) { anchor = session; break }
         }
         guard let anchor else { return }
-        // Snapshot each subscriber's own fetch lane at dispatch: a session
-        // that fetched for itself while this shared run was in flight read
-        // a NEWER disk state, and the shared (older) result must not
-        // overwrite it — the lanes don't invalidate each other.
-        let laneStamps = entry.subscribers.map { id in
+        // Snapshot each subscriber's own lane at dispatch: a newer
+        // out-of-band result (the click-time diff snapshot) advances that
+        // lane, and this shared older result must not overwrite it.
+        let laneStamps = Dictionary(uniqueKeysWithValues: entry.subscribers.map { id in
             (id, gitStatusFetcher.currentToken(id: id.uuidString))
-        }
+        })
         gitStatusFetcher.fetch(id: gitDir, cwd: anchor.currentDirectory) { [weak self] status in
             // Re-read the subscriber set at completion (sessions that closed
             // mid-fetch drop out), then broadcast in ONE pane-tree pass
             // instead of a per-id tree search.
             guard let self, let ids = self.gitWatches[gitDir]?.subscribers else { return }
-            let fresh = Set(laneStamps.lazy
-                .filter { self.gitStatusFetcher.currentToken(id: $0.0.uuidString) == $0.1 }
-                .map(\.0))
             for workspace in self.workspaces {
                 for pane in workspace.root.allPanes {
-                    for tab in pane.tabs
-                    where ids.contains(tab.id) && fresh.contains(tab.id) && tab.gitStatus != status {
+                    for tab in pane.tabs where ids.contains(tab.id) && tab.gitStatus != status {
+                        if let stamp = laneStamps[tab.id],
+                           self.gitStatusFetcher.currentToken(id: tab.id.uuidString) != stamp {
+                            continue
+                        }
                         tab.gitStatus = status
                     }
                 }
