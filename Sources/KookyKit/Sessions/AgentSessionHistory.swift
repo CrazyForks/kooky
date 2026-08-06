@@ -504,7 +504,7 @@ struct SessionHistoryView: View {
 
     private var refreshButton: some View {
         HoverableIconButton(
-            size: 22,
+            size: Theme.chromeCompactButtonSize,
             help: "Rescan sessions",
             action: {
                 history.refresh(force: true)
@@ -578,19 +578,9 @@ struct SessionHistoryView: View {
 
     private func filterChip(_ agentId: String?, label: String) -> some View {
         let isActive = store.historyFilterAgentId == agentId
-        return Button {
+        return HistoryFilterChip(label: label, isActive: isActive) {
             store.historyFilterAgentId = agentId
-        } label: {
-            Text(label)
-                .font(Theme.mono(10, weight: isActive ? .semibold : .regular))
-                .foregroundStyle(isActive ? Theme.chromeForeground : Theme.chromeMuted)
-                .padding(.horizontal, 8)
-                .frame(height: 19)
-                .hoverableRowBackground(isActive: isActive, isHovered: false)
-                .clipShape(RoundedRectangle(cornerRadius: 5))
-                .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
     }
 
     private var filteredRecords: [AgentSessionRecord] {
@@ -602,6 +592,37 @@ struct SessionHistoryView: View {
             return record.title.localizedCaseInsensitiveContains(query)
                 || record.cwd.path.localizedCaseInsensitiveContains(query)
         }
+    }
+}
+
+/// Selected-capable chip for the History filter strip. This deliberately
+/// mirrors `FooterSegment`: active is persistent, hover is transient, and
+/// both lift the label to the foreground tier.
+private struct HistoryFilterChip: View {
+    let label: String
+    let isActive: Bool
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(label)
+                .font(Theme.mono(10, weight: isActive ? .semibold : .regular))
+                .foregroundStyle(
+                    isActive || isHovered ? Theme.chromeForeground : Theme.chromeMuted
+                )
+                .padding(.horizontal, 8)
+                .frame(height: 19)
+                .hoverableRowBackground(isActive: isActive, isHovered: isHovered)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.chromeButtonCornerRadius))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .animation(Theme.chromeTransition, value: isActive)
+        .accessibilityAddTraits(isActive ? .isSelected : [])
     }
 }
 

@@ -425,10 +425,13 @@ private struct SessionInfoSection<Content: View>: View {
                 }
                 .foregroundStyle(isHovered ? Theme.chromeForeground : SessionInfo.sectionText)
                 .frame(height: SessionInfo.sectionHeaderHeight)
+                .hoverableRowBackground(isHovered: isHovered)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.chromeButtonCornerRadius))
                 .contentShape(Rectangle())
             }
             .buttonStyle(SectionDisclosureStyle())
             .onHover { isHovered = $0 }
+            .animation(.easeOut(duration: 0.12), value: isHovered)
 
             if isExpanded {
                 VStack(alignment: .leading, spacing: SessionInfo.rowSpacing) {
@@ -552,6 +555,7 @@ private struct PortLink: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
         .hoverCursor(.pointingHand)
         .help(urlString)
     }
@@ -625,6 +629,7 @@ private struct FieldCopyButton: View {
     let isVisible: Bool
 
     @State private var copied = false
+    @State private var isHovered = false
     @State private var resetTask: Task<Void, Never>?
 
     var body: some View {
@@ -640,10 +645,22 @@ private struct FieldCopyButton: View {
         } label: {
             Text("\(Image(systemName: copied ? "checkmark" : "doc.on.doc"))")
                 .font(.system(size: 9, weight: .medium))
-                .foregroundStyle(copied ? Theme.activitySuccess : Theme.chromeMuted)
+                .foregroundStyle(
+                    copied
+                        ? Theme.activitySuccess
+                        : (isHovered ? Theme.chromeForeground : Theme.chromeMuted)
+                )
+                .frame(
+                    width: Theme.chromeContextButtonSize,
+                    height: Theme.chromeContextButtonSize
+                )
+                .background(isHovered ? Theme.chromeHover : .clear)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.chromeButtonCornerRadius))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
         // `copied` keeps the checkmark up if the pointer leaves right after
         // the click — the feedback must outlive the hover that revealed it.
         .opacity(isVisible || copied ? 1 : 0)
@@ -890,10 +907,12 @@ private struct AskFixButton: View {
                 .padding(.leading, 7)
                 .padding(.trailing, 6)
                 .padding(.vertical, 3.5)
+                .background(mainHovered ? Theme.chromeHover : .clear)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .onHover { mainHovered = $0 }
+            .animation(.easeOut(duration: 0.12), value: mainHovered)
             .help(
                 String.localizedStringWithFormat(
                     String(localized: "ask %@", bundle: .kookyResources),
@@ -913,10 +932,14 @@ private struct AskFixButton: View {
                     .foregroundStyle(Theme.chromeForeground.opacity(chevronHovered ? 1 : 0.6))
                     .padding(.horizontal, 5)
                     .padding(.vertical, 6)
+                    .background(
+                        chevronHovered || picker != nil ? Theme.chromeHover : .clear
+                    )
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .onHover { chevronHovered = $0 }
+            .animation(.easeOut(duration: 0.12), value: chevronHovered)
             .popover(item: $picker, arrowEdge: .bottom) { presented in
                 AskAgentPicker(agents: presented.value) { agent in
                     picker = nil

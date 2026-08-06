@@ -296,11 +296,22 @@ enum Theme {
     static let activitySuccess = Color(.sRGB, red: 0.45, green: 0.78, blue: 0.50, opacity: 1)
 
     /// Git diff colors for the pane's bottom-right status — green for
-    /// insertions, red for deletions. Both reuse the activity palette so
-    /// "green == good, red == something to look at" stays one hue per
-    /// signal across the app.
-    static let gitInsertion = activitySuccess
-    static let gitDeletion = activityFailure
+    /// insertions, red for deletions. Dark chrome reuses the activity hues;
+    /// light chrome needs deeper variants because those luminous colors fall
+    /// below readable text contrast on a near-white status surface.
+    static var gitInsertion: Color {
+        resolved.isLight
+            ? Color(.sRGB, red: 0.12, green: 0.46, blue: 0.24, opacity: 1)
+            : activitySuccess
+    }
+    static var gitDeletion: Color {
+        resolved.isLight
+            ? Color(.sRGB, red: 0.68, green: 0.18, blue: 0.20, opacity: 1)
+            : activityFailure
+    }
+    /// The sign is intentionally quieter than its digits, but 60% made the
+    /// already-small glyph too faint on light chrome.
+    static var gitSignOpacity: Double { resolved.isLight ? 0.78 : 0.60 }
 
     /// Keep-awake status light (top strip). Tuned to read like the MacBook
     /// keyboard's Caps Lock LED — a bright, luminous emerald.
@@ -331,6 +342,43 @@ enum Theme {
     static let space3: CGFloat = 12
     static let space4: CGFloat = 16
     static let space5: CGFloat = 24
+
+    // MARK: Chrome controls
+
+    /// Main-window control families. Global toolbar actions use a 28pt hit
+    /// square; dense contextual actions use 20pt; the persistent bottom bars
+    /// use a 22pt compact height. Width may be larger for a segmented control,
+    /// but its vertical geometry still comes from this single scale.
+    static let chromeToolbarButtonSize: CGFloat = 28
+    static let chromeContextButtonSize: CGFloat = 20
+    static let chromeCompactButtonSize: CGFloat = 22
+    static let chromeFooterSegmentWidth: CGFloat = 26
+    static let chromeOpenInIconSize: CGFloat = 17
+    static let chromeSplitChevronWidth: CGFloat = 18
+    static let chromeButtonCornerRadius: CGFloat = 5
+    static let chromeControlSpacing: CGFloat = 2
+    static let chromeBarEdgeInset: CGFloat = space2
+    static let chromeBottomBarVerticalPadding: CGFloat = 5
+
+    /// Left-sidebar content grid. A 16pt gutter plus a 20pt primary mark is a
+    /// conventional desktop source-list rhythm; its 26pt centre also matches
+    /// the middle of Kooky's 52pt compact rail. The native traffic-light group
+    /// is aligned to this axis by `KookyWindowController` rather than pulling
+    /// sidebar content into the window's cramped default 16pt button centre.
+    static let sidebarContentLeadingX: CGFloat = 16
+    static let sidebarPrimaryIconSize: CGFloat = 20
+    static let sidebarLeadingIconCenterX = sidebarContentLeadingX + sidebarPrimaryIconSize / 2
+
+    /// Native macOS titlebar controls are 14pt circles on 23pt centres. After
+    /// the close button is aligned to the sidebar axis, reserve the complete
+    /// three-button group plus a regular 12pt (`space3`) toolbar-section gap
+    /// before the left-sidebar toggle's hit target begins.
+    static let titlebarControlRadius: CGFloat = 7
+    static let titlebarControlCenterSpacing: CGFloat = 23
+    static let topStripLeadingReservedWidth = sidebarLeadingIconCenterX
+        + 2 * titlebarControlCenterSpacing
+        + titlebarControlRadius
+        + space3
 
     /// The left section title, every pane tab strip, and the full right-panel
     /// title share one baseline. Keeping this in the theme prevents the three

@@ -322,9 +322,9 @@ func sessionWantsCodexUsage(_ session: Session) -> Bool {
     return !KookySettingsModel.shared.hiddenUsageAgents.contains(agentKey)
 }
 
-/// A status-bar icon button: bracket-bordered pill with hover + engaged
-/// (active) fill, matching `BracketButton` / Settings rows. Both the compose
-/// and zoom buttons are this — factored out the moment there were two.
+/// A borderless status-bar icon button with a quiet resting surface and a
+/// stronger hover/engaged fill. Both compose and zoom use this so the left
+/// actions share the same language as the environment and git items.
 private struct StatusBarIconButton: View {
     let systemName: String
     let isActive: Bool
@@ -336,18 +336,21 @@ private struct StatusBarIconButton: View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(isActive ? Theme.chromeForeground : Theme.chromeMuted)
-                .frame(width: 22, height: 22)
+                .foregroundStyle(isActive || hovered ? Theme.chromeForeground : Theme.chromeMuted)
+                .frame(
+                    width: Theme.chromeCompactButtonSize,
+                    height: Theme.chromeCompactButtonSize
+                )
                 .background(
                     RoundedRectangle(cornerRadius: 4, style: .continuous).fill(fill)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .stroke(Theme.chromeHairline, lineWidth: 1)
                 )
                 .contentShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(String(
+            localized: String.LocalizationValue(help),
+            bundle: .kookyResources
+        ))
         .help(String(
             localized: String.LocalizationValue(help),
             bundle: .kookyResources
@@ -359,16 +362,17 @@ private struct StatusBarIconButton: View {
 
     private var fill: Color {
         if isActive { return Theme.chromeActive }
-        if hovered { return Theme.chromeHover }
-        return Color.clear
+        if hovered { return Theme.chromeActive }
+        return Theme.chromeHover
     }
 }
 
 /// Chrome status bar pinned to the bottom of the active pane — Warp-style
 /// approximation. libghostty owns the terminal grid, so we can't inline
 /// above the prompt; pinning to chrome below the terminal is the closest
-/// equivalent. Each segment is its own bordered pill with leading icon,
-/// stacked right-aligned. Hidden entirely when no segment has data.
+/// equivalent. Segments keep a quiet borderless surface for separation;
+/// interactive hover/open/active states lift it one level. Hidden entirely
+/// when no segment has data.
 private struct PaneStatusBar: View {
     @Bindable var session: Session
     /// Which pane this status bar belongs to. The zoom button uses this so
@@ -433,8 +437,8 @@ private struct PaneStatusBar: View {
             .frame(maxWidth: .infinity)
         }
         .font(Theme.mono(11))
-        .padding(.horizontal, Theme.space2)
-        .padding(.vertical, 5)
+        .padding(.horizontal, Theme.chromeBarEdgeInset)
+        .padding(.vertical, Theme.chromeBottomBarVerticalPadding)
         .glassChromeBackground()
     }
 
@@ -467,7 +471,8 @@ private struct PaneStatusBar: View {
     private var pythonSegment: some View {
         if let venv = session.environment.pythonVenv {
             StatusSegment(systemImage: "p.circle.fill") {
-                Text(venv).foregroundStyle(Theme.chromeForeground)
+                Text(venv)
+                    .foregroundStyle(Theme.chromeForeground)
             }
         }
     }
@@ -547,13 +552,22 @@ private struct PaneStatusBar: View {
     }
 }
 
-/// One bordered segment of the status bar — leading SF Symbol icon at
-/// `chromeMuted`, body content rendered by the caller. Wraps each
-/// data-source (git, Python env, Node version, …) in a uniform pill so
-/// adding new sources is just `StatusSegment(systemImage: ...) { ... }`.
+/// One flat segment of the status bar — muted icon, primary label, and a
+/// shared quiet surface. Interactive wrappers lift that surface on hover/open.
 private struct StatusSegment<Content: View>: View {
     let systemImage: String
+    let fill: Color
     @ViewBuilder var content: () -> Content
+
+    init(
+        systemImage: String,
+        fill: Color = Theme.chromeHover,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.systemImage = systemImage
+        self.fill = fill
+        self.content = content
+    }
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 7) {
@@ -564,9 +578,8 @@ private struct StatusSegment<Content: View>: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
-        .overlay(
-            RoundedRectangle(cornerRadius: 4)
-                .stroke(Theme.chromeFaint, lineWidth: 1)
+        .background(
+            RoundedRectangle(cornerRadius: 4).fill(fill)
         )
     }
 }
@@ -693,7 +706,7 @@ struct SignedNumber: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            Text(sign).foregroundStyle(color.opacity(0.6))
+            Text(sign).foregroundStyle(color.opacity(Theme.gitSignOpacity))
             Text("\(value)").foregroundStyle(color)
         }
     }
@@ -725,7 +738,7 @@ struct DiffCountBadge: View {
     }
 }
 
-/// Shared shell for every clickable status-bar pill: `StatusSegment` label,
+/// Shared shell for every clickable status-bar item: `StatusSegment` label,
 /// hover/open fill, click → `KookyMenuList` popover. `loadSnapshot` runs
 /// off-main via a cancellable `.task` (a slow git spawn can't block the UI
 /// thread — the detach lives HERE so callers can't forget it) and the result
@@ -755,18 +768,16 @@ private struct PopoverStatusSegment<Snapshot: Sendable, Label: View, Content: Vi
         Button {
             toggleMenu()
         } label: {
-            StatusSegment(systemImage: systemImage) {
+            StatusSegment(systemImage: systemImage, fill: fill) {
                 label()
             }
-            .background(
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(isHovered || presentation != nil || loadRequest != nil ? Theme.chromeHover : .clear)
-            )
         }
         .buttonStyle(.plain)
         .contentShape(RoundedRectangle(cornerRadius: 4))
         .help(helpText)
         .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .animation(Theme.chromeTransition, value: presentation != nil || loadRequest != nil)
         .popover(item: $presentation, arrowEdge: .bottom) { presented in
             KookyMenuList(width: popoverWidth, maxHeight: popoverMaxHeight) {
                 content(presented.value) { presentation = nil }
@@ -794,6 +805,12 @@ private struct PopoverStatusSegment<Snapshot: Sendable, Label: View, Content: Vi
         // A second click while loading cancels the request. `.task(id:)`
         // handles view-disappearance cancellation as well.
         loadRequest = loadRequest == nil ? UUID() : nil
+    }
+
+    private var fill: Color {
+        if presentation != nil || loadRequest != nil { return Theme.chromeActive }
+        if isHovered { return Theme.chromeActive }
+        return Theme.chromeHover
     }
 }
 
@@ -965,11 +982,12 @@ private struct GitDiffStatusSegment: View {
             },
             label: {
                 // Order mirrors `git diff --shortstat` itself: files → +N → −N.
-                // File count in chromeMuted (it's a count, not a delta) so the
-                // saturated +/- pair pops as the actual change signal.
+                // File count is the item's primary label, so it uses the same
+                // foreground tier as Node / repo / branch. Color remains
+                // reserved for the +/- change signal.
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text("\(status.filesChanged)")
-                        .foregroundStyle(Theme.chromeMuted)
+                        .foregroundStyle(Theme.chromeForeground)
                     if status.insertions > 0 {
                         SignedNumber(sign: "+", value: status.insertions, color: Theme.gitInsertion)
                     }
@@ -1336,13 +1354,28 @@ private struct PaneSearchBar: View {
                     .foregroundStyle(Theme.chromeMuted)
                     .frame(minWidth: 50, alignment: .trailing)
             }
-            HoverableIconButton(systemName: "chevron.up", fontSize: 10, size: 20, help: "Previous match (⌘⇧G)") {
+            HoverableIconButton(
+                systemName: "chevron.up",
+                fontSize: 10,
+                size: Theme.chromeContextButtonSize,
+                help: "Previous match (⌘⇧G)"
+            ) {
                 session.engine.performAction("navigate_search:previous")
             }
-            HoverableIconButton(systemName: "chevron.down", fontSize: 10, size: 20, help: "Next match (⌘G)") {
+            HoverableIconButton(
+                systemName: "chevron.down",
+                fontSize: 10,
+                size: Theme.chromeContextButtonSize,
+                help: "Next match (⌘G)"
+            ) {
                 session.engine.performAction("navigate_search:next")
             }
-            HoverableIconButton(systemName: "xmark", fontSize: 10, size: 20, help: "End search (Esc)") {
+            HoverableIconButton(
+                systemName: "xmark",
+                fontSize: 10,
+                size: Theme.chromeContextButtonSize,
+                help: "End search (Esc)"
+            ) {
                 end()
             }
         }

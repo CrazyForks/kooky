@@ -177,6 +177,11 @@ final class KookyWindowController: NSWindowController, NSWindowDelegate {
                 self?.updateMinimumWindowSize(expandIfNeeded: true, animate: animateExpansion)
             }
         )
+        alignTrafficLights()
+        // AppKit may perform one final titlebar layout after the hosting view
+        // is attached. Reapply once on the next run-loop turn; the operation
+        // is absolute and idempotent, so this can never accumulate an offset.
+        DispatchQueue.main.async { [weak self] in self?.alignTrafficLights() }
         updateMinimumWindowSize(expandIfNeeded: true, animate: false)
         // The last workspace closing leaves an empty window — close it.
         store.onBecameEmpty = { [weak self] in self?.close() }
@@ -221,11 +226,21 @@ final class KookyWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
+        alignTrafficLights()
         onDidBecomeKey?(self)
     }
 
     func windowDidChangeScreen(_ notification: Notification) {
+        alignTrafficLights()
         updateMinimumWindowSize(expandIfNeeded: true, animate: false)
+    }
+
+    func windowDidResize(_ notification: Notification) {
+        alignTrafficLights()
+    }
+
+    func windowDidExitFullScreen(_ notification: Notification) {
+        alignTrafficLights()
     }
 
     func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
@@ -249,6 +264,28 @@ final class KookyWindowController: NSWindowController, NSWindowDelegate {
             desiredWidth: desiredMinimumWindowWidth,
             visibleScreenWidth: (screen ?? NSScreen.main)?.visibleFrame.width
         )
+    }
+
+    /// SwiftUI cannot reposition AppKit's native titlebar controls. Keep that
+    /// imperative edge here: move the standard three-button group as a unit,
+    /// preserving native sizes, spacing, hit testing, accessibility, and
+    /// fullscreen behaviour. Computing the delta from the close button's
+    /// current centre makes repeated lifecycle calls idempotent and also
+    /// repairs AppKit relayouts after leaving fullscreen.
+    private func alignTrafficLights() {
+        guard let window,
+              let close = window.standardWindowButton(.closeButton)
+        else { return }
+        let delta = Theme.sidebarLeadingIconCenterX - close.frame.midX
+        guard abs(delta) > .ulpOfOne else { return }
+        for type in [
+            NSWindow.ButtonType.closeButton,
+            .miniaturizeButton,
+            .zoomButton,
+        ] {
+            guard let button = window.standardWindowButton(type) else { continue }
+            button.setFrameOrigin(NSPoint(x: button.frame.origin.x + delta, y: button.frame.origin.y))
+        }
     }
 
     /// `NSWindow.minSize` does not follow observable sidebar/pane-tree state,

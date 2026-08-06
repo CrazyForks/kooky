@@ -341,7 +341,7 @@ struct KeepAwakeButton: View {
     var model = KookySettingsModel.shared
 
     var body: some View {
-        HoverableIconButton(size: 28, help: helpText, action: cycleDial) {
+        HoverableIconButton(size: Theme.chromeToolbarButtonSize, help: helpText, action: cycleDial) {
             indicatorDot
         }
         .accessibilityLabel(String(localized: "Keep Mac awake while agents or SSH sessions are active", bundle: .kookyResources))

@@ -297,6 +297,7 @@
 "untitled" = "未命名";
 "color" = "颜色";
 "no access" = "无访问权限";
+"Open in %@" = "在 %@ 中打开";
 "Open in…" = "打开方式…";
 "No supported apps found" = "未找到支持的应用";
 "running" = "运行中";

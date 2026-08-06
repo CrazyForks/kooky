@@ -11,12 +11,19 @@ import SwiftUI
 struct CodexUsagePill: View {
     let usage: CodexUsage
     @State private var detailOpen = false
+    @State private var isHovered = false
 
     var body: some View {
         Button { detailOpen = true } label: {
             pillContent
+                .background(
+                    RoundedRectangle(cornerRadius: 4).fill(fill)
+                )
         }
         .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .animation(Theme.chromeTransition, value: detailOpen)
         .popover(isPresented: $detailOpen, arrowEdge: .top) {
             CodexUsageDetailPopover(usage: usage)
         }
@@ -48,7 +55,6 @@ struct CodexUsagePill: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
-        .overlay(border)
     }
 
     /// The most-constrained window (least remaining) — the one a narrow pill
@@ -66,7 +72,6 @@ struct CodexUsagePill: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
-        .overlay(border)
     }
 
     private func iconOnlyPill(_ windows: [Window]) -> some View {
@@ -81,7 +86,6 @@ struct CodexUsagePill: View {
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 3)
-        .overlay(border)
     }
 
     private func windowChip(_ window: Window) -> some View {
@@ -101,8 +105,10 @@ struct CodexUsagePill: View {
             .foregroundStyle(Theme.chromeMuted)
     }
 
-    private var border: some View {
-        RoundedRectangle(cornerRadius: 4).stroke(Theme.chromeFaint, lineWidth: 1)
+    private var fill: Color {
+        if detailOpen { return Theme.chromeActive }
+        if isHovered { return Theme.chromeActive }
+        return Theme.chromeHover
     }
 
     private var separator: some View {

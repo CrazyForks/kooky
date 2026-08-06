@@ -80,12 +80,19 @@ private struct ToolDurationText: View {
 struct ToolCallActivityPill: View {
     @Bindable var session: Session
     @State private var historyOpen = false
+    @State private var isHovered = false
 
     var body: some View {
         Button { historyOpen = true } label: {
             pillContent
+                .background(
+                    RoundedRectangle(cornerRadius: 4).fill(fill)
+                )
         }
         .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .animation(Theme.chromeTransition, value: historyOpen)
         .popover(isPresented: $historyOpen, arrowEdge: .top) {
             ToolCallHistoryPopover(session: session)
         }
@@ -130,7 +137,6 @@ struct ToolCallActivityPill: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
-        .overlay(border)
     }
 
     private func noToolNamePill(for event: ToolCallEvent) -> some View {
@@ -148,7 +154,6 @@ struct ToolCallActivityPill: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
-        .overlay(border)
     }
 
     private func iconOnlyPill(for event: ToolCallEvent) -> some View {
@@ -158,7 +163,6 @@ struct ToolCallActivityPill: View {
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 3)
-        .overlay(border)
     }
 
     private var waitingPill: some View {
@@ -172,7 +176,6 @@ struct ToolCallActivityPill: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
-        .overlay(border)
     }
 
     // MARK: Sub-views
@@ -193,8 +196,10 @@ struct ToolCallActivityPill: View {
             .foregroundStyle(event.state.presentation.glyphColor)
     }
 
-    private var border: some View {
-        RoundedRectangle(cornerRadius: 4).stroke(Theme.chromeFaint, lineWidth: 1)
+    private var fill: Color {
+        if historyOpen { return Theme.chromeActive }
+        if isHovered { return Theme.chromeActive }
+        return Theme.chromeHover
     }
 
     private var separator: some View {

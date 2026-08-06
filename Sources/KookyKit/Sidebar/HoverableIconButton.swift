@@ -7,7 +7,7 @@ import SwiftUI
 /// the common SF-symbol case and keeps its call sites tiny.
 struct HoverableIconButton<Label: View>: View {
     let size: CGFloat
-    let help: String?
+    let help: String
     let action: () -> Void
     /// Optional rotation in degrees applied to the label. Animated via
     /// `easeOut(0.15)` so toggle controls (sidebar disclosure chevron) get
@@ -20,7 +20,7 @@ struct HoverableIconButton<Label: View>: View {
 
     init(
         size: CGFloat,
-        help: String?,
+        help: String,
         action: @escaping () -> Void,
         rotation: Double = 0,
         @ViewBuilder label: @escaping () -> Label
@@ -37,20 +37,24 @@ struct HoverableIconButton<Label: View>: View {
             label()
                 .rotationEffect(.degrees(rotation))
                 .animation(.easeOut(duration: 0.15), value: rotation)
+                .foregroundStyle(isHovered ? Theme.chromeForeground : Theme.chromeMuted)
                 .frame(width: size, height: size)
                 .background(isHovered ? Theme.chromeHover : .clear)
-                .clipShape(RoundedRectangle(cornerRadius: 5))
+                .clipShape(RoundedRectangle(cornerRadius: Theme.chromeButtonCornerRadius))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
         .animation(.easeOut(duration: 0.12), value: isHovered)
-        .help(help.map {
-            String(
-                localized: String.LocalizationValue($0),
-                bundle: .kookyResources
-            )
-        } ?? "")
+        .accessibilityLabel(localizedHelp)
+        .help(localizedHelp)
+    }
+
+    private var localizedHelp: String {
+        String(
+            localized: String.LocalizationValue(help),
+            bundle: .kookyResources
+        )
     }
 }
 
@@ -62,7 +66,7 @@ extension HoverableIconButton where Label == AnyView {
         systemName: String,
         fontSize: CGFloat,
         size: CGFloat,
-        help: String?,
+        help: String,
         action: @escaping () -> Void,
         rotation: Double = 0
     ) {

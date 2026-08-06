@@ -360,13 +360,13 @@ struct SidebarWorkspaceRow: View {
             Spacer(minLength: 0)
             // Activity dot lives at the trailing edge — visible at all times
             // when not idle, eats the close-button slot only on hover.
-            HStack(spacing: 2) {
+            HStack(spacing: Theme.chromeControlSpacing) {
                 if let disclosure {
                     HoverableIconButton(
                         systemName: "chevron.right",
                         fontSize: 10,
-                        size: 20,
-                        help: nil,
+                        size: Theme.chromeContextButtonSize,
+                        help: disclosure.isCollapsed ? "Show worktrees" : "Hide worktrees",
                         action: disclosure.toggle,
                         rotation: disclosure.isCollapsed ? 0 : 90
                     )
@@ -378,7 +378,7 @@ struct SidebarWorkspaceRow: View {
                     HoverableIconButton(
                         systemName: "arrow.triangle.branch",
                         fontSize: 10,
-                        size: 20,
+                        size: Theme.chromeContextButtonSize,
                         help: "Create worktree",
                         action: onCreateWorktree
                     )
@@ -393,7 +393,7 @@ struct SidebarWorkspaceRow: View {
                     HoverableIconButton(
                         systemName: "xmark",
                         fontSize: 10,
-                        size: 20,
+                        size: Theme.chromeContextButtonSize,
                         help: workspace.worktreeParentId == nil ? "Close workspace" : "Close worktree",
                         action: onClose
                     )
@@ -404,7 +404,11 @@ struct SidebarWorkspaceRow: View {
             }
             .frame(minWidth: trailingHoverMinWidth, alignment: .trailing)
         }
-        .padding(.horizontal, Theme.space3)
+        // The list's 8pt row inset plus this 8pt content inset creates the
+        // shared 16pt sidebar gutter without letting the hover fill touch the
+        // window edge.
+        .padding(.leading, Theme.sidebarContentLeadingX - Theme.space2)
+        .padding(.trailing, Theme.space3)
         .padding(.vertical, Theme.sidebarRowVerticalPadding)
     }
 
@@ -420,6 +424,8 @@ struct SidebarWorkspaceRow: View {
                     .offset(x: 3, y: -3)
             }
         }
+        // A 52pt compact rail centres this 20pt mark on the same x = 26pt
+        // axis without a special offset.
         .frame(maxWidth: .infinity)
         .padding(.vertical, 9)
     }

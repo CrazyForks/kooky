@@ -21,6 +21,45 @@ private enum SidebarSheet: Identifiable {
     }
 }
 
+/// Places a full wordmark so the measured centre of its first glyph lands on
+/// a caller-provided horizontal axis. The second subview is an invisible copy
+/// of that glyph using the exact same SwiftUI font; keeping the visible word
+/// intact preserves its native kerning and accessibility value.
+private struct FirstGlyphCenteredLayout: Layout {
+    let axisX: CGFloat
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        guard subviews.count == 2 else { return .zero }
+        let word = subviews[0].sizeThatFits(.unspecified)
+        let glyph = subviews[1].sizeThatFits(.unspecified)
+        return CGSize(
+            width: axisX - glyph.width / 2 + word.width,
+            height: max(word.height, glyph.height)
+        )
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        guard subviews.count == 2 else { return }
+        let word = subviews[0].sizeThatFits(.unspecified)
+        let glyph = subviews[1].sizeThatFits(.unspecified)
+        let origin = CGPoint(
+            x: bounds.minX + axisX - glyph.width / 2,
+            y: bounds.midY - word.height / 2
+        )
+        subviews[0].place(at: origin, anchor: .topLeading, proposal: .unspecified)
+        subviews[1].place(at: origin, anchor: .topLeading, proposal: .unspecified)
+    }
+}
+
 struct SidebarView: View {
     static let fullWidth: CGFloat = 220
     static let compactWidth: CGFloat = 52
@@ -378,31 +417,46 @@ struct SidebarView: View {
                 HoverableIconButton(
                     systemName: "plus",
                     fontSize: 12,
-                    size: 28,
+                    size: Theme.chromeToolbarButtonSize,
                     help: "New workspace"
                 ) {
                     store.addWorkspace()
                 }
             } else {
                 HStack(spacing: 0) {
-                    Text("kooky")
-                        .font(Theme.display(15, weight: .medium))
-                        .foregroundStyle(Theme.chromeForeground)
+                    FirstGlyphCenteredLayout(axisX: Theme.sidebarLeadingIconCenterX) {
+                        Text("Kooky")
+                            .font(Theme.display(16, weight: .medium))
+                            .foregroundStyle(Theme.chromeForeground)
+                        Text("K")
+                            .font(Theme.display(16, weight: .medium))
+                            .hidden()
+                            .accessibilityHidden(true)
+                    }
+                    .fixedSize()
                     Spacer()
                     HoverableIconButton(
                         systemName: "plus",
                         fontSize: 12,
-                        size: 28,
+                        size: Theme.chromeToolbarButtonSize,
                         help: "New workspace"
                     ) {
                         store.addWorkspace()
                     }
                 }
-                .padding(.horizontal, Theme.space4)
+                // The layout owns the leading space required to centre its
+                // measured first glyph; the trailing action keeps the regular
+                // 16pt content gutter.
+                .padding(.trailing, Theme.sidebarContentLeadingX)
             }
         }
+        // A source-list title sits on the lower side of its 40pt header: the
+        // first row's own vertical inset otherwise makes a geometrically
+        // centred title read too high. Keep the whole title/action group on
+        // the 4pt spacing grid instead of applying a text-only pixel offset.
+        .padding(.bottom, Theme.space1)
         .frame(maxWidth: .infinity)
-        .frame(height: Theme.contentHeaderHeight)
+        .frame(height: Theme.contentHeaderHeight, alignment: .bottom)
     }
 
     /// Pinned bottom bar, full mode only — compact hides it since a 52pt
@@ -411,13 +465,16 @@ struct SidebarView: View {
     @ViewBuilder
     private func footer() -> some View {
         Rectangle().fill(Theme.chromeHairline).frame(height: 1)
-        HStack(spacing: 2) {
+        HStack(spacing: Theme.chromeControlSpacing) {
             segment(.workspaces, systemName: "rectangle.stack", help: "Workspaces")
             segment(.files, systemName: "folder", help: "Files")
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, Theme.space2)
-        .padding(.vertical, Theme.space1)
+        // The first segment is 26pt wide; align its centre to the shared
+        // sidebar axis while preserving the button's generous hit target.
+        .padding(.leading, Theme.sidebarLeadingIconCenterX - Theme.chromeFooterSegmentWidth / 2)
+        .padding(.trailing, Theme.chromeBarEdgeInset)
+        .padding(.vertical, Theme.chromeBottomBarVerticalPadding)
     }
 
     private func segment(_ content: SidebarContent, systemName: String, help: String) -> some View {
@@ -475,8 +532,12 @@ struct SidebarView: View {
                     }
                 }
             }
+            // Source-list rows use an 8pt hover-fill inset. Their own 8pt
+            // content inset then places the 20pt mark at x = 16...36. The
+            // 40pt header already owns the vertical separation above the
+            // source list, so don't double that gap with extra top padding.
             .padding(.horizontal, Theme.space2)
-            .padding(.vertical, Theme.space2)
+            .padding(.bottom, Theme.space2)
         }
         // ⌘⇧R parks the active workspace on the store; reveal its row so the
         // row's own rename popover can open. onChange catches a request made

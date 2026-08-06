@@ -160,7 +160,7 @@ struct InboxBell: View {
         HoverableIconButton(
             systemName: "bell",
             fontSize: 12,
-            size: 28,
+            size: Theme.chromeToolbarButtonSize,
             help: "Notifications (⇧⌘I)"
         ) {
             NSApp.sendAction(#selector(AppDelegate.handleShowInbox), to: nil, from: nil)
@@ -222,11 +222,21 @@ struct InboxView: View {
             }
             Spacer(minLength: 8)
             // Icon buttons; the label surfaces on hover via the tooltip.
-            HoverableIconButton(systemName: "checkmark", fontSize: 12, size: 28, help: "Mark all read") {
+            HoverableIconButton(
+                systemName: "checkmark",
+                fontSize: 12,
+                size: Theme.chromeToolbarButtonSize,
+                help: "Mark all read"
+            ) {
                 inbox.markAllRead()
             }
             .disabled(!inbox.hasUnread)
-            HoverableIconButton(systemName: "trash", fontSize: 12, size: 28, help: "Clear all") {
+            HoverableIconButton(
+                systemName: "trash",
+                fontSize: 12,
+                size: Theme.chromeToolbarButtonSize,
+                help: "Clear all"
+            ) {
                 inbox.clearAll()
                 onClear()
             }

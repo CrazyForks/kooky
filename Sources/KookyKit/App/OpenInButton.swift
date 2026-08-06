@@ -19,6 +19,7 @@ struct OpenInButton: View {
         let primary = OpenInApp.effectiveDefault(lastUsedId: model.lastOpenInAppId, visible: visible)
         let dir = currentDirectory
         let canOpen = dir != nil && primary != nil
+        let primaryLabel = openInLabel(for: primary)
 
         HStack(spacing: 0) {
             Button {
@@ -26,21 +27,26 @@ struct OpenInButton: View {
             } label: {
                 Group {
                     if let primary {
-                        OpenInAppIcon(app: primary, size: 16)
+                        OpenInAppIcon(app: primary, size: Theme.chromeOpenInIconSize)
                     } else {
                         Image(systemName: "arrow.up.forward.app")
                             .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(iconHovered ? Theme.chromeForeground : Theme.chromeMuted)
                     }
                 }
-                .frame(width: 24, height: 26)
+                .frame(
+                    width: Theme.chromeToolbarButtonSize,
+                    height: Theme.chromeToolbarButtonSize
+                )
                 .background(iconHovered ? Theme.chromeHover : .clear)
-                .clipShape(RoundedRectangle(cornerRadius: 5))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(!canOpen)
             .onHover { iconHovered = $0 }
-            .help(primary.map { "Open in \($0.title)" } ?? "Open in…")
+            .animation(.easeOut(duration: 0.12), value: iconHovered)
+            .accessibilityLabel(primaryLabel)
+            .help(primaryLabel)
 
             Button {
                 if !visible.isEmpty {
@@ -50,20 +56,39 @@ struct OpenInButton: View {
             } label: {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .semibold))
-                    .frame(width: 15, height: 26)
-                    .background(chevronHovered ? Theme.chromeHover : .clear)
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                    .foregroundStyle(chevronHovered ? Theme.chromeForeground : Theme.chromeMuted)
+                    .frame(
+                        width: Theme.chromeSplitChevronWidth,
+                        height: Theme.chromeToolbarButtonSize
+                    )
+                    .background(
+                        isMenuOpen
+                            ? Theme.chromeActive
+                            : (chevronHovered ? Theme.chromeHover : .clear)
+                    )
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(visible.isEmpty)
             .onHover { chevronHovered = $0 }
+            .animation(.easeOut(duration: 0.12), value: chevronHovered)
+            .accessibilityLabel(String(localized: "Open in…", bundle: .kookyResources))
             .help(String(localized: "Open in…", bundle: .kookyResources))
             .popover(isPresented: $isMenuOpen, arrowEdge: .bottom) {
                 picker(visible: visible, dir: dir)
             }
         }
-        .foregroundStyle(Theme.chromeForeground)
+        // A borderless toolbar split button: the two actions share one clipped
+        // surface and compact geometry; the hairline is the only seam. This
+        // keeps it related without giving it chrome that sibling buttons lack.
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(Theme.chromeHairline)
+                .frame(width: 1, height: Theme.chromeToolbarButtonSize - 10)
+                .offset(x: Theme.chromeToolbarButtonSize)
+                .allowsHitTesting(false)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: Theme.chromeButtonCornerRadius))
         // Dim only when no apps are installed at all (cwd-independent —
         // `primary != nil` already implies `!visible.isEmpty`).
         .opacity(visible.isEmpty ? 0.4 : 1)
@@ -107,6 +132,16 @@ struct OpenInButton: View {
             model.scheduleSave()
         }
         OpenInResolver.open(directory: dir, with: app)
+    }
+
+    private func openInLabel(for app: OpenInApp?) -> String {
+        guard let app else {
+            return String(localized: "Open in…", bundle: .kookyResources)
+        }
+        return String.localizedStringWithFormat(
+            String(localized: "Open in %@", bundle: .kookyResources),
+            app.title
+        )
     }
 
     private var currentDirectory: URL? {

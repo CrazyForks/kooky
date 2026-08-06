@@ -13,7 +13,7 @@ struct TabBarView: View {
     var body: some View {
         HStack(spacing: 0) {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 2) {
+                HStack(spacing: Theme.chromeControlSpacing) {
                     ForEach(Array(pane.tabs.enumerated()), id: \.element.id) { index, tab in
                         DraggableTabRow(
                             tab: tab,
@@ -49,11 +49,11 @@ struct TabBarView: View {
     /// Down is `.vertical` (panes stacked) — same mapping as
     /// `AppDelegate.handleSplitRight` / `handleSplitDown`.
     private var splitButtons: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: Theme.chromeControlSpacing) {
             HoverableIconButton(
                 systemName: "square.split.2x1",
                 fontSize: 12,
-                size: 28,
+                size: Theme.chromeToolbarButtonSize,
                 help: "Split Right (⌘D)"
             ) {
                 store.splitPane(pane, orientation: .horizontal, in: workspace)
@@ -61,7 +61,7 @@ struct TabBarView: View {
             HoverableIconButton(
                 systemName: "square.split.1x2",
                 fontSize: 12,
-                size: 28,
+                size: Theme.chromeToolbarButtonSize,
                 help: "Split Down (⌘⇧D)"
             ) {
                 store.splitPane(pane, orientation: .vertical, in: workspace)
@@ -96,7 +96,7 @@ private struct AddTabButton: View {
         HoverableIconButton(
             systemName: "plus",
             fontSize: 12,
-            size: 28,
+            size: Theme.chromeToolbarButtonSize,
             help: "New tab"
         ) {
             // Two short-circuit paths that skip the popover entirely:

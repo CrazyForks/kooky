@@ -56,11 +56,13 @@ struct ContentView: View {
     /// `⌘P` + the File menu remain available when it is fully hidden.
     private var topStrip: some View {
         HStack(spacing: 0) {
-            Color.clear.frame(width: 82).allowsHitTesting(false)
+            Color.clear
+                .frame(width: Theme.topStripLeadingReservedWidth)
+                .allowsHitTesting(false)
             HoverableIconButton(
                 systemName: "sidebar.left",
                 fontSize: 12,
-                size: 28,
+                size: Theme.chromeToolbarButtonSize,
                 help: sidebarTooltip
             ) {
                 withAnimation(Theme.chromeTransition) {
@@ -79,23 +81,24 @@ struct ContentView: View {
                         }
                     }
                 }
-            OpenInButton(store: store)
-                .padding(.trailing, 2)
-            HoverableIconButton(
-                systemName: "sidebar.right",
-                fontSize: 12,
-                size: 28,
-                help: "Agent Panel"
-            ) {
-                withAnimation(Theme.chromeTransition) {
-                    store.setRightSidebarMode(store.rightSidebarMode.next)
+            HStack(spacing: Theme.chromeControlSpacing) {
+                OpenInButton(store: store)
+                HoverableIconButton(
+                    systemName: "sidebar.right",
+                    fontSize: 12,
+                    size: Theme.chromeToolbarButtonSize,
+                    help: "Agent Panel"
+                ) {
+                    withAnimation(Theme.chromeTransition) {
+                        store.setRightSidebarMode(store.rightSidebarMode.next)
+                    }
                 }
+                InboxBell()
+                // Rightmost on purpose: a status light lives in the corner —
+                // like a hardware power LED — not mixed into content buttons.
+                KeepAwakeButton()
             }
-            InboxBell()
-            // Rightmost on purpose: a status light lives in the corner —
-            // like a hardware power LED — not mixed into the action buttons.
-            KeepAwakeButton()
-                .padding(.trailing, 8)
+            .padding(.trailing, Theme.chromeBarEdgeInset)
         }
         .frame(height: 32)
     }

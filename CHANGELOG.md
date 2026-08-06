@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.49.0 — 2026-08-06
+
+- Refined the UI with better alignment, consistent button and hover states, and polished sidebar, file-tree, Session Info, and status-bar styling across light and dark themes.
+
 ## v0.48.4 — 2026-08-06
 
 - Faster: the sidebar file tree now performs every directory listing off the main thread and cancels queued work when hidden; Session Info refreshes only its process section; status-bar layout measurements and bundled-resource lookup are cached; and tabs in the same repository share Git status queries.

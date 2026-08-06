@@ -284,15 +284,33 @@ struct FooterSegment: View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(isActive ? Theme.chromeForeground : Theme.chromeMuted)
-                .frame(width: 26, height: 22)
+                .foregroundStyle(iconColor)
+                .frame(
+                    width: Theme.chromeFooterSegmentWidth,
+                    height: Theme.chromeCompactButtonSize
+                )
                 .background(fill)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .clipShape(RoundedRectangle(cornerRadius: Theme.chromeButtonCornerRadius))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
-        .help(help)
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .animation(Theme.chromeTransition, value: isActive)
+        .accessibilityLabel(localizedHelp)
+        .accessibilityAddTraits(isActive ? .isSelected : [])
+        .help(localizedHelp)
+    }
+
+    private var localizedHelp: String {
+        String(
+            localized: String.LocalizationValue(help),
+            bundle: .kookyResources
+        )
+    }
+
+    private var iconColor: Color {
+        isActive || isHovered ? Theme.chromeForeground : Theme.chromeMuted
     }
 
     private var fill: Color {

@@ -40,6 +40,7 @@ struct FileTreeView: View {
                 Image(systemName: "folder.fill")
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.chromeForeground.opacity(0.6))
+                    .frame(width: Theme.sidebarPrimaryIconSize)
                 Text(root.lastPathComponent)
                     .font(Theme.display(13, weight: .medium))
                     .foregroundStyle(Theme.chromeForeground)
@@ -53,7 +54,8 @@ struct FileTreeView: View {
                 .truncationMode(.head)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, Theme.space3)
+        .padding(.leading, Theme.sidebarContentLeadingX)
+        .padding(.trailing, Theme.space3)
         .padding(.top, Theme.space1)
         .padding(.bottom, Theme.space2)
         .help(root.path)
@@ -125,12 +127,13 @@ private struct FileTreeRowView: View {
     @State private var lastDirectoryToggle: Date = .distantPast
 
     /// Per-level indent. 14pt keeps ~10 levels readable inside the sidebar's
-    /// full width; the guide line sits at the column centre so it lands under
-    /// the parent row's chevron. Names beyond depth truncate middle and the
-    /// row tooltip carries the full path.
+    /// full width. The folder/file mark owns the 20pt primary column while a
+    /// directory chevron sits just to its left; nested rows shift both by one
+    /// indent step. Names beyond depth truncate middle and the row tooltip
+    /// carries the full path.
     private static let indentPerLevel: CGFloat = 14
-    private static let chevronColumn: CGFloat = 14
-    private static let iconColumn: CGFloat = 17
+    private static let chevronColumn: CGFloat = 8
+    private static let iconColumn = Theme.sidebarPrimaryIconSize
 
     var body: some View {
         switch row.kind {
@@ -141,21 +144,22 @@ private struct FileTreeRowView: View {
         }
     }
 
-    /// One 1pt guide per ancestor level, full row height. Centred in the
-    /// 14pt column so it aligns exactly under the parent chevron (chevron
-    /// centre = 7pt into its own 14pt column = guide centre of the next
-    /// level down).
+    /// One 1pt guide per ancestor level, full row height. The first guide is
+    /// on the root chevron axis and every additional guide advances 14pt, so
+    /// each nested chevron lands directly below its parent's guide.
     @ViewBuilder
     private func indentGuides(_ depth: Int) -> some View {
-        HStack(spacing: 0) {
-            ForEach(0..<depth, id: \.self) { _ in
+        ZStack(alignment: .leading) {
+            ForEach(0..<depth, id: \.self) { index in
                 Rectangle()
                     .fill(Theme.chromeHairline)
                     .frame(width: 1)
-                    .frame(width: Self.indentPerLevel)
+                    .offset(
+                        x: Theme.sidebarContentLeadingX - Theme.space2
+                            + CGFloat(index) * Self.indentPerLevel
+                    )
             }
         }
-        .padding(.leading, Theme.space2)
     }
 
     /// The shared row frame: the caller's leading columns + label (the label
@@ -172,7 +176,7 @@ private struct FileTreeRowView: View {
         }
         .padding(.leading, CGFloat(row.depth) * Self.indentPerLevel)
         .padding(.vertical, 3.5)
-        .padding(.leading, Theme.space2)
+        .padding(.leading, Theme.sidebarContentLeadingX - Theme.space2)
         .padding(.trailing, Theme.space2)
         .background(alignment: .leading) { indentGuides(row.depth) }
     }
@@ -180,22 +184,21 @@ private struct FileTreeRowView: View {
     private func entryRow(_ node: FileNode) -> some View {
         let isSelected = model.selectedId == row.id
         return rowShell {
-            if node.isDirectory {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(isSelected || isHovered ? Theme.chromeMuted : Theme.chromeFaint)
-                    .rotationEffect(.degrees(row.isExpanded ? 90 : 0))
-                    .frame(width: Self.chevronColumn)
-            } else {
-                // Explicit spacer, NOT an empty conditional with a frame — a
-                // frame on an empty view renders nothing, and files would sit
-                // 14pt left of sibling directories.
-                Color.clear.frame(width: Self.chevronColumn, height: 1)
+            ZStack(alignment: .leading) {
+                Image(systemName: FileTreeLister.symbolName(for: node))
+                    .font(.system(size: 11))
+                    .foregroundStyle(iconColor(node, selected: isSelected))
+                    .frame(width: Self.iconColumn)
+                if node.isDirectory {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(isSelected || isHovered ? Theme.chromeMuted : Theme.chromeFaint)
+                        .rotationEffect(.degrees(row.isExpanded ? 90 : 0))
+                        .frame(width: Self.chevronColumn)
+                        .offset(x: -Self.chevronColumn / 2)
+                }
             }
-            Image(systemName: FileTreeLister.symbolName(for: node))
-                .font(.system(size: 11))
-                .foregroundStyle(iconColor(node, selected: isSelected))
-                .frame(width: Self.iconColumn)
+            .frame(width: Self.iconColumn)
             // The name takes ALL remaining width (truncating internally) and
             // the badge is fixedSize — during a sidebar-width drag every
             // frame's layout is then a pure function of the row width. A
@@ -318,11 +321,12 @@ private struct FileTreeRowView: View {
     /// directory, indented to match its parent's children.
     private func placeholderRow() -> some View {
         rowShell {
-            Color.clear.frame(width: Self.chevronColumn, height: 1)
+            Color.clear.frame(width: Self.iconColumn, height: 1)
             Text(String(localized: "no access", bundle: .kookyResources))
                 .font(Theme.display(11.5))
                 .foregroundStyle(Theme.chromeFaint)
                 .lineLimit(1)
+                .padding(.leading, 2)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }

@@ -4,6 +4,53 @@ import XCTest
 
 @MainActor
 final class KookyWindowLayoutTests: XCTestCase {
+    func testSidebarLeadingAxisCentersCompactRail() {
+        XCTAssertEqual(
+            Theme.sidebarLeadingIconCenterX,
+            SidebarView.compactWidth / 2
+        )
+    }
+
+    func testWindowCloseButtonAlignsWithSidebarLeadingAxis() throws {
+        let store = WorkspaceStore(
+            persistence: InMemoryPersistence(),
+            engineFactory: { TestEngine() },
+            optionsProvider: { _ in nil },
+            resumeProvider: { true }
+        )
+        let controller = KookyWindowController(windowId: UUID(), store: store)
+        defer {
+            controller.close()
+            store.terminate()
+        }
+
+        let window = try XCTUnwrap(controller.window)
+        let close = try XCTUnwrap(window.standardWindowButton(.closeButton))
+        XCTAssertEqual(close.frame.midX, Theme.sidebarLeadingIconCenterX, accuracy: 0.5)
+    }
+
+    func testSidebarToggleKeepsToolbarGapAfterTrafficLights() throws {
+        let store = WorkspaceStore(
+            persistence: InMemoryPersistence(),
+            engineFactory: { TestEngine() },
+            optionsProvider: { _ in nil },
+            resumeProvider: { true }
+        )
+        let controller = KookyWindowController(windowId: UUID(), store: store)
+        defer {
+            controller.close()
+            store.terminate()
+        }
+
+        let window = try XCTUnwrap(controller.window)
+        let zoom = try XCTUnwrap(window.standardWindowButton(.zoomButton))
+        XCTAssertEqual(
+            Theme.topStripLeadingReservedWidth - zoom.frame.maxX,
+            Theme.space3,
+            accuracy: 0.5
+        )
+    }
+
     func testTerminalMinimumUsesCompactPaneWidth() {
         XCTAssertEqual(KookyWindowLayout.minimumTerminalWidth, 200)
     }

@@ -343,14 +343,14 @@ struct AgentOverviewSidebar: View {
     @ViewBuilder
     private var footer: some View {
         Rectangle().fill(Theme.chromeHairline).frame(height: 1)
-        HStack(spacing: 2) {
+        HStack(spacing: Theme.chromeControlSpacing) {
             footerSegment(.agents, systemName: "sparkles", help: "Agents")
             footerSegment(.history, systemName: "clock", help: "Session History")
             footerSegment(.info, systemName: "info.circle", help: "Session Info")
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, Theme.space2)
-        .padding(.vertical, Theme.space1)
+        .padding(.horizontal, Theme.chromeBarEdgeInset)
+        .padding(.vertical, Theme.chromeBottomBarVerticalPadding)
     }
 
     private func footerSegment(_ content: RightSidebarContent, systemName: String, help: String) -> some View {
