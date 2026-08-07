@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.50.1 — 2026-08-07
+
+- Fixed: closing a tab or window now reliably terminates its foreground agent processes, including Pi sessions that previously could survive the terminal and keep issuing requests in the background. App quit waits for terminal teardown without blocking the main thread. (#50)
+
 ## v0.50.0 — 2026-08-07
 
 - Workspace switching is now instant: every workspace stays alive inside the window and switching simply reveals it — no flicker, no terminal re-mounting, and keyboard focus lands back on the pane you left.

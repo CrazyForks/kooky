@@ -35,6 +35,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
     /// every window during ⌘Q) can tell "app quitting" from "user closed
     /// one window" — the former keeps each window's persisted slot.
     private var isTerminating = false
+    /// Native surface frees join renderer/PTY threads and must never run on the
+    /// main actor. AppKit's terminate-later handshake keeps those workers alive
+    /// long enough to finish after ⌘Q or the last window closes.
+    private var terminationReplyPending = false
+    private var terminationFallback: Task<Void, Never>?
+    private var terminatingApplication: NSApplication?
     /// Walks the macOS window cascade so a `⌘⇧N` window doesn't land
     /// exactly on top of the previous one.
     private var cascadePoint = NSPoint.zero
@@ -564,13 +570,43 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
     }
 
     public func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if terminationReplyPending { return .terminateLater }
+
         // Runs before AppKit closes the windows, so every `windowWillClose`
-        // that follows sees the flag and keeps its persisted slot.
+        // that follows sees the flag and keeps its persisted slot. Start every
+        // surface before waiting: one slow agent must not strand another tab.
         isTerminating = true
-        return .terminateNow
+        for controller in windowControllers {
+            controller.store.flushPersistence()
+            controller.store.terminate()
+        }
+        guard !SurfaceTeardownCoordinator.shared.isDrained else { return .terminateNow }
+
+        terminationReplyPending = true
+        terminatingApplication = sender
+        SurfaceTeardownCoordinator.shared.whenDrained { [weak self] in
+            self?.finishDeferredTermination()
+        }
+        terminationFallback = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(20))
+            guard !Task.isCancelled else { return }
+            self?.finishDeferredTermination()
+        }
+        return .terminateLater
+    }
+
+    private func finishDeferredTermination() {
+        guard terminationReplyPending else { return }
+        terminationReplyPending = false
+        terminationFallback?.cancel()
+        terminationFallback = nil
+        terminatingApplication?.reply(toApplicationShouldTerminate: true)
+        terminatingApplication = nil
     }
 
     public func applicationWillTerminate(_ notification: Notification) {
+        terminationFallback?.cancel()
+        terminationFallback = nil
         systemAppearanceObservation = nil
         // `windowWillClose` is not reliably delivered to every window during
         // app termination, so flush each live window's store here — the 1s

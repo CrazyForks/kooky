@@ -6,14 +6,15 @@
 
 set -euo pipefail
 
-GHOSTTY_SHA="22fa801f88f96fa842e54ecce6c34a5d36003d19"
-EXPECTED_SHA256="8d7da0bb11627c8cbe98f73f47ab5a92ec1576a7043f3976a0f107343c724a65"
+GHOSTTY_SHA="88c3325dc9698d887da7e07ee0f9b79c53020be2"
+GHOSTTY_RELEASE_TAG="xcframework-${GHOSTTY_SHA}-crashsubdir-cmux-crash-sentry-off-v1"
+EXPECTED_SHA256="56869d9d8702d6710d5a1992a3d21c02e29b12d1130964ee546f80bff7353604"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENDOR_DIR="$REPO_ROOT/Vendor"
 FRAMEWORK_PATH="$VENDOR_DIR/GhosttyKit.xcframework"
 STAMP_FILE="$VENDOR_DIR/.ghostty-sha"
-ARCHIVE_URL="https://github.com/manaflow-ai/ghostty/releases/download/xcframework-${GHOSTTY_SHA}/GhosttyKit.xcframework.tar.gz"
+ARCHIVE_URL="https://github.com/manaflow-ai/ghostty/releases/download/${GHOSTTY_RELEASE_TAG}/GhosttyKit.xcframework.tar.gz"
 
 if [[ -d "$FRAMEWORK_PATH" && -f "$STAMP_FILE" && "$(cat "$STAMP_FILE")" == "$GHOSTTY_SHA" ]]; then
     echo "GhosttyKit.xcframework already at pinned SHA ($GHOSTTY_SHA). Skipping."

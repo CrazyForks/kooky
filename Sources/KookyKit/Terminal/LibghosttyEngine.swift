@@ -31,7 +31,8 @@ final class LibghosttyApp {
             read_clipboard_cb: kookyReadClipboardCb,
             confirm_read_clipboard_cb: kookyConfirmReadClipboardCb,
             write_clipboard_cb: kookyWriteClipboardCb,
-            close_surface_cb: kookyCloseSurfaceCb
+            close_surface_cb: kookyCloseSurfaceCb,
+            tmux_control_cb: nil
         )
 
         guard let config = KookySettings.makeGhosttyConfig() else {
@@ -869,6 +870,14 @@ final class GhosttySurfaceView: NSView {
 
     func releaseSurface() {
         guard let dying = surface else { return }
+        // Despite the C API's `foreground_pid` name, libghostty returns the
+        // PTY's `tcgetpgrp` value. An interactive shell puts its foreground
+        // agent job in this separate process group, outside the shell group
+        // covered by native surface teardown.
+        let foreground = ghostty_surface_foreground_pid(dying)
+        let foregroundProcessGroup = foreground > 0 && foreground <= UInt64(pid_t.max)
+            ? pid_t(foreground)
+            : nil
         // Deregister from secure input BEFORE freeing — a surface closed at a
         // password prompt must not strand the process-wide Carbon flag.
         passwordInput = false
@@ -876,7 +885,12 @@ final class GhosttySurfaceView: NSView {
         // state immediately; the local `dying` keeps the handle for free.
         surface = nil
         lastPushedSizePx = nil
-        ghostty_surface_free(dying)
+        let retainedHostBits = UInt(bitPattern: Unmanaged.passRetained(self).toOpaque())
+        SurfaceTeardownCoordinator.shared.enqueue(
+            surfaceBits: UInt(bitPattern: dying),
+            foregroundProcessGroup: foregroundProcessGroup,
+            retainedHostBits: retainedHostBits
+        )
     }
 
     /// Whether the PTY is at a password prompt (core's OSC 133 detection).
