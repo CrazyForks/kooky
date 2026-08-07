@@ -622,14 +622,14 @@ final class LibghosttyEngine: TerminalEngine {
         surfaceView.releaseSurface()
     }
 
-    var suspendsSizePropagation: Bool { surfaceView.suspendsSizePropagation }
-    func beginSizePropagationSuspension() { surfaceView.beginSizePropagationSuspension() }
-    func endSizePropagationSuspension() { surfaceView.endSizePropagationSuspension() }
-
     var grabsFocusOnMount: Bool {
         get { surfaceView.grabsFocusOnMount }
         set { surfaceView.grabsFocusOnMount = newValue }
     }
+
+    var suspendsSizePropagation: Bool { surfaceView.suspendsSizePropagation }
+    func beginSizePropagationSuspension() { surfaceView.beginSizePropagationSuspension() }
+    func endSizePropagationSuspension() { surfaceView.endSizePropagationSuspension() }
 
     func flushSize() {
         surfaceView.flushPropagateSize()
@@ -743,6 +743,7 @@ final class GhosttySurfaceView: NSView {
     /// grab; set by `TerminalView` from the pane's active state. See
     /// `TerminalEngine.grabsFocusOnMount` for the why (issue #24).
     var grabsFocusOnMount = true
+
     private(set) var surface: ghostty_surface_t? {
         didSet {
             // force: a fresh surface must be sized even if the pixel size matches
@@ -945,28 +946,38 @@ final class GhosttySurfaceView: NSView {
         }
         syncSecureInputHolding()
         if window != nil {
-            // A pre-existing surface means we're re-entering a window (workspace
-            // switch), not creating fresh: createSurfaceIfReady no-ops and
-            // surface.didSet won't re-push the size, so we owe an explicit
-            // re-sync below. On first creation didSet already handles it.
+            // A pre-existing surface means the view re-entered a window
+            // (cross-window tab move) rather than being created fresh:
+            // createSurfaceIfReady no-ops and surface.didSet won't re-push the
+            // size, so we owe an explicit re-sync (issue #8). Deferred because
+            // at adoption time the destination leaf's layout hasn't sized this
+            // view yet — push once the turn settles so the surface relearns
+            // final geometry. force: the frame may be numerically unchanged
+            // across the move, which the pixel-dedup would otherwise skip.
+            // No focus handling here: `PaneTreeHostView.syncFocus` is the one
+            // keyboard authority (the old per-view mount-grab raced, issue #24).
             let reattaching = surface != nil
             createSurfaceIfReady()
             // Defer until after SwiftUI's hosting finishes its current event
             // loop pass, otherwise the originating button click reclaims focus.
             DispatchQueue.main.async { [weak self] in
                 guard let self, let window = self.window else { return }
-                // Only the active pane grabs focus on (re)mount — otherwise every
-                // pane's surface races on a workspace switch and the last one wins
+                // Only the active pane grabs focus on (re)mount — otherwise
+                // sibling panes' surfaces race and the last mount wins
                 // (issue #24). Size re-sync below runs regardless of focus.
-                if self.grabsFocusOnMount {
+                // Hidden = a background workspace's container (C2 keeps every
+                // workspace mounted). A surface that isn't visible must never
+                // take the keyboard, whatever its pane-level flag says —
+                // engine-side belt for the view-layer condition (Codex P1).
+                if self.grabsFocusOnMount, !self.isHiddenOrHasHiddenAncestor {
                     window.makeFirstResponder(self)
                 }
-                // Re-sync size on reattach: propagateSizeToSurface no-ops while
-                // detached, and a same-display / unchanged-frame reattach fires
-                // neither viewDidChangeBackingProperties nor setFrameSize. force:
-                // the frame is usually unchanged across the detach, which the
-                // pixel-dedup would otherwise skip — but libghostty needs the
-                // re-push to recover (issue #8).
+                // Re-sync size on reattach (cross-pane / cross-window tab
+                // moves): propagateSizeToSurface no-ops while detached, and an
+                // unchanged-frame reattach fires neither backing-properties
+                // nor setFrameSize callbacks. force: the pixel-dedup would
+                // otherwise skip the unchanged size libghostty must relearn
+                // (issue #8).
                 if reattaching { self.propagateSizeToSurface(force: true) }
             }
         }
@@ -982,20 +993,40 @@ final class GhosttySurfaceView: NSView {
         renderLink?.isPaused = false
     }
 
-    /// Render link runs only when the surface exists AND the view is in a window.
-    /// Without the window guard, hidden sessions (an inactive tab is detached from
-    /// the window) would keep ticking against a detached IOSurfaceLayer.
+    /// Render link runs only when the surface exists, the view is in a window,
+    /// AND it's actually visible. Background tabs / workspaces stay mounted
+    /// (the AppKit pane host switches by `isHidden`, never by detaching), so
+    /// the hidden check is what keeps an invisible streaming terminal at zero
+    /// GPU — the same guarantee the old detach-on-switch world had.
+    /// `setNeedsRender()` still latches while hidden; the first tick after
+    /// unhide presents the accumulated state.
     private func updateRenderLink() {
-        if surface != nil, window != nil {
+        if surface != nil, window != nil, !isHiddenOrHasHiddenAncestor {
             startRenderLink()
         } else {
             stopRenderLink()
         }
     }
 
+    override func viewDidHide() {
+        super.viewDidHide()
+        updateRenderLink()
+    }
+
+    override func viewDidUnhide() {
+        super.viewDidUnhide()
+        // Surfaces are created lazily on first *reveal* (not first mount):
+        // a restored background tab must not spawn its shell + Metal surface
+        // until the user actually switches to it — the same laziness the old
+        // detached-view world provided.
+        createSurfaceIfReady()
+        updateRenderLink()
+    }
+
     func createSurfaceIfReady() {
         guard surface == nil,
               let window,
+              !isHiddenOrHasHiddenAncestor,
               let config = pendingConfig,
               let app = LibghosttyApp.shared.app
         else { return }

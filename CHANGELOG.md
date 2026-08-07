@@ -2,6 +2,14 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.50.0 — 2026-08-07
+
+- Workspace switching is now instant: every workspace stays alive inside the window and switching simply reveals it — no flicker, no terminal re-mounting, and keyboard focus lands back on the pane you left.
+- An open ⌘L composer or ⌘F search bar keeps its draft and keyboard focus across workspace switches.
+- Hidden workspaces pause their terminal rendering, and restored background tabs start their shells only when first shown.
+- Fixed: the ⌘F search bar was clipped at both edges in narrow split panes — it now adapts to the pane width.
+- Fixed: the status-bar zoom and compose buttons could briefly tear (background moving before the icon) when toggling pane zoom.
+
 ## v0.49.0 — 2026-08-06
 
 - Refined the UI with better alignment, consistent button and hover states, and polished sidebar, file-tree, Session Info, and status-bar styling across light and dark themes.

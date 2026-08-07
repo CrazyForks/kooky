@@ -1379,17 +1379,6 @@ final class WorkspaceStore {
         if changed { scheduleSave() }
     }
 
-    /// Adjusts the divider fraction of the split node containing `pane` as a
-    /// direct child (used by drag-to-resize).
-    func setSplitFraction(_ fraction: Double, parentOf pane: Pane, in workspace: Workspace) {
-        guard let info = workspace.root.parentInfo(forPane: pane.id) else { return }
-        guard case .split(let orient, let first, let second, let current) = info.parent.content else { return }
-        let clamped = min(max(fraction, 0.1), 0.9)
-        guard abs(clamped - current) > .ulpOfOne else { return }
-        info.parent.content = .split(orientation: orient, first: first, second: second, fraction: clamped)
-        scheduleSave()
-    }
-
     /// Routes a hook event to the named session. On `.ended`, drops the leaf
     /// back to `.terminal` only if the agent reporting end matches the
     /// session's current agent — otherwise a Codex run inside a Claude tab

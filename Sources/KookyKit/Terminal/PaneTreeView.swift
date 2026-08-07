@@ -1,6 +1,22 @@
 import AppKit
 import SwiftUI
 
+/// Root the AppKit workspace container hosts — one per workspace, alive for
+/// the workspace's lifetime (the C2 hybrid: AppKit owns "which workspace is
+/// visible", SwiftUI owns everything inside). No `.id(workspace.id)`
+/// anywhere: workspace switches flip the CONTAINER's visibility and never
+/// tear this tree down, so the old mount-churn class stays dead while the
+/// split/zoom animations run on SwiftUI's own coordinated layout — the
+/// smoothness five AppKit-side attempts could not reproduce (v0.50).
+struct WorkspaceSplitRoot: View {
+    @Bindable var workspace: Workspace
+    let store: WorkspaceStore
+
+    var body: some View {
+        PaneTreeView(node: workspace.root, workspace: workspace, store: store)
+    }
+}
+
 /// Recursive view for a workspace's split tree. Leaves render their own tab
 /// strip + active terminal — a split slices the whole tab strip, not just
 /// the content area.
@@ -56,7 +72,16 @@ private struct PaneView: View {
             TabBarView(pane: pane, workspace: workspace, store: store)
             Rectangle().fill(Theme.chromeHairline).frame(height: 1)
             if let active = pane.activeTab {
-                TerminalView(engine: active.engine, grabsFocusOnMount: isFocused)
+                // The workspace-visibility condition is load-bearing in C2:
+                // every workspace's tree is mounted (hidden containers), so
+                // without it each workspace's own active pane grabs on mount —
+                // at restore the LAST workspace mounted wins the keyboard, and
+                // a background tab auto-close can re-mount and yank focus from
+                // the terminal the user is typing in (Codex P1).
+                TerminalView(
+                    engine: active.engine,
+                    grabsFocusOnMount: isFocused && store.activeWorkspaceId == workspace.id
+                )
                     .id(active.id)
                     .padding(8)
                     .overlay(RightClickCatcher { unit in
@@ -89,10 +114,11 @@ private struct PaneView: View {
                         if active.searchActive {
                             PaneSearchBar(
                                 session: active,
+                                isWorkspaceActive: store.activeWorkspaceId == workspace.id,
                                 onFocusGained: { store.focusPane(pane, in: workspace) }
                             )
                             .padding(.top, Theme.space3)
-                            .padding(.trailing, Theme.space3)
+                            .padding(.horizontal, Theme.space3)
                         }
                     }
                     .overlay(alignment: .bottom) {
@@ -347,6 +373,14 @@ private struct StatusBarIconButton: View {
                 .contentShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
         }
         .buttonStyle(.plain)
+        // Geometry isolation: a zoom toggle changes this button's `isActive`
+        // (symbol + fill) in the SAME transaction that animates the bar's
+        // layout. Without the group, the local state animation and the outer
+        // layout animation each drive part of the subtree's geometry — the
+        // background visibly moves before the icon follows (v0.50 review).
+        // The group applies external geometry to the whole button atomically;
+        // state changes snap (crisp), the hover fill fade stays local.
+        .geometryGroup()
         .accessibilityLabel(String(
             localized: String.LocalizationValue(help),
             bundle: .kookyResources
@@ -357,7 +391,6 @@ private struct StatusBarIconButton: View {
         ))
         .onHover { hovered = $0 }
         .animation(Theme.chromeTransition, value: hovered)
-        .animation(Theme.chromeTransition, value: isActive)
     }
 
     private var fill: Color {
@@ -1311,6 +1344,11 @@ private struct LinkPreviewBadge: View {
 
 private struct PaneSearchBar: View {
     @Bindable var session: Session
+    /// C2: this bar survives a workspace switch (nothing re-mounts), so the
+    /// `.onAppear` focus grab never re-runs on return — it re-claims the
+    /// keyboard when its workspace becomes the visible one again, and the
+    /// host's `syncFocus` yields to it (Codex P1).
+    let isWorkspaceActive: Bool
     /// Called when the TextField gains focus so the parent can promote this
     /// pane to active. Without this, clicking a non-active pane's search bar
     /// leaves `WorkspaceStore.activePaneId` unchanged, and ⌘G / ⌘⇧G route
@@ -1381,7 +1419,10 @@ private struct PaneSearchBar: View {
         }
         .padding(.horizontal, Theme.space3)
         .padding(.vertical, 5)
-        .frame(width: 340)
+        // Cap, don't pin: a narrow split pane proposes less than 340 and the
+        // bar must shrink into it instead of being clipped at the pane edges
+        // (the TextField absorbs the flexibility).
+        .frame(maxWidth: 340)
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(Theme.chromeBackground.opacity(0.96))
@@ -1400,6 +1441,12 @@ private struct PaneSearchBar: View {
         }
         .onChange(of: focused) { _, isFocused in
             if isFocused { onFocusGained() }
+        }
+        .onChange(of: isWorkspaceActive) { _, active in
+            // Workspace became visible again with this bar still open —
+            // re-claim the keyboard (the mount-time grab can't, C2 never
+            // re-mounts on a switch).
+            if active { focused = true }
         }
     }
 
@@ -1430,6 +1477,11 @@ private struct PaneComposerBar: View {
     let pane: Pane
     let workspace: Workspace
     let store: WorkspaceStore
+    /// Bumped when this composer's workspace becomes visible again — C2 never
+    /// re-mounts on a switch, so the mount-time focus grab can't re-run; the
+    /// token tells the text view to re-claim the caret (Codex P1). The host's
+    /// `syncFocus` yields to open editors for the same reason.
+    @State private var workspaceRefocus = UUID()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -1439,6 +1491,7 @@ private struct PaneComposerBar: View {
                 pane: pane,
                 workspace: workspace,
                 store: store,
+                refocusToken: workspaceRefocus,
                 onSend: send,
                 onCancel: close
             )
@@ -1482,6 +1535,9 @@ private struct PaneComposerBar: View {
             store.focusPane(pane, in: workspace)
         })
         .onAppear { store.focusPane(pane, in: workspace) }
+        .onChange(of: store.activeWorkspaceId) { _, active in
+            if active == workspace.id { workspaceRefocus = UUID() }
+        }
     }
 
     private func hint(_ key: String, _ label: String) -> some View {
@@ -1578,6 +1634,9 @@ private struct ComposerTextView: NSViewRepresentable {
     let pane: Pane
     let workspace: Workspace
     let store: WorkspaceStore
+    /// Changes when the workspace becomes visible again with this composer
+    /// still open — `updateNSView` re-claims first responder for it.
+    var refocusToken: UUID
     var onSend: () -> Void
     var onCancel: () -> Void
 
@@ -1615,6 +1674,7 @@ private struct ComposerTextView: NSViewRepresentable {
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
         scroll.borderType = .noBorder
+        coordinator.lastRefocusToken = refocusToken
         // Grab focus once the view lands in a window so Return / Esc route here.
         DispatchQueue.main.async {
             coordinator.activatePane()
@@ -1626,6 +1686,12 @@ private struct ComposerTextView: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         guard let tv = scroll.documentView as? ComposerNSTextView else { return }
         context.coordinator.parent = self
+        if context.coordinator.lastRefocusToken != refocusToken {
+            context.coordinator.lastRefocusToken = refocusToken
+            // Deferred: the container was hidden a beat ago; take the caret
+            // once the reveal has settled.
+            DispatchQueue.main.async { tv.window?.makeFirstResponder(tv) }
+        }
         let coordinator = context.coordinator
         tv.onFocusGained = { [weak coordinator] in coordinator?.activatePane() }
         tv.remotePasteHost = remotePasteHost
@@ -1643,6 +1709,7 @@ private struct ComposerTextView: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: ComposerTextView
+        var lastRefocusToken: UUID?
 
         init(_ parent: ComposerTextView) { self.parent = parent }
 

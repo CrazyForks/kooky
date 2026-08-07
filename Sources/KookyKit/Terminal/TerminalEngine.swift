@@ -128,16 +128,18 @@ protocol TerminalEngine: AnyObject {
     var suspendsSizePropagation: Bool { get }
     func beginSizePropagationSuspension()
     func endSizePropagationSuspension()
-    /// Gates whether the engine's view grabs keyboard first-responder when it
-    /// mounts into a window. The SwiftUI layer sets it from the pane's active
-    /// state so a workspace switch — which re-mounts every pane's surface —
-    /// lands focus on the active pane, not whichever surface mounted last
-    /// (issue #24). Default true: a single pane or a fresh split/tab still
-    /// grabs focus on mount.
-    var grabsFocusOnMount: Bool { get set }
     /// Force a one-shot size sync of the surface to the current view
     /// frame. Used when un-suspending after an animation.
     func flushSize()
+    /// Gates whether the engine's view grabs keyboard first-responder when it
+    /// mounts into a window. `TerminalView` sets it from the pane's active
+    /// state so the mounts that still happen — tab switches within a pane,
+    /// fresh splits/tabs, cross-pane and cross-window tab moves — land focus
+    /// only when the pane is the active one (issue #24). Workspace switches
+    /// no longer re-mount anything (persistent containers); those are
+    /// `PaneTreeHostView.syncFocus`'s job. Default true: a single pane or a
+    /// fresh split/tab still grabs focus on mount.
+    var grabsFocusOnMount: Bool { get set }
     /// Trigger a libghostty named action (e.g. `increase_font_size:1`,
     /// `decrease_font_size:1`, `reset_font_size`, `clear_screen`). Returns
     /// `true` when the engine recognised and dispatched the action.

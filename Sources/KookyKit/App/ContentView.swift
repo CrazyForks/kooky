@@ -3,6 +3,11 @@ import SwiftUI
 
 struct ContentView: View {
     @Bindable var store: WorkspaceStore
+    /// The window's persistent AppKit pane-tree host, owned by
+    /// `KookyWindowController`. Passing the instance (instead of building it
+    /// here) is what guarantees SwiftUI structure changes can never tear the
+    /// terminal tree down — the representable always re-mounts the same view.
+    let paneHost: PaneTreeHostView
     /// Narrow AppKit seam: the store remains the source of truth for sidebar
     /// state; the owning window controller only mirrors those widths into
     /// `NSWindow.minSize`. `true` asks it to animate a required expansion
@@ -103,14 +108,13 @@ struct ContentView: View {
         .frame(height: 32)
     }
 
-    @ViewBuilder
     private var mainPane: some View {
-        if let workspace = store.active {
-            PaneTreeView(node: workspace.root, workspace: workspace, store: store)
-                .id(workspace.id)
-        } else {
-            Color.clear
-        }
+        // No `.id`, no conditional: the host view is permanent and handles
+        // "no workspace" itself. The old `.id(workspace.id)` teardown/rebuild
+        // per switch was the root of the mount-churn bug class (issues #8,
+        // #24, workspace-switch flicker) — the AppKit host switches by
+        // visibility instead.
+        PaneTreeHostRepresentable(host: paneHost)
     }
 
     private var chromeBackground: Color {

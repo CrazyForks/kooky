@@ -801,9 +801,10 @@ final class WorkspaceStoreTests: XCTestCase {
     func testSwitchingWorkspacesPreservesActivePane() {
         // Issue #24: switching away from a split workspace and back must keep
         // the pane you left focused, not jump to the last one. The store is the
-        // foundation — `activateWorkspace` must never reset `activePaneId`; the
-        // view layer's per-pane `grabsFocusOnMount` gate then makes the on-screen
-        // keyboard focus follow it instead of racing to the last-mounted surface.
+        // foundation — `activateWorkspace` must never reset `activePaneId`;
+        // `PaneTreeHostView.syncFocus` then hands the keyboard to exactly that
+        // pane's terminal (a switch re-mounts nothing in the C2 hybrid, so no
+        // mount-time grab can race it).
         let store = makeStore()
         let a = store.addWorkspace(workingDirectory: projectA)
         let pane1 = firstPane(a)
@@ -1910,26 +1911,10 @@ final class WorkspaceStoreTests: XCTestCase {
         XCTAssertEqual(ws.zoomedPaneId, paneA.id)
     }
 
-    func testToggleZoomSuspendsSizePropagationDuringAnimation() {
-        // The animation window must skip per-frame `set_size` propagation
-        // — otherwise each animation frame fires its own SIGWINCH burst
-        // (the documented conda-init scrollback-wipe path). Verifies the
-        // flag is set immediately after toggle; the async restore lives
-        // on a 0.25s delay we don't wait for here.
-        let store = makeStore()
-        let ws = store.addWorkspace(workingDirectory: projectA)
-        let paneA = firstPane(ws)
-        guard let paneB = store.splitPane(paneA, orientation: .horizontal, in: ws) else {
-            return XCTFail("split failed")
-        }
-        let engineA = engine(paneA.tabs[0])
-        let engineB = engine(paneB.tabs[0])
-        XCTAssertFalse(engineA.suspendsSizePropagation)
-        XCTAssertFalse(engineB.suspendsSizePropagation)
-        store.toggleZoom(in: ws, paneId: paneA.id)
-        XCTAssertTrue(engineA.suspendsSizePropagation, "every engine in the workspace gets suspended")
-        XCTAssertTrue(engineB.suspendsSizePropagation)
-    }
+    // Zoom's SIGWINCH suspension moved out of `toggleZoom` into the AppKit
+    // host's animation pass (begin before the frame animation, end + flush in
+    // its completion) — pinned by
+    // `PaneTreeHostTests.testZoomSuspendsSizePropagationForTheAnimation`.
 
     func testSizePropagationSuspensionIsRefcounted() {
         // Zoom / status-bar / divider-drag can overlap on the same engine, so

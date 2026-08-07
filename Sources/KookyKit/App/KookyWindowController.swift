@@ -158,6 +158,10 @@ enum KookyWindowLayout {
 final class KookyWindowController: NSWindowController, NSWindowDelegate {
     let windowId: UUID
     let store: WorkspaceStore
+    /// The window's persistent AppKit pane-tree host. Owned here — not by
+    /// SwiftUI — so every terminal NSView's lifetime is bound to the window,
+    /// never to SwiftUI view identity.
+    let paneHost: PaneTreeHostView
     /// Set by `AppDelegate`. Fires from `windowWillClose` so the delegate
     /// can drop this window from its list and decide whether the window's
     /// persisted slot survives (one of several closed) or is discarded.
@@ -170,10 +174,11 @@ final class KookyWindowController: NSWindowController, NSWindowDelegate {
     init(windowId: UUID, store: WorkspaceStore) {
         self.windowId = windowId
         self.store = store
+        self.paneHost = PaneTreeHostView(store: store)
         super.init(window: Self.makeWindow())
         window?.delegate = self
         window?.contentView = NSHostingView(
-            rootView: ContentView(store: store) { [weak self] animateExpansion in
+            rootView: ContentView(store: store, paneHost: paneHost) { [weak self] animateExpansion in
                 self?.updateMinimumWindowSize(expandIfNeeded: true, animate: animateExpansion)
             }
         )

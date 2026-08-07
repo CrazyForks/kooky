@@ -5,7 +5,13 @@ import AppKit
 /// need libghostty or a real PTY. Records calls so tests can assert on them.
 @MainActor
 final class TestEngine: TerminalEngine {
-    let view: NSView = NSView()
+    /// Accepts first responder like the real surface view does, so focus
+    /// assertions against `window.firstResponder` work in host tests.
+    private final class FocusableView: NSView {
+        override var acceptsFirstResponder: Bool { true }
+    }
+
+    let view: NSView = FocusableView()
     var backgroundColor: NSColor { .black }
     var onPwdChange: ((String) -> Void)?
     var onTitleChange: ((String) -> Void)?
