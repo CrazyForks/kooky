@@ -86,7 +86,62 @@ final class Session: Identifiable {
     /// the cwd as the title each prompt (`_kooky_title_pwd`), which the path
     /// filter in `onTitleChange` maps back to `nil` — so a leftover `ssh` /
     /// TUI title can't outlive the program once control returns to the prompt.
+    /// Mutate via `applyTerminalTitle` — every raw write invalidates the tab
+    /// bar + sidebar row + agent panel, so the write path must stay throttled.
     var terminalTitle: String?
+
+    /// Throttle window for `applyTerminalTitle` (#51). A program can re-emit
+    /// OSC 0/2 at output speed (a TUI ticking a token counter into the title
+    /// every chunk); unthrottled, each write re-lays-out every observing
+    /// surface and sustained streaming pegs a core on SwiftUI layout.
+    static let terminalTitleThrottle: Duration = .milliseconds(250)
+    @ObservationIgnored private var terminalTitleFlushTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingTerminalTitle: String?
+    @ObservationIgnored private var lastTerminalTitleApply: ContinuousClock.Instant?
+
+    /// Leading + trailing throttle around `terminalTitle`. The first write
+    /// after a quiet gap lands synchronously (one-shot titles — an ssh
+    /// banner, a TUI's startup title — keep the old immediate behavior, and
+    /// the existing synchronous tests stay honest); writes inside the window
+    /// park and the LAST parked value lands at the window's tail, so a burst
+    /// can never drop its final title.
+    func applyTerminalTitle(_ next: String?) {
+        if terminalTitleFlushTask != nil {
+            pendingTerminalTitle = next
+            return
+        }
+        let now = ContinuousClock.now
+        if let last = lastTerminalTitleApply, now - last < Self.terminalTitleThrottle {
+            pendingTerminalTitle = next
+            terminalTitleFlushTask = Task { @MainActor [weak self] in
+                // Tolerance: the throttle is jitter-insensitive, so let the
+                // kernel coalesce the wakeup instead of firing a tight timer.
+                try? await Task.sleep(
+                    until: last + Self.terminalTitleThrottle,
+                    tolerance: .milliseconds(50),
+                    clock: .continuous
+                )
+                guard let self else { return }
+                self.terminalTitleFlushTask = nil
+                let value = self.pendingTerminalTitle
+                self.pendingTerminalTitle = nil
+                self.commitTerminalTitle(value)
+            }
+            return
+        }
+        commitTerminalTitle(next)
+    }
+
+    /// Same-value applies must not advance `lastTerminalTitleApply`: no write
+    /// happened, so no throttle window opens and the next real change stays
+    /// synchronous (the wrapper's per-prompt cwd re-emit maps to an unchanged
+    /// nil every prompt). Both the leading write and the trailing flush share
+    /// this gate — the invariant must not fork between them.
+    private func commitTerminalTitle(_ value: String?) {
+        guard terminalTitle != value else { return }
+        terminalTitle = value
+        lastTerminalTitleApply = ContinuousClock.now
+    }
     /// Last resumable conversation id this tab's agent reported. Persisted
     /// via `PersistedTab.conversationId` so the next kooky launch can resume
     /// where the user left off. Per-Session because each tab owns its own

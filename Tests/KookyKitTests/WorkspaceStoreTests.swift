@@ -705,6 +705,47 @@ final class WorkspaceStoreTests: XCTestCase {
         XCTAssertTrue(ws.distinctAgents.isEmpty)
     }
 
+    func testTerminalTitleBurstCoalescesToTrailingValue() async throws {
+        // #51: a TUI re-emitting OSC 2 at output speed must not land one
+        // SwiftUI invalidation per chunk. Leading edge is synchronous; the
+        // burst parks and ONLY the final value lands at the window's tail.
+        let store = makeStore()
+        let ws = store.addWorkspace(workingDirectory: projectA)
+        let session = firstPane(ws).tabs[0]
+
+        engine(session).emitTitle("pi — 37 tokens")
+        XCTAssertEqual(session.terminalTitle, "pi — 37 tokens")
+
+        engine(session).emitTitle("pi — 74 tokens")
+        engine(session).emitTitle("pi — 111 tokens")
+        XCTAssertEqual(
+            session.terminalTitle, "pi — 37 tokens",
+            "burst writes inside the throttle window must park, not apply"
+        )
+
+        try await Task.sleep(for: Session.terminalTitleThrottle * 2)
+        XCTAssertEqual(
+            session.terminalTitle, "pi — 111 tokens",
+            "the trailing flush must land the LAST parked value"
+        )
+    }
+
+    func testTerminalTitleAppliesImmediatelyAfterQuietGap() async throws {
+        let store = makeStore()
+        let ws = store.addWorkspace(workingDirectory: projectA)
+        let session = firstPane(ws).tabs[0]
+
+        engine(session).emitTitle("first")
+        XCTAssertEqual(session.terminalTitle, "first")
+
+        try await Task.sleep(for: Session.terminalTitleThrottle * 2)
+        engine(session).emitTitle("second")
+        XCTAssertEqual(
+            session.terminalTitle, "second",
+            "a write after a quiet gap is a fresh leading edge — no deferral"
+        )
+    }
+
     func testCustomTitleWinsOverTerminalTitle() {
         let store = makeStore()
         let ws = store.addWorkspace(workingDirectory: projectA)

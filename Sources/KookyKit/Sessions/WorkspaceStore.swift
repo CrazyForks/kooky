@@ -1857,7 +1857,7 @@ final class WorkspaceStore {
             let next = normalizedTitle(title).flatMap {
                 ($0.hasPrefix("/") || $0.hasPrefix("~")) ? nil : $0
             }
-            if session.terminalTitle != next { session.terminalTitle = next }
+            session.applyTerminalTitle(next)
         }
         engine.onFocus = { [weak self, weak session, weak workspace] in
             guard let self, let session, let workspace else { return }

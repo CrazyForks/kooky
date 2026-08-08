@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.50.2 — 2026-08-08
+
+- Fixed: a program updating the terminal title at output speed (e.g. a TUI ticking token counts into OSC 0/2) no longer pegs a CPU core on SwiftUI layout while it streams. Title changes now coalesce to a few updates per second — the first change still shows instantly, and the latest one always lands. (#51)
+
 ## v0.50.1 — 2026-08-07
 
 - Fixed: closing a tab or window now reliably terminates its foreground agent processes, including Pi sessions that previously could survive the terminal and keep issuing requests in the background. App quit waits for terminal teardown without blocking the main thread. (#50)
