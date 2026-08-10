@@ -120,6 +120,16 @@ final class PaneTreeHostView: FlippedLayoutView {
                 view = WorkspaceRootView(workspace: workspace, store: store)
                 workspaceViews[workspace.id] = view
                 addSubview(view)
+                // A workspace created while the app runs (⌘N / sidebar +) is
+                // born ACTIVE, so its container never passes the hidden-flip
+                // branch below — and in a real display cycle `addSubview`
+                // does NOT dirty the superview, so nothing would ever assign
+                // the new container a frame: the fresh workspace rendered
+                // blank until the next window resize (issue #52). The manual
+                // `layoutSubtreeIfNeeded()` in tests happens to re-layout the
+                // host in the no-window xctest environment, which is why the
+                // container tests stayed green while the app was broken.
+                needsLayout = true
             }
             let isActive = workspace.id == activeId
             if view.isHidden == isActive {

@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.50.3 — 2026-08-10
+
+- Fixed: a workspace created while the app is running (⌘N or the sidebar `+`) showed up blank — no tab bar, no terminal — until the window was resized. New workspaces now appear immediately. (#52)
+
 ## v0.50.2 — 2026-08-08
 
 - Fixed: a program updating the terminal title at output speed (e.g. a TUI ticking token counts into OSC 0/2) no longer pegs a CPU core on SwiftUI layout while it streams. Title changes now coalesce to a few updates per second — the first change still shows instantly, and the latest one always lands. (#51)

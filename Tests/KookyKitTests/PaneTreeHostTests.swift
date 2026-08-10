@@ -8,6 +8,16 @@ import XCTest
 /// lifetime; switching flips visibility only. These are the guarantees the
 /// old `.id(workspace.id)` SwiftUI tree could not make (mount churn → issues
 /// #8 / #24) — pin them at the boundary that now owns them.
+///
+/// CAVEAT — these tests cannot pin display-cycle layout timing (issue #52):
+/// in the xctest process, mounting a container's NSHostingView marks the
+/// host needsLayout, so a fresh container gets laid out even when reconcile
+/// forgets to request it; in the real app `addSubview` dirties nothing and
+/// the container stays at .zero (blank workspace). A run-loop-driven,
+/// windowed variant of the frame assertion was written and mutation-tested:
+/// it stays green with the fix removed, so it was deleted rather than kept
+/// as false safety. The mechanism is pinned by a standalone AppKit repro +
+/// on-device verification instead.
 @MainActor
 final class PaneTreeHostTests: XCTestCase {
     private func makeStore() -> WorkspaceStore {
