@@ -4,7 +4,7 @@ Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
 ## v0.50.4 — 2026-08-10
 
-- Improved UI.
+- Improved: refreshed the main-window UI with softer selection states, quieter dividers, clearer typography, and tighter spacing across tabs, workspaces, and the Agent panel.
 
 ## v0.50.3 — 2026-08-10
 
