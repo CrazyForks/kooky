@@ -70,7 +70,7 @@ private struct PaneView: View {
         let paneOpacity = isFocused ? 1.0 : Self.inactivePaneOpacity
         VStack(spacing: 0) {
             TabBarView(pane: pane, workspace: workspace, store: store)
-            Rectangle().fill(Theme.chromeHairline).frame(height: 1)
+            Rectangle().fill(Theme.chromeSeparator).frame(height: 1)
             if let active = pane.activeTab {
                 // The workspace-visibility condition is load-bearing in C2:
                 // every workspace's tree is mounted (hidden containers), so
@@ -144,7 +144,7 @@ private struct PaneView: View {
                     }
                 // Always present now that it hosts the compose button — a
                 // stable bottom affordance, not gated on git / env / zoom data.
-                Rectangle().fill(Theme.chromeHairline).frame(height: 1)
+                Rectangle().fill(Theme.chromeSeparator).frame(height: 1)
                 PaneStatusBar(session: active, paneId: pane.id, workspace: workspace, store: store)
             } else {
                 Color.clear

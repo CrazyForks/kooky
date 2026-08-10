@@ -426,10 +426,10 @@ struct SidebarView: View {
                 HStack(spacing: 0) {
                     FirstGlyphCenteredLayout(axisX: Theme.sidebarLeadingIconCenterX) {
                         Text("Kooky")
-                            .font(Theme.display(16, weight: .medium))
+                            .font(Theme.display(15.5, weight: .semibold))
                             .foregroundStyle(Theme.chromeForeground)
                         Text("K")
-                            .font(Theme.display(16, weight: .medium))
+                            .font(Theme.display(15.5, weight: .semibold))
                             .hidden()
                             .accessibilityHidden(true)
                     }
@@ -464,7 +464,7 @@ struct SidebarView: View {
     /// toggling between the workspace list and the active workspace's file tree.
     @ViewBuilder
     private func footer() -> some View {
-        Rectangle().fill(Theme.chromeHairline).frame(height: 1)
+        Rectangle().fill(Theme.chromeSeparator).frame(height: 1)
         HStack(spacing: Theme.chromeControlSpacing) {
             segment(.workspaces, systemName: "rectangle.stack", help: "Workspaces")
             segment(.files, systemName: "folder", help: "Files")
@@ -491,7 +491,7 @@ struct SidebarView: View {
 
     private func list(isCompact: Bool, proxy: ScrollViewProxy) -> some View {
         ScrollView(showsIndicators: false) {
-            LazyVStack(spacing: 2) {
+            LazyVStack(spacing: 3) {
                 if isCompact {
                     // 52pt-wide sidebar can't fit a disclosure triangle next
                     // to a 28pt icon — fall back to a flat list. The order

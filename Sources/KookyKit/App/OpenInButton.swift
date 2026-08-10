@@ -83,7 +83,7 @@ struct OpenInButton: View {
         // keeps it related without giving it chrome that sibling buttons lack.
         .overlay(alignment: .leading) {
             Rectangle()
-                .fill(Theme.chromeHairline)
+                .fill(Theme.chromeSeparator)
                 .frame(width: 1, height: Theme.chromeToolbarButtonSize - 10)
                 .offset(x: Theme.chromeToolbarButtonSize)
                 .allowsHitTesting(false)

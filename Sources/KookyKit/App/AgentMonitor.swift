@@ -223,7 +223,7 @@ func agentStateWordColor(_ state: AgentMonitor.State) -> Color {
 
 // MARK: - Right sidebar
 
-/// Shared title row + hairline for every right-panel page, so their headers
+/// Shared title row + quiet divider for every right-panel page, so their headers
 /// stay pixel-identical by construction. Its height
 /// matches the pane tab strip and left sidebar header, forming one continuous
 /// content baseline below the window drag strip.
@@ -236,7 +236,7 @@ struct RightPanelHeader<Trailing: View>: View {
         VStack(spacing: 0) {
             HStack(spacing: 7) {
                 Text(LocalizedStringKey(title), bundle: .kookyResources)
-                    .font(Theme.mono(13, weight: .semibold))
+                    .font(Theme.display(13.5, weight: .semibold))
                     .foregroundStyle(Theme.chromeForeground)
                 if count > 0 {
                     Text("\(count)")
@@ -248,7 +248,7 @@ struct RightPanelHeader<Trailing: View>: View {
             }
             .padding(.horizontal, 14)
             .frame(height: Theme.contentHeaderHeight)
-            Rectangle().fill(Theme.chromeHairline).frame(height: 1)
+            Rectangle().fill(Theme.chromeSeparator).frame(height: 1)
         }
     }
 }
@@ -271,7 +271,7 @@ struct PanelEmptyState: View {
                 .font(.system(size: 18, weight: .light))
                 .foregroundStyle(Theme.chromeMuted.opacity(0.4))
             Text(LocalizedStringKey(message), bundle: .kookyResources)
-                .font(Theme.mono(11))
+                .font(Theme.display(11.5))
                 .foregroundStyle(Theme.chromeMuted)
             Spacer(minLength: 0)
         }
@@ -342,7 +342,7 @@ struct AgentOverviewSidebar: View {
 
     @ViewBuilder
     private var footer: some View {
-        Rectangle().fill(Theme.chromeHairline).frame(height: 1)
+        Rectangle().fill(Theme.chromeSeparator).frame(height: 1)
         HStack(spacing: Theme.chromeControlSpacing) {
             footerSegment(.agents, systemName: "sparkles", help: "Agents")
             footerSegment(.history, systemName: "clock", help: "Session History")
@@ -392,7 +392,7 @@ private struct AgentOverviewRow: View {
                 // What this agent is working on leads: with several sessions of
                 // the same agent running, it's the only line that differs.
                 Text(entry.tabTitle)
-                    .font(Theme.mono(12, weight: .medium))
+                    .font(Theme.display(12.5, weight: .medium))
                     .foregroundStyle(Theme.chromeForeground)
                     .lineLimit(1)
                 // Head truncation, matching the sidebar's own path subtitle:
@@ -406,12 +406,14 @@ private struct AgentOverviewRow: View {
             Spacer(minLength: 6)
             // The colored state word does the work the left accent bar used to.
             Text(entry.state.label)
-                .font(Theme.mono(9.5, weight: .medium))
+                .font(Theme.display(10, weight: .medium))
                 .foregroundStyle(agentStateWordColor(entry.state))
         }
         .padding(.horizontal, 14)
         .padding(.vertical, Theme.sidebarRowVerticalPadding)
         .background((isHovered ? Theme.chromeHover : Color.clear).workspaceTagStripe(shownTag))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.chromeSelectionCornerRadius, style: .continuous))
+        .padding(.horizontal, Theme.space2)
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }
         .help(entry.hoverText(tag: shownTag))
@@ -437,7 +439,7 @@ private struct AgentOverviewCompactRow: View {
                     .overlay(Circle().stroke(Theme.chromeBackground, lineWidth: 1.5))
             }
             .background((isHovered ? Theme.chromeHover : Color.clear).workspaceTagStripe(shownTag))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .clipShape(RoundedRectangle(cornerRadius: Theme.chromeSelectionCornerRadius, style: .continuous))
             .contentShape(Rectangle())
             .onHover { isHovered = $0 }
             .help(entry.hoverText(tag: shownTag))

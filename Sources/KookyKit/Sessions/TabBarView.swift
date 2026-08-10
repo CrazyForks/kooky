@@ -13,7 +13,7 @@ struct TabBarView: View {
     var body: some View {
         HStack(spacing: 0) {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: Theme.chromeControlSpacing) {
+                HStack(spacing: Theme.space1) {
                     ForEach(Array(pane.tabs.enumerated()), id: \.element.id) { index, tab in
                         DraggableTabRow(
                             tab: tab,
@@ -26,7 +26,7 @@ struct TabBarView: View {
                     }
                     addButton
                 }
-                .padding(.horizontal, Theme.space2)
+                .padding(.horizontal, 10)
             }
             // Double-click on tab bar empty area triggers macOS Zoom (filled
             // screen, dock/menu kept) — same gesture as the system title-bar

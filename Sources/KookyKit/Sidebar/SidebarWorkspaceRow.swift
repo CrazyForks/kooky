@@ -236,7 +236,7 @@ struct SidebarWorkspaceRow: View {
             }
         }
         .background(rowBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.chromeSelectionCornerRadius, style: .continuous))
         .contentShape(Rectangle())
         .onTapGesture(perform: onActivate)
         .onHover { isHovered = $0 }
@@ -352,7 +352,7 @@ struct SidebarWorkspaceRow: View {
                 .padding(.trailing, 3)
             VStack(alignment: .leading, spacing: 2) {
                 Text(workspace.title)
-                    .font(Theme.display(13, weight: .regular))
+                    .font(Theme.display(13, weight: isActive ? .medium : .regular))
                     .foregroundStyle(isActive ? Theme.chromeForeground : Theme.chromeForeground.opacity(0.78))
                     .lineLimit(1)
                 subtitleRow
@@ -536,7 +536,7 @@ struct SidebarWorkspaceRow: View {
     }
 
     private var rowFill: Color {
-        if isActive { return Theme.chromeActive }
+        if isActive { return Theme.chromeSelection }
         if isHovered { return Theme.chromeHover }
         return .clear
     }

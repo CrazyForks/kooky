@@ -23,7 +23,7 @@ struct TabBarItem: View {
             commandStatusDot
             AgentIconView(asset: tab.displayAgent.iconAsset, fallbackSymbol: tab.displayAgent.symbol, size: 15)
             Text(tab.title)
-                .font(Theme.display(12, weight: .regular))
+                .font(Theme.display(12, weight: isActive ? .medium : .regular))
                 .lineLimit(1)
             HoverableIconButton(
                 systemName: "xmark",
@@ -35,14 +35,16 @@ struct TabBarItem: View {
             .opacity(isHovered || isActive ? 1 : 0)
             .allowsHitTesting(isHovered || isActive)
         }
-        .foregroundStyle(isActive ? Theme.chromeForeground : Theme.chromeForeground.opacity(0.6))
-        .padding(.horizontal, Theme.space3)
-        .padding(.vertical, 7)
+        .foregroundStyle(isActive ? Theme.chromeForeground : Theme.chromeForeground.opacity(0.62))
+        .padding(.horizontal, 11)
+        .padding(.vertical, 8)
         .background(rowBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.chromeSelectionCornerRadius, style: .continuous))
         .contentShape(Rectangle())
         .onTapGesture(perform: onActivate)
         .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.14), value: isActive)
+        .animation(.easeOut(duration: 0.12), value: isHovered)
         .overlay(RightClickCatcher { _ in isContextMenuOpen = true })
         .popover(isPresented: $isContextMenuOpen, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 0) {
@@ -118,7 +120,7 @@ struct TabBarItem: View {
     }
 
     private var rowBackground: Color {
-        if isActive { return Theme.chromeActive }
+        if isActive { return Theme.chromeSelection }
         if isHovered { return Theme.chromeHover }
         return .clear
     }

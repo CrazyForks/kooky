@@ -270,7 +270,7 @@ struct ReorderDropZone<Item: Equatable>: View {
 /// One segment of a sidebar footer toggle (left sidebar's workspaces/files,
 /// right panel's agents/history). `HoverableIconButton` has no active-fill
 /// state, so this is its selected-capable sibling: active segments read
-/// `chromeActive` (same fill as the selected workspace row), hover reads
+/// the shared selection surface, hover reads
 /// `chromeHover`.
 struct FooterSegment: View {
     let systemName: String
@@ -314,7 +314,7 @@ struct FooterSegment: View {
     }
 
     private var fill: Color {
-        if isActive { return Theme.chromeActive }
+        if isActive { return Theme.chromeSelection }
         if isHovered { return Theme.chromeHover }
         return .clear
     }

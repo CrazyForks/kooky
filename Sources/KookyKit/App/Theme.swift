@@ -45,8 +45,16 @@ enum Theme {
     static var chromeMuted: Color { resolved.chromeMuted }
     static var chromeFaint: Color { resolved.chromeFaint }
     static var chromeHairline: Color { resolved.chromeHairline }
+    /// Softer structural divider used by the main window chrome. Hairlines
+    /// remain available for compact controls and overlay detail, while the
+    /// window skeleton stays deliberately quieter.
+    static var chromeSeparator: Color { resolved.chromeSeparator }
     static var chromeHover: Color { resolved.chromeHover }
     static var chromeActive: Color { resolved.chromeActive }
+    /// Stable selected surface for tabs and source-list rows. Keeping this
+    /// separate from `chromeActive` prevents selection from looking like a
+    /// permanently pressed button.
+    static var chromeSelection: Color { resolved.chromeSelection }
 
     /// Color libghostty draws inside the terminal surface. Exposed as NSColor
     /// so AppKit code (engines, etc.) can reach it without bridging.
@@ -243,8 +251,10 @@ enum Theme {
         let chromeMuted: Color
         let chromeFaint: Color
         let chromeHairline: Color
+        let chromeSeparator: Color
         let chromeHover: Color
         let chromeActive: Color
+        let chromeSelection: Color
 
         @MainActor
         fileprivate init(
@@ -270,8 +280,10 @@ enum Theme {
             self.chromeMuted = Color(nsColor: mutedNS)
             self.chromeFaint = Color(nsColor: faintNS)
             self.chromeHairline = fgColor.opacity(isLight ? 0.16 : 0.07)
-            self.chromeHover = fgColor.opacity(isLight ? 0.11 : 0.07)
-            self.chromeActive = fgColor.opacity(isLight ? 0.20 : 0.15)
+            self.chromeSeparator = fgColor.opacity(isLight ? 0.10 : 0.045)
+            self.chromeHover = fgColor.opacity(isLight ? 0.09 : 0.055)
+            self.chromeActive = fgColor.opacity(isLight ? 0.18 : 0.13)
+            self.chromeSelection = fgColor.opacity(isLight ? 0.14 : 0.10)
         }
     }
 
@@ -356,6 +368,7 @@ enum Theme {
     static let chromeOpenInIconSize: CGFloat = 17
     static let chromeSplitChevronWidth: CGFloat = 18
     static let chromeButtonCornerRadius: CGFloat = 5
+    static let chromeSelectionCornerRadius: CGFloat = 6
     static let chromeControlSpacing: CGFloat = 2
     static let chromeBarEdgeInset: CGFloat = space2
     static let chromeBottomBarVerticalPadding: CGFloat = 5
@@ -383,11 +396,11 @@ enum Theme {
     /// The left section title, every pane tab strip, and the full right-panel
     /// title share one baseline. Keeping this in the theme prevents the three
     /// independently-owned surfaces from drifting apart again.
-    static let contentHeaderHeight: CGFloat = 40
+    static let contentHeaderHeight: CGFloat = 42
 
     /// Shared vertical breathing room for the left workspace rows and the
     /// right agent-panel rows so the two sidebars keep the same density.
-    static let sidebarRowVerticalPadding: CGFloat = 11
+    static let sidebarRowVerticalPadding: CGFloat = 9
 
     // MARK: Motion
     /// Standard transition for chrome state changes (sidebar collapse,
