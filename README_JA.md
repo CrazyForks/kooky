@@ -52,7 +52,7 @@ AI コーディングのために作られた、ミニマルでモダンな macO
 
 **自分の agent を追加。** 一覧にないものは Settings → Agents から追加できます —— 名前とコマンドを入れれば `+` メニューに並び、他の tab と同じように起動します。さらに内蔵 agent をベースに選ぶと、その agent の起動バイナリ・アイコン・アクティビティ追跡まで引き継ぎます —— サイドバーのドットは内蔵 agent の wrapper が報告しているので、コマンドだけの場合は起動はしてもドットは点きません。どちらの場合も独自のロゴ (PNG / JPEG / SVG、64×64 推奨) をアップロードでき、tab・サイドバー・agent パネル・Quick Open のすべてに反映されます。Claude ベースのものは独自の環境変数も持てるので、ミラーや proxy のエンドポイントを shell alias ではなく本物の agent として登録できます。
 
-**Git worktree。** 任意の git workspace を右クリック → "Create Worktree…" で新しい branch (または既存 branch の checkout) に対する worktree を作成します。worktree はサイドバーで元のリポジトリの下にネストして表示され、独自の tab + agent を持ちます —— main で何かが走っている最中でも、Claude を feature branch で並行して動かせます。コマンドラインで `git worktree add` した worktree も、次回 kooky 起動時に自動でサイドバーに現れます。
+**Git worktree。** 任意の git workspace を右クリック → "Create Worktree…" で新しい branch (または既存 branch の checkout) に対する worktree を作成します。worktree はサイドバーで元のリポジトリの下にネストして表示され、独自の tab + agent を持ちます —— main で何かが走っている最中でも、Claude を feature branch で並行して動かせます。コマンドラインで `git worktree add` した worktree は、同じシートの adopt モードでいつでもサイドバーに取り込めます。ディレクトリが消えたエントリは起動時に自動でクリーンアップされます。
 
 **SSH workspace。** File → New SSH Workspace… (または ⌘P) で、リモートマシン上に「住む」workspace を作成します。以降の新しい tab・分割ペイン・再起動時に復元される tab は、すべて同じホストへ自動で再接続します。agent tab を開くと agent はリモート側で起動 —— リモート自身のシェル設定を読み込んでから始まるので、nvm などで入れたツールもきちんと見つかります。ローカルのファイルやスクリーンショットを貼り付けると、kooky が先にアップロードしてからリモートパスを貼り付けるため、向こうの agent が実際に開けます。同一ホストへの接続は共有され、追加の tab は即座に接続。パスワード認証のホストでも貼り付けを含めて全部使えます。
 
@@ -152,7 +152,7 @@ Xcode 26+ と macOS 14+ (Sonoma —— `@Observable` の最低システム要件
 ./scripts/setup-libghostty.sh        # 初回のみ：プリビルドの libghostty xcframework を Vendor/ にダウンロード
 swift build
 swift run                            # 開発モードで直接起動
-swift test                           # 750+ 個のユニットテスト
+swift test                           # 850+ 個のユニットテスト
 ./scripts/bench.sh                   # パフォーマンスベンチマーク (release ビルド、結果は bench-history.jsonl に記録)
 
 ./scripts/build-app.sh               # dist/Kooky.app を出力

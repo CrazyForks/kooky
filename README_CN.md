@@ -52,7 +52,7 @@
 
 **也可以自己加 agent。** 列表里没有的自己加：Settings → Agents 里填个名字和一条命令，它就会出现在 `+` 菜单里，像任何 tab 一样启动。再挑一个内置 agent 作为基础，它还会连那个 agent 的启动程序、图标和活动状态一起继承——侧边栏那个状态点是内置 agent 的 wrapper 报上来的，所以只填一条裸命令能跑，但点不会亮。两种配置都能传自己的 logo（PNG / JPEG / SVG，建议 64×64），tab、侧边栏、agent 面板、Quick Open 里都会用上。基于 Claude 的还能带自己的环境变量，镜像或代理端点因此可以做成一个真正的 agent，而不是一条 shell alias。
 
-**Git worktree。** 右键任意 git workspace → "Create Worktree…",在新 branch 上(或 checkout 已有 branch)起一个 worktree。Worktree 在 sidebar 里缩进显示在源 repo 下面,有自己的 tab + agent —— 让 Claude 在 feature branch 上跑活,不打扰 main 上正在跑的进程。命令行 `git worktree add` 建的 worktree,下次启动 kooky 也会自动出现在 sidebar。
+**Git worktree。** 右键任意 git workspace → "Create Worktree…",在新 branch 上(或 checkout 已有 branch)起一个 worktree。Worktree 在 sidebar 里缩进显示在源 repo 下面,有自己的 tab + agent —— 让 Claude 在 feature branch 上跑活,不打扰 main 上正在跑的进程。命令行 `git worktree add` 建的 worktree,用同一个面板里的 adopt 模式随时收进 sidebar;目录已经没了的条目会在启动时自动清理。
 
 **SSH workspace。** File → New SSH Workspace…(或 ⌘P)创建一个"住"在远程机器上的 workspace:之后每个新 tab、分屏、重启恢复的 tab 都自动重连同一台主机。开 agent tab 时 agent 直接在远端启动 —— 远端自己的 shell 配置加载完才启动,nvm 装的工具都找得到。往里粘贴本地文件或截图时,kooky 先上传再粘贴远端路径,对面的 agent 才真的打得开。同一主机的连接是共享的:后续 tab 秒连,密码登录的主机也全程可用,包括粘贴上传。
 
@@ -152,7 +152,7 @@ macOS **只拦第一次启动**。之后从 Spotlight、Dock、Finder 启动都�
 ./scripts/setup-libghostty.sh        # 一次性：把预编译的 libghostty xcframework 下到 Vendor/
 swift build
 swift run                            # 开发模式直接跑
-swift test                           # 750+ 个单测
+swift test                           # 850+ 个单测
 ./scripts/bench.sh                   # 性能基准（release 构建，结果记录在 bench-history.jsonl）
 
 ./scripts/build-app.sh               # 产出 dist/Kooky.app

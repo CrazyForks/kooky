@@ -52,7 +52,7 @@ A minimal modern terminal built for AI coding. Sidebar workspaces; horizontal / 
 
 **Bring your own agent.** Not on that list? Add it in Settings → Agents: a name and a command is enough to put it in the `+` menu and launch it like any other tab. Base it on a built-in agent and it also inherits that agent's launch binary, brand mark, and activity tracking — the sidebar dot is reported by the built-in's wrapper, so a standalone command runs fine but stays dark. Either way you can upload your own logo (PNG, JPEG, or SVG; 64×64 recommended), and it shows up on tabs, the sidebar, the agent panel, and Quick Open. Claude-based entries can carry their own environment variables, so a mirror or proxy endpoint becomes a real agent instead of a shell alias.
 
-**Git worktrees.** Right-click any git workspace → "Create Worktree…" to spin one up on a new branch (or check out an existing one). Each worktree shows up nested under its source repo in the sidebar with its own tabs + agent — let Claude work on a feature branch without touching what's running on main. Worktrees you create from the command line show up automatically the next time you launch kooky.
+**Git worktrees.** Right-click any git workspace → "Create Worktree…" to spin one up on a new branch (or check out an existing one). Each worktree shows up nested under its source repo in the sidebar with its own tabs + agent — let Claude work on a feature branch without touching what's running on main. To bring in a worktree you created from the command line, use the same sheet's adopt mode; sidebar entries whose directory is gone get cleaned up at launch.
 
 **SSH workspaces.** File → New SSH Workspace… (or ⌘P) creates a workspace that lives on a remote machine: every new tab, split, and restored tab reconnects to the same host on its own. Agent tabs start their agent on the remote — with the remote's own shell setup loaded, so tools installed through nvm and friends are found. Paste a local file or screenshot and kooky uploads it first, then pastes a path the remote agent can actually open. Connections to the same host are shared: extra tabs attach instantly, and password-authenticated hosts work throughout, pasting included.
 
@@ -152,7 +152,7 @@ Requires Xcode 26+ and macOS 14+ (Sonoma — `@Observable` is the floor).
 ./scripts/setup-libghostty.sh        # one-time: fetch the libghostty xcframework
 swift build
 swift run                            # dev mode
-swift test                           # 750+ unit tests
+swift test                           # 850+ unit tests
 ./scripts/bench.sh                   # performance benchmarks (release build, results in bench-history.jsonl)
 
 ./scripts/build-app.sh               # writes dist/Kooky.app
