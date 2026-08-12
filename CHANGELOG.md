@@ -2,6 +2,10 @@
 
 Notable changes per release. Tagged commits use `vX.Y.Z` shortform.
 
+## v0.50.5 — 2026-08-12
+
+- Fixed: switching windows could crash the whole app with a renderer segfault, typically on terminals that had been running for hours. The bundled terminal engine now guards the cursor render path, recovers cleanly from interrupted render updates, and no longer tears down its render state every frame on long-lived terminals. (#53)
+
 ## v0.50.4 — 2026-08-10
 
 - Improved: refreshed the main-window UI with softer selection states, quieter dividers, clearer typography, and tighter spacing across tabs, workspaces, and the Agent panel.

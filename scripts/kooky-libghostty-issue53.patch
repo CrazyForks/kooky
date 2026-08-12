@@ -1,0 +1,256 @@
+diff --git a/src/renderer/generic.zig b/src/renderer/generic.zig
+index 82791f0..34389c4 100644
+--- a/src/renderer/generic.zig
++++ b/src/renderer/generic.zig
+@@ -1408,7 +1408,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+             self: *Self,
+             state: *renderer.State,
+             cursor_blink_visible: bool,
+-        ) Allocator.Error!void {
++        ) terminal.RenderState.UpdateError!void {
+             // We fully deinit and reset the terminal state every so often
+             // so that a particularly large terminal state doesn't cause
+             // the renderer to hold on to retained memory.
+@@ -1418,6 +1418,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+             if (self.terminal_state_frame_count >= max_terminal_state_frame_count) {
+                 self.terminal_state.deinit(self.alloc);
+                 self.terminal_state = .empty;
++
++                // Reset the counter, otherwise every subsequent frame
++                // tears down and rebuilds the full terminal state.
++                self.terminal_state_frame_count = 0;
+             }
+             self.terminal_state_frame_count += 1;
+ 
+@@ -2811,6 +2815,11 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+                 const cursor_vp = state.cursor.viewport orelse
+                     break :preedit null;
+ 
++                // Defensive: see the cursor block below — an interrupted
++                // state update can leave row_data shorter than the cursor
++                // position, so never index it unchecked.
++                if (cursor_vp.y >= row_dirty.len) break :preedit null;
++
+                 // If our preedit row isn't dirty then we don't need the
+                 // preedit range. This also avoids an issue later where we
+                 // unconditionally add preedit cells when this is set.
+@@ -2880,8 +2889,18 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+                 // need it for styling.
+                 const cursor_vp = state.cursor.viewport orelse break :cursor;
+                 const cursor_style: terminal.Style = cursor_style: {
++                    // Defensive: an interrupted state update (e.g. an
++                    // allocation failure or a short viewport iteration
++                    // in RenderState.beginUpdate) can leave a row with
++                    // an empty cell buffer while the cursor points at
++                    // it. Indexing it would be undefined behavior in
++                    // ReleaseFast, so skip the cursor for this frame;
++                    // the next complete update restores it.
+                     const cells = state.row_data.items(.cells);
+-                    const cell = cells[cursor_vp.y].get(cursor_vp.x);
++                    if (cursor_vp.y >= cells.len) break :cursor;
++                    const cursor_row_cells = &cells[cursor_vp.y];
++                    if (cursor_vp.x >= cursor_row_cells.len) break :cursor;
++                    const cell = cursor_row_cells.get(cursor_vp.x);
+                     break :cursor_style if (cell.raw.hasStyling())
+                         cell.style
+                     else
+diff --git a/src/terminal/render.zig b/src/terminal/render.zig
+index bdb868c..401e49c 100644
+--- a/src/terminal/render.zig
++++ b/src/terminal/render.zig
+@@ -124,6 +124,24 @@ pub const RenderState = struct {
+     /// beginUpdate.
+     pending_styles: std.ArrayList(StyleRun) = .empty,
+ 
++    /// True while an update is in progress, and left set by an update
++    /// that never completed: an allocation failure mid-update, or a
++    /// viewport page iteration that came up short. Either can leave
++    /// rows whose cell buffers were never built while other state
++    /// (including the cursor viewport position) is already current.
++    /// When set at the start of the next update, a full rebuild is
++    /// forced so partially-built row data is never trusted.
++    incomplete: bool = false,
++
++    /// The error set of `beginUpdate` (and therefore `update`).
++    pub const UpdateError = Allocator.Error || error{
++        /// The viewport page iteration came up short, leaving rows
++        /// whose cell data was never built. The frame must be
++        /// discarded by the caller; `incomplete` stays set so the
++        /// next update performs a full rebuild.
++        IncompleteUpdate,
++    };
++
+     /// Initial state.
+     pub const empty: RenderState = .{
+         .rows = 0,
+@@ -327,7 +345,7 @@ pub const RenderState = struct {
+         self: *RenderState,
+         alloc: Allocator,
+         t: *Terminal,
+-    ) Allocator.Error!void {
++    ) UpdateError!void {
+         try self.beginUpdate(alloc, t);
+         self.endUpdate();
+     }
+@@ -357,10 +375,14 @@ pub const RenderState = struct {
+         self: *RenderState,
+         alloc: Allocator,
+         t: *Terminal,
+-    ) Allocator.Error!void {
++    ) UpdateError!void {
+         const s: *Screen = t.screens.active;
+         const viewport_pin = s.pages.getTopLeft(.viewport);
+         const redraw = redraw: {
++            // If our previous update never completed, our row data may
++            // be partially built and can't be trusted; rebuild it all.
++            if (self.incomplete) break :redraw true;
++
+             // If our screen key changed, we need to do a full rebuild
+             // because our render state is viewport-specific.
+             if (t.screens.active_key != self.screen) break :redraw true;
+@@ -396,6 +418,13 @@ pub const RenderState = struct {
+             break :redraw false;
+         };
+ 
++        // Mark this update as in progress. Any early exit — an
++        // allocation failure below, or a short page iteration — leaves
++        // this set so the next update forces a full rebuild rather
++        // than trusting partially-built row data. Cleared at the end
++        // once every viewport row has been accounted for.
++        self.incomplete = true;
++
+         // Always set our cheap fields, its more expensive to compare
+         self.rows = s.pages.rows;
+         self.cols = s.pages.cols;
+@@ -628,7 +657,26 @@ pub const RenderState = struct {
+ 
+             y += take;
+         }
+-        assert(y == self.rows);
++        if (y != self.rows) {
++            // The page iterator came up short: rows [y..self.rows) were
++            // never built, so their pins and cell buffers must not be
++            // read — not even by the rest of this frame. This is a bug,
++            // so crash loudly in safe builds. In release builds we
++            // recover by failing the update: the caller discards the
++            // frame, and `incomplete` stays set (with the terminal
++            // dirty flags unconsumed) so the next update performs a
++            // full rebuild.
++            //
++            // Note this must NOT be an `assert` above the branch: in
++            // ReleaseFast an assert lowers to `unreachable`, which lets
++            // the optimizer assume the condition and delete this
++            // recovery path entirely.
++            if (comptime std.debug.runtime_safety) @panic(
++                "beginUpdate viewport page iteration came up short",
++            );
++            return error.IncompleteUpdate;
++        }
++        self.incomplete = false;
+ 
+         // If our screen has a selection, then mark the rows with the
+         // selection. We do this outside of the loop above because its unlikely
+@@ -1552,6 +1600,103 @@ test "incremental updates match full rebuild" {
+     }
+ }
+ 
++test "allocation failure mid-update recovers on the next update" {
++    const testing = std.testing;
++    const alloc = testing.allocator;
++    const io = testing.io;
++
++    var t = try Terminal.init(io, alloc, .{
++        .cols = 20,
++        .rows = 5,
++    });
++    defer t.deinit(alloc);
++    var s = t.vtStream();
++    defer s.deinit();
++
++    // Content with styled runs and a multi-codepoint grapheme so a
++    // full build exercises every allocation class: row data, cell
++    // buffers, pending style runs, and per-row arena (managed memory).
++    s.nextSlice("\x1b[1mBold\x1b[0m plain\r\n字👨‍👩‍👧\r\nrow2\r\nrow3");
++
++    // For every allocation point within an update, inject a failure at
++    // exactly that point, then verify that the next update with a
++    // healthy allocator fully recovers: `incomplete` must force a full
++    // rebuild that matches a fresh state, even though the failed
++    // attempt already consumed terminal dirty flags for the rows it
++    // visited. Each attempt starts from a brand-new empty state so
++    // that retained capacities from a prior recovery can't absorb
++    // allocations and skip failure points.
++    var fail_index: usize = 0;
++    const completed = while (fail_index < 1000) : (fail_index += 1) {
++        var state: RenderState = .empty;
++        defer state.deinit(alloc);
++
++        var failing = std.testing.FailingAllocator.init(alloc, .{
++            .fail_index = fail_index,
++        });
++        if (state.beginUpdate(failing.allocator(), &t)) |_| {
++            // No failure was injected: a full build performs fewer
++            // allocations than this fail_index, so every allocation
++            // point has been covered by the prior iterations.
++            state.endUpdate();
++            break true;
++        } else |err| try testing.expectEqual(error.OutOfMemory, err);
++
++        // Recover with a healthy allocator: this update must succeed
++        // and produce a state identical to a fresh full rebuild.
++        try state.update(alloc, &t);
++
++        var fresh: RenderState = .empty;
++        defer fresh.deinit(alloc);
++        try fresh.update(alloc, &t);
++        try testCompareStates(&state, &fresh);
++    } else false;
++    try testing.expect(completed);
++}
++
++test "incomplete state forces a full rebuild on the next update" {
++    const testing = std.testing;
++    const alloc = testing.allocator;
++    const io = testing.io;
++
++    var t = try Terminal.init(io, alloc, .{
++        .cols = 10,
++        .rows = 3,
++    });
++    defer t.deinit(alloc);
++    var s = t.vtStream();
++    defer s.deinit();
++    s.nextSlice("row0\r\nrow1\r\nrow2");
++
++    var state: RenderState = .empty;
++    defer state.deinit(alloc);
++    try state.update(alloc, &t);
++
++    // Simulate what an interrupted update leaves behind (the renderer
++    // SIGSEGV class: an empty row cell buffer the cursor may point
++    // at): destroy one row's cell buffer with no terminal-side dirty
++    // flag left that would trigger its rebuild.
++    {
++        const cells = state.row_data.slice().items(.cells);
++        try testing.expect(cells[1].len > 0);
++        cells[1].deinit(alloc);
++        cells[1] = .empty;
++    }
++    state.incomplete = true;
++
++    // The terminal is completely clean, so without the incomplete flag
++    // this update would skip every row and leave row 1 unbuilt.
++    try state.update(alloc, &t);
++
++    const cells = state.row_data.slice().items(.cells);
++    try testing.expectEqual(@as(usize, 10), cells[1].len);
++
++    var fresh: RenderState = .empty;
++    defer fresh.deinit(alloc);
++    try fresh.update(alloc, &t);
++    try testCompareStates(&state, &fresh);
++}
++
+ test "begin and end update" {
+     const testing = std.testing;
+     const alloc = testing.allocator;
